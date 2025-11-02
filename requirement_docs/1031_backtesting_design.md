@@ -39,6 +39,15 @@ Date,Open,High,Low,Close,Volume
 - Open/High/Low/Close: 均使用"股价(美元)"列（因原始数据只有收盘价）
 - Volume: 设为 0 或从其他字段推算（原始数据无成交量）
 
+### 1.4 数据可用范围
+
+| 股票 | 完整数据范围 | 推荐分析范围 |
+|------|--------------|--------------|
+| 特斯拉 (TSLA) | 2010-06-29 至 2025-10-29 | 2015-01-01 至今 |
+| 英伟达 (NVDA) | 1999-01-22 至 2025-10-29 | 2010-01-01 至今 |
+
+**提示:** 建议优先选择涵盖完整市场周期的时间段（至少5年）以保持统计意义。
+
 ## 2. 策略选择
 
 ### 2.1 推荐策略
@@ -211,6 +220,8 @@ CONSTRAINTS = lambda p: p.n1 < p.n2
 ```python
 --stock: 股票选择 (tesla/nvidia/all)
 --strategy: 策略选择 (sma_cross/sma_trailing/sma4_cross/all)
+--start-date: 回测开始日期 (YYYY-MM-DD)
+--end-date: 回测结束日期 (YYYY-MM-DD)
 --optimize: 是否执行参数优化 (flag)
 --commission: 手续费率 (默认0.002, 即0.2%)
 --cash: 初始资金 (默认10000美元)
@@ -219,30 +230,40 @@ CONSTRAINTS = lambda p: p.n1 < p.n2
 --save-html: 是否保存HTML报告 (flag)
 ```
 
+**日期过滤要求:**
+- 日期格式固定为 `YYYY-MM-DD`
+- 单独使用开始或结束日期时，另一端默认对齐数据可用边界
+- 超出数据范围时需提示用户并截断到有效区间
+
 **核心流程:**
 ```python
 def run_backtest(stock_name, strategy_name, optimize=False, **kwargs):
     # 1. 加载数据
     data = load_lixinger_data(csv_path)
 
-    # 2. 加载策略
+    # 2. 应用日期过滤（如指定）
+    data = apply_date_filters(data,
+                              start_date=kwargs.get('start_date'),
+                              end_date=kwargs.get('end_date'))
+
+    # 3. 加载策略
     strategy_class = load_strategy(strategy_name)
 
-    # 3. 创建Backtest实例
+    # 4. 创建Backtest实例
     bt = Backtest(data, strategy_class,
                   cash=kwargs['cash'],
                   commission=kwargs['commission'])
 
-    # 4. 执行回测或优化
+    # 5. 执行回测或优化
     if optimize:
         stats = bt.optimize(**OPTIMIZE_PARAMS)
     else:
         stats = bt.run()
 
-    # 5. 保存结果
+    # 6. 保存结果
     save_results(stats, output_dir, stock_name, strategy_name)
 
-    # 6. 生成图表
+    # 7. 生成图表
     if kwargs['plot']:
         bt.plot(filename=f"{output_dir}/plots/{stock_name}_{strategy_name}.html")
 
@@ -268,6 +289,8 @@ def run_backtest(stock_name, strategy_name, optimize=False, **kwargs):
 # Options:
 #   -s, --stock <name>       股票名称: tesla, nvidia, all (默认: all)
 #   -t, --strategy <name>    策略名称: sma_cross, sma_trailing, sma4_cross, all (默认: sma_cross)
+#   --start-date <YYYY-MM-DD>  回测开始日期（可选）
+#   --end-date <YYYY-MM-DD>    回测结束日期（可选）
 #   -o, --optimize           启用参数优化
 #   -c, --commission <rate>  手续费率 (默认: 0.002)
 #   -m, --cash <amount>      初始资金 (默认: 10000)
@@ -335,6 +358,32 @@ CONDA_PATH=/home/zijunliu/miniforge3/condabin/conda
 PROJECT_ROOT=/mnt/d/git/backtesting
 ```
 
+### 4.4 日期过滤逻辑
+
+**处理流程:**
+1. 命令行解析阶段校验 `--start-date`/`--end-date` 是否符合 `YYYY-MM-DD` 格式，并转换为 `datetime.date`
+2. 将用户输入与数据索引的最小/最大日期比对，若超出范围则自动截断并打印警告
+3. 依据起止日期切片 DataFrame（保持索引有序），并在统计摘要中输出过滤前后的行数
+4. 当过滤结果不足以支持策略运行时（如数据量过少），提前抛出用户可读的异常信息
+
+**关键函数示例:**
+```python
+def apply_date_filters(df: pd.DataFrame,
+                       start_date: date | None,
+                       end_date: date | None) -> pd.DataFrame:
+    if start_date:
+        df = df[df.index >= start_date]
+    if end_date:
+        df = df[df.index <= end_date]
+    log_filter_stats(df, start_date, end_date)
+    return df
+```
+
+**日志输出建议:**
+- 打印原始与过滤后数据量、实际生效的日期边界
+- 对自动截断的场景使用 `WARNING` 级别提示
+- 在优化模式下同样复用过滤后的数据，保证参数搜索与单次回测一致
+
 ## 5. 使用场景
 
 ### 5.1 基础回测
@@ -364,6 +413,47 @@ PROJECT_ROOT=/mnt/d/git/backtesting
 ./run_backtest.sh -s nvidia -t sma_cross -c 0.001 -m 50000 -p
 ```
 
+### 5.4 日期过滤使用示例
+
+**只指定开始日期（聚焦近几年）**
+```bash
+# 只分析2020年之后的特斯拉
+./run_backtest.sh -s tesla --start-date 2020-01-01
+
+# 只分析2018年之后的英伟达
+./run_backtest.sh -s nvidia --start-date 2018-01-01
+```
+
+**只指定结束日期（回看历史阶段）**
+```bash
+# 截止到2020年末的特斯拉表现
+./run_backtest.sh -s tesla --end-date 2020-12-31
+
+# 分析2018年前的英伟达
+./run_backtest.sh -s nvidia --end-date 2018-12-31
+```
+
+**限定固定区间（对比市场周期）**
+```bash
+# 对比英伟达在2015-2020区间的表现
+./run_backtest.sh -s nvidia --start-date 2015-01-01 --end-date 2020-12-31
+
+# 检查特斯拉疫情前后的差异
+./run_backtest.sh -s tesla --start-date 2018-01-01 --end-date 2022-12-31
+```
+
+**结合其他参数**
+```bash
+# 日期过滤 + 参数优化
+./run_backtest.sh -s nvidia --start-date 2015-01-01 --end-date 2020-12-31 -o
+
+# 日期过滤 + 资金/手续费配置
+./run_backtest.sh -s tesla --start-date 2020-01-01 -m 50000 -c 0.001
+
+# 对所有股票运行特定时段
+./run_backtest.sh -s all --start-date 2020-01-01 --end-date 2023-12-31
+```
+
 ## 6. 技术考虑
 
 ### 6.1 性能优化
@@ -375,6 +465,7 @@ PROJECT_ROOT=/mnt/d/git/backtesting
 - 文件不存在时的友好提示
 - 数据格式错误的详细报错
 - 策略运行异常的捕获和日志
+- 日期过滤参数无效或越界时的自动截断与警告输出
 
 ### 6.3 扩展性
 - 模块化设计，易于添加新策略
@@ -386,6 +477,21 @@ PROJECT_ROOT=/mnt/d/git/backtesting
 - 进度条显示（优化时）
 - 彩色输出区分不同信息类型
 - 结果摘要表格显示
+
+### 6.5 日期过滤最佳实践
+- **推荐**: 选择至少5年的时间跨度以覆盖完整市场周期；特斯拉建议从2015年起，英伟达建议从2010年起
+- **推荐**: 在各主要市场阶段（2010-2015、2015-2020、2020-至今）分段回测以验证策略稳定性
+- **推荐**: 与参数优化联动，在目标区间内寻找最优参数组合
+- **推荐**: 回测后查看日志中“过滤前/后数据行数”确认样本量是否足够
+- **避免**: 时间范围过长（>15年）导致旧数据权重过大
+- **避免**: 时间跨度不足3年造成统计意义不充分
+- **避免**: 只覆盖牛市阶段，忽略下行周期
+- **避免**: 忽视日期格式，命令行入参必须为 `YYYY-MM-DD`
+
+**快速模板:**
+```bash
+./run_backtest.sh -s <股票> --start-date <YYYY-MM-DD> --end-date <YYYY-MM-DD>
+```
 
 ## 7. 测试计划
 
