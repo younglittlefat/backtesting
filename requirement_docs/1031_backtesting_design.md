@@ -1,119 +1,64 @@
-# 美股回测系统设计文档
+# 中国市场回测系统设计文档
 
 ## 1. 项目概述
 
 ### 1.1 目标
-为特斯拉和英伟达两支美股的历史数据创建一个自动化回测系统，使用 backtesting.py 框架测试多种交易策略，并通过命令行脚本方便地执行回测。
+构建一个针对中国场内 ETF 与公募基金（无A股个股数据）的自动化回测体系，使用 `backtesting.py` 框架评估多策略表现，并通过 `run_backtest.sh` 脚本批量运行策略与生成结果。目标是在保持既有框架的同时，切换到 `data/chinese_stocks/` 下的完整日线 OHLCV 数据集。
 
 ### 1.2 数据源
-- 数据目录: `data/american_stocks/`
-- 特斯拉数据: `特斯拉_PE-TTM_20251030_223158.csv` (约3860行)
-- 英伟达数据: `英伟达_PE-TTM_20251030_223250.csv` (约6737行)
-- 数据时间范围:
-  - 特斯拉: 2010-06-29 至 2025-10-29
-  - 英伟达: 时间范围需确认
-- 数据来源: 理杏仁网站(lixinger.com)
+- 数据根目录：`data/chinese_stocks/`
+- 子目录结构：`daily/etf/*.csv`、`daily/fund/*.csv`
+- 数据文件示例：
+  - ETF：`data/chinese_stocks/daily/etf/159001.SZ.csv`
+  - 基金：`data/chinese_stocks/daily/fund/000001.OF.csv`
+- 数据覆盖范围：2016-01-04 起至最新交易日（不同标的存在差异）
+- 原始来源：国内行情平台（字段已包含完整 OHLCV 信息）
 
-### 1.3 数据格式分析
+### 1.3 数据格式
+文件为 UTF-8 编码的标准 CSV，列结构如下：
 
-#### 原始CSV格式
 ```
-﻿日期,理杏仁前复权(美元),前复权(美元),后复权(美元),股价(美元),市值(美元),PE-TTM,PE-TTM 分位点,PE-TTM 80%分位点值,PE-TTM 50%分位点值,PE-TTM 20%分位点值
-2025-10-29,=461.5100,=461.5100,=6922.6500,=461.5100,=1534898803762.1699,=291.1969,=0.2478,=-27.9154,=-83.2873,=157.3445
-```
-
-**问题点:**
-1. 字段值包含 `=` 前缀（Excel公式格式）
-2. 列名为中文
-3. 缺少 backtesting.py 需要的 OHLCV 格式（Open, High, Low, Close, Volume）
-4. BOM 标记（﻿）在文件开头
-
-#### 目标格式 (backtesting.py要求)
-```
-Date,Open,High,Low,Close,Volume
-2025-10-29,461.51,461.51,461.51,461.51,0
+trade_date,open,high,low,close,pre_close,change,pct_chg,volume,amount
+20160104,99.9990,100.0000,99.9880,99.9920,100.0100,-0.0180,-0.0180,6135,61351.48
 ```
 
-**转换策略:**
-- Date: 从"日期"列转换，并设为 DataFrame 索引
-- Open/High/Low/Close: 均使用"股价(美元)"列（因原始数据只有收盘价）
-- Volume: 设为 0 或从其他字段推算（原始数据无成交量）
+- `trade_date`: 交易日期，格式 `YYYYMMDD`
+- `open/high/low/close`: 日内价格（含小数）
+- `volume`: 成交量（股/份额）
+- `amount`: 成交额（单位与来源保持一致）
+- 额外字段 `pre_close/change/pct_chg` 用于校验涨跌幅，可在回测中忽略或作为指标使用
 
-### 1.4 数据可用范围
+### 1.4 标的分类与命名
 
-| 股票 | 完整数据范围 | 推荐分析范围 |
-|------|--------------|--------------|
-| 特斯拉 (TSLA) | 2010-06-29 至 2025-10-29 | 2015-01-01 至今 |
-| 英伟达 (NVDA) | 1999-01-22 至 2025-10-29 | 2010-01-01 至今 |
+| 分类 | 目录 | 证券代码样式 | 说明 |
+|------|------|--------------|------|
+| ETF  | `daily/etf`  | `159001.SZ` | 以场内 ETF 为主，交易单位为份额 |
+| 基金 | `daily/fund` | `000001.OF` | 场外基金净值，部分存在同日多次估值 |
 
-**提示:** 建议优先选择涵盖完整市场周期的时间段（至少5年）以保持统计意义。
+命令行层面使用不含扩展名的代码（如 `159001.SZ`）作为标识，脚本负责编码与文件名映射。
 
 ## 2. 策略选择
 
 ### 2.1 推荐策略
+三种策略仍基于 backtesting.py 的经典示例，但需验证在 ETF/基金上的适用性。
 
-基于 doc/examples 中的示例策略分析，推荐以下三种策略：
+1. **双均线交叉 (SmaCross)**  
+   - 适合趋势型 ETF（如宽基指数、行业 ETF）  
+   - 参数建议：`n1` ∈ [5, 30]，`n2` ∈ [20, 120]  
+   - 应增加净值型资产的交易成本设置（部分基金需较高滑点）
 
-#### 策略 1: 双均线交叉策略 (SmaCross) - **最推荐**
-**来源**: Quick Start User Guide
+2. **ATR 追踪止损 (SmaCrossWithTrailing)**  
+   - 用于波动较大的行业 ETF  
+   - 调整 ATR 周期与倍数适应中国市场的波动率
 
-**原因:**
-- 简单经典，适合长期股价数据
-- 参数少，易于理解和调优
-- 适合趋势明显的科技股（特斯拉、英伟达）
+3. **多均线组合 (Sma4Cross)**  
+   - 针对 ETF 进行参数寻优与周期对比  
+   - 可通过热力图分析寻找适合不同板块的周期组合
 
-**实现:**
-```python
-class SmaCross(Strategy):
-    n1 = 10  # 短期均线
-    n2 = 20  # 长期均线
-
-    def init(self):
-        self.sma1 = self.I(SMA, self.data.Close, self.n1)
-        self.sma2 = self.I(SMA, self.data.Close, self.n2)
-
-    def next(self):
-        if crossover(self.sma1, self.sma2):
-            self.position.close()
-            self.buy()
-        elif crossover(self.sma2, self.sma1):
-            self.position.close()
-            self.sell()
-```
-
-**优化参数:**
-- n1: 5-50 天
-- n2: 20-200 天
-
-#### 策略 2: 带止损的双均线策略 (SmaCrossWithTrailing)
-**来源**: Strategies Library
-
-**原因:**
-- 在策略1基础上增加风险管理
-- 使用 ATR 追踪止损，自动保护利润
-- 适合波动较大的股票
-
-**特性:**
-- 继承 SignalStrategy 和 TrailingStrategy
-- 自动设置追踪止损
-- 可调整止损倍数
-
-#### 策略 3: 四均线交叉优化策略 (Sma4Cross)
-**来源**: Parameter Heatmap & Optimization
-
-**原因:**
-- 更复杂的趋势判断
-- 适合参数优化和热力图分析
-- 可以找到最优参数组合
-
-**特性:**
-- 4个可优化参数
-- 趋势过滤 + 入场出场信号
-- 适合深度优化
-
-### 2.2 不推荐策略
-- **Trading with Machine Learning**: 需要额外的机器学习库和训练数据
-- **Multiple Time Frames**: 需要多时间框架数据，当前只有日线数据
+### 2.2 策略适配注意事项
+- ETF 份额无涨跌停限制，但存在申购赎回费用与折溢价问题，需在策略中以自定义费用或滑点模拟。
+- 公募基金持有期存在赎回费率，回测时可在 `Strategy.next()` 中手动调整 `commission`。
+- 对于净值型基金，成交量字段可忽略，但应注意日内无法多次交易的现实约束。
 
 ## 3. 系统架构设计
 
@@ -121,461 +66,218 @@ class SmaCross(Strategy):
 ```
 backtesting/
 ├── data/
-│   └── american_stocks/
-│       ├── 特斯拉_PE-TTM_20251030_223158.csv
-│       └── 英伟达_PE-TTM_20251030_223250.csv
+│   └── chinese_stocks/
+│       └── daily/
+│           ├── etf/
+│           │   └── *.csv
+│           └── fund/
+│               └── *.csv
 ├── strategies/
 │   ├── __init__.py
-│   ├── sma_cross.py           # 策略1
-│   ├── sma_trailing.py        # 策略2
-│   └── sma4_cross.py          # 策略3
+│   ├── sma_cross.py
+│   ├── sma_trailing.py
+│   └── sma4_cross.py
 ├── utils/
 │   ├── __init__.py
-│   └── data_loader.py         # 数据加载和转换模块
+│   └── data_loader.py      # 扩展支持中国数据
 ├── results/
-│   ├── reports/               # HTML报告输出
-│   ├── plots/                 # 图表输出
-│   └── stats/                 # 统计数据CSV输出
-├── run_backtest.sh            # 主执行脚本
-└── backtest_runner.py         # Python回测执行器
+│   ├── reports/
+│   ├── plots/
+│   └── stats/
+├── run_backtest.sh
+└── backtest_runner.py
 ```
 
-### 3.2 模块设计
+### 3.2 模块职责调整
 
-#### 3.2.1 数据加载模块 (utils/data_loader.py)
+#### 3.2.1 数据加载 (`utils/data_loader.py`)
+- 新增通用 `load_ohlcv_csv` 函数，支持读取 `trade_date` → `Date` 并转换为 `datetime`.
+- 扫描子目录（etf/fund）递归识别文件，构建 `{代码: 路径, 元数据}` 映射。
+- 根据 `volume/amount` 等字段自动判断是否可用于日内策略。
+- 暂停旧的 Lixinger 转换逻辑（保留备用），默认走中国数据路径。
 
-**功能:**
-- 读取理杏仁格式的CSV文件
-- 清理数据（去除BOM、去除"="前缀）
-- 转换为backtesting.py需要的OHLCV格式
-- 数据验证和清洗
+#### 3.2.2 策略模块 (`strategies/*`)
+- 策略逻辑保持不变，但在类属性中加入可选的交易成本参数。
+- 添加 `metadata` 字典，用于在结果汇总中标记标的类型（ETF / Fund）。
 
-**主要函数:**
-```python
-def load_lixinger_data(csv_path: str) -> pd.DataFrame:
-    """加载理杏仁CSV数据并转换为OHLCV格式"""
+#### 3.2.3 回测执行器 (`backtest_runner.py`)
+- 默认 `--data-dir` 切换为 `data/chinese_stocks`.
+- `--stock` 参数接受实际代码或 `all`，支持多级选择（如 `category:etf`）。
+- 结果汇总时展示中文名称映射：`159001.SZ -> 华夏上证50ETF`（可由元数据文件或 CSV 列提供）。
 
-def clean_excel_format(value: str) -> float:
-    """清理Excel公式格式（去除=前缀）"""
-
-def validate_ohlc_data(df: pd.DataFrame) -> bool:
-    """验证OHLCV数据格式"""
-
-def get_stock_name(csv_path: str) -> str:
-    """从文件名提取股票名称"""
-```
-
-#### 3.2.2 策略模块 (strategies/)
-
-每个策略文件包含:
-- 策略类定义
-- 默认参数
-- 参数优化范围（如果支持）
-
-**示例结构:**
-```python
-# strategies/sma_cross.py
-from backtesting import Strategy
-from backtesting.lib import crossover
-import pandas as pd
-
-def SMA(values, n):
-    return pd.Series(values).rolling(n).mean()
-
-class SmaCross(Strategy):
-    n1 = 10
-    n2 = 20
-
-    def init(self):
-        self.sma1 = self.I(SMA, self.data.Close, self.n1)
-        self.sma2 = self.I(SMA, self.data.Close, self.n2)
-
-    def next(self):
-        if crossover(self.sma1, self.sma2):
-            self.position.close()
-            self.buy()
-        elif crossover(self.sma2, self.sma1):
-            self.position.close()
-            self.sell()
-
-# 优化参数范围
-OPTIMIZE_PARAMS = {
-    'n1': range(5, 51, 5),
-    'n2': range(20, 201, 20),
-}
-
-CONSTRAINTS = lambda p: p.n1 < p.n2
-```
-
-#### 3.2.3 回测执行器 (backtest_runner.py)
-
-**功能:**
-- 解析命令行参数
-- 加载指定股票数据
-- 执行指定策略回测
-- 可选参数优化
-- 保存结果（统计、图表、HTML报告）
-
-**主要参数:**
-```python
---stock: 股票选择 (tesla/nvidia/all)
---strategy: 策略选择 (sma_cross/sma_trailing/sma4_cross/all)
---start-date: 回测开始日期 (YYYY-MM-DD)
---end-date: 回测结束日期 (YYYY-MM-DD)
---optimize: 是否执行参数优化 (flag)
---commission: 手续费率 (默认0.002, 即0.2%)
---cash: 初始资金 (默认10000美元)
---output-dir: 结果输出目录 (默认results/)
---plot: 是否生成图表 (flag)
---save-html: 是否保存HTML报告 (flag)
-```
-
-**日期过滤要求:**
-- 日期格式固定为 `YYYY-MM-DD`
-- 单独使用开始或结束日期时，另一端默认对齐数据可用边界
-- 超出数据范围时需提示用户并截断到有效区间
-
-**核心流程:**
-```python
-def run_backtest(stock_name, strategy_name, optimize=False, **kwargs):
-    # 1. 加载数据
-    data = load_lixinger_data(csv_path)
-
-    # 2. 应用日期过滤（如指定）
-    data = apply_date_filters(data,
-                              start_date=kwargs.get('start_date'),
-                              end_date=kwargs.get('end_date'))
-
-    # 3. 加载策略
-    strategy_class = load_strategy(strategy_name)
-
-    # 4. 创建Backtest实例
-    bt = Backtest(data, strategy_class,
-                  cash=kwargs['cash'],
-                  commission=kwargs['commission'])
-
-    # 5. 执行回测或优化
-    if optimize:
-        stats = bt.optimize(**OPTIMIZE_PARAMS)
-    else:
-        stats = bt.run()
-
-    # 6. 保存结果
-    save_results(stats, output_dir, stock_name, strategy_name)
-
-    # 7. 生成图表
-    if kwargs['plot']:
-        bt.plot(filename=f"{output_dir}/plots/{stock_name}_{strategy_name}.html")
-
-    return stats
-```
-
-#### 3.2.4 Shell脚本 (run_backtest.sh)
-
-**功能:**
-- 激活conda环境
-- 参数验证
-- 调用Python回测执行器
-- 显示友好的使用帮助
-
-**参数设计:**
-```bash
-#!/bin/bash
-# 美股回测执行脚本
-
-# 使用方法:
-# ./run_backtest.sh [options]
-#
-# Options:
-#   -s, --stock <name>       股票名称: tesla, nvidia, all (默认: all)
-#   -t, --strategy <name>    策略名称: sma_cross, sma_trailing, sma4_cross, all (默认: sma_cross)
-#   --start-date <YYYY-MM-DD>  回测开始日期（可选）
-#   --end-date <YYYY-MM-DD>    回测结束日期（可选）
-#   -o, --optimize           启用参数优化
-#   -c, --commission <rate>  手续费率 (默认: 0.002)
-#   -m, --cash <amount>      初始资金 (默认: 10000)
-#   -p, --plot               生成交互式图表
-#   -h, --html               保存HTML报告
-#   -d, --output-dir <path>  输出目录 (默认: results)
-#   --help                   显示帮助信息
-
-# 示例:
-# ./run_backtest.sh -s tesla -t sma_cross -p -h
-# ./run_backtest.sh -s all -t all -o
-# ./run_backtest.sh -s nvidia -t sma_trailing -c 0.001 -m 50000
-```
+#### 3.2.4 Shell脚本 (`run_backtest.sh`)
+- 帮助信息更新为“中国市场回测”。
+- 增加 `--category` / `--instrument` 选项，或通过 `--stock` 多值输入运行多个标的。
+- 调用 `backtest_runner.py` 时传递新的参数组合，并允许指定输出目录前缀（如 `results/china_etf`）。
 
 ## 4. 实现细节
 
-### 4.1 数据转换细节
+### 4.1 数据清洗
+1. 将 `trade_date` 转为 `%Y-%m-%d` 格式并设为索引。
+2. 强制转换价格列为浮点数，Volume/Amount 转为整数或浮点（视文件而定）。
+3. 按日期升序排序，去除缺失或重复行。
+4. 当同日存在多条记录（部分基金），保留最后一条或进行加权平均。
 
-**关键处理:**
-1. **BOM处理**: 使用 `encoding='utf-8-sig'` 读取
-2. **Excel公式清理**:
-   ```python
-   df = df.applymap(lambda x: float(str(x).replace('=', '')) if isinstance(x, str) else x)
-   ```
-3. **日期处理**:
-   ```python
-   df['日期'] = pd.to_datetime(df['日期'])
-   df.set_index('日期', inplace=True)
-   ```
-4. **OHLC构造**: 由于只有收盘价，设置 Open=High=Low=Close
-5. **缺失值处理**: 使用前向填充或删除
+### 4.2 货币与单位
+- ETF 价格单位为人民币元，Volume 为份额，Amount 为人民币。
+- 基金净值通常小于 5，Volume/Amount 字段可用于识别二级市场或场外估值。
+- `commission` 默认值需根据基金/ETF 现实费率调整（建议：ETF 0.0005，基金 0.0~0.015）。
 
-### 4.2 结果输出格式
+### 4.3 输出内容
+- 统计 CSV 保持中文列名，但新增 “标的代码”、“标的类型” 字段。
+- 图表文件命名格式：`{instrument}_{strategy}_{timestamp}.html`。
+- 若需要区分人民币，可在结果中增加 `货币: CNY` 字段说明。
 
-#### 4.2.1 统计报告 (CSV)
-```
-股票,策略,开始日期,结束日期,初始资金,最终资金,收益率,年化收益率,夏普比率,最大回撤,交易次数,胜率,...
-特斯拉,SmaCross,2010-06-29,2025-10-29,10000,25000,150%,12.5%,1.2,-25%,150,55%,...
-```
-
-#### 4.2.2 交互式图表 (HTML)
-- 使用 Bokeh 生成
-- 包含蜡烛图、指标线、买卖信号
-- 权益曲线
-- 回撤曲线
-
-#### 4.2.3 优化结果 (CSV + 热力图)
-- 参数组合与对应的收益率
-- 热力图可视化（如果是2D参数空间）
-
-### 4.3 环境配置
-
-**Conda环境要求:**
-```bash
-# 激活环境
-conda activate backtesting
-
-# 确保安装依赖
-pip install -e '.[test]'
-```
-
-**环境变量:**
-```bash
-CONDA_PATH=/home/zijunliu/miniforge3/condabin/conda
-PROJECT_ROOT=/mnt/d/git/backtesting
-```
-
-### 4.4 日期过滤逻辑
-
-**处理流程:**
-1. 命令行解析阶段校验 `--start-date`/`--end-date` 是否符合 `YYYY-MM-DD` 格式，并转换为 `datetime.date`
-2. 将用户输入与数据索引的最小/最大日期比对，若超出范围则自动截断并打印警告
-3. 依据起止日期切片 DataFrame（保持索引有序），并在统计摘要中输出过滤前后的行数
-4. 当过滤结果不足以支持策略运行时（如数据量过少），提前抛出用户可读的异常信息
-
-**关键函数示例:**
-```python
-def apply_date_filters(df: pd.DataFrame,
-                       start_date: date | None,
-                       end_date: date | None) -> pd.DataFrame:
-    if start_date:
-        df = df[df.index >= start_date]
-    if end_date:
-        df = df[df.index <= end_date]
-    log_filter_stats(df, start_date, end_date)
-    return df
-```
-
-**日志输出建议:**
-- 打印原始与过滤后数据量、实际生效的日期边界
-- 对自动截断的场景使用 `WARNING` 级别提示
-- 在优化模式下同样复用过滤后的数据，保证参数搜索与单次回测一致
+### 4.4 日期过滤
+- 支持 `--start-date YYYY-MM-DD` 与 `--end-date` 参数，过滤后输出有效区间。
+- 若过滤后数据量 < 60 行（不足以跑均线策略），提前报错。
 
 ## 5. 使用场景
 
 ### 5.1 基础回测
 ```bash
-# 对特斯拉运行双均线策略
-./run_backtest.sh -s tesla -t sma_cross -p -h
+# 对 159001.SZ 运行双均线策略
+./run_backtest.sh -s 159001.SZ -t sma_cross
 
-# 对英伟达运行带止损策略
-./run_backtest.sh -s nvidia -t sma_trailing -p
+# 对 000001.OF 运行带止损策略
+./run_backtest.sh -s 000001.OF -t sma_trailing
 ```
 
-### 5.2 参数优化
+### 5.2 批量回测
 ```bash
-# 优化特斯拉的双均线参数
-./run_backtest.sh -s tesla -t sma_cross -o -h
+# 批量跑所有 ETF
+./run_backtest.sh --category etf -t all
 
-# 优化所有股票的四均线策略
-./run_backtest.sh -s all -t sma4_cross -o
+# 指定多个标的
+./run_backtest.sh -s 159001.SZ,510500.SH -t sma_cross
 ```
 
-### 5.3 批量测试
+### 5.3 参数优化
 ```bash
-# 对所有股票运行所有策略
-./run_backtest.sh -s all -t all -p -h
+# 优化某只 ETF 的均线组合
+./run_backtest.sh -s 510300.SH -t sma_cross -o
 
-# 自定义手续费和初始资金
-./run_backtest.sh -s nvidia -t sma_cross -c 0.001 -m 50000 -p
+# 基金净值策略调参
+./run_backtest.sh -s 000001.OF -t sma4_cross -o --start-date 2020-01-01
 ```
 
-### 5.4 日期过滤使用示例
-
-**只指定开始日期（聚焦近几年）**
+### 5.4 日期过滤
 ```bash
-# 只分析2020年之后的特斯拉
-./run_backtest.sh -s tesla --start-date 2020-01-01
-
-# 只分析2018年之后的英伟达
-./run_backtest.sh -s nvidia --start-date 2018-01-01
+./run_backtest.sh -s 510300.SH --start-date 2018-01-01 --end-date 2023-12-31
 ```
 
-**只指定结束日期（回看历史阶段）**
-```bash
-# 截止到2020年末的特斯拉表现
-./run_backtest.sh -s tesla --end-date 2020-12-31
-
-# 分析2018年前的英伟达
-./run_backtest.sh -s nvidia --end-date 2018-12-31
+### 5.5 输出目录管理
+回测结果默认写入 `results/`，建议按类别划分子目录：
 ```
-
-**限定固定区间（对比市场周期）**
-```bash
-# 对比英伟达在2015-2020区间的表现
-./run_backtest.sh -s nvidia --start-date 2015-01-01 --end-date 2020-12-31
-
-# 检查特斯拉疫情前后的差异
-./run_backtest.sh -s tesla --start-date 2018-01-01 --end-date 2022-12-31
-```
-
-**结合其他参数**
-```bash
-# 日期过滤 + 参数优化
-./run_backtest.sh -s nvidia --start-date 2015-01-01 --end-date 2020-12-31 -o
-
-# 日期过滤 + 资金/手续费配置
-./run_backtest.sh -s tesla --start-date 2020-01-01 -m 50000 -c 0.001
-
-# 对所有股票运行特定时段
-./run_backtest.sh -s all --start-date 2020-01-01 --end-date 2023-12-31
+results/
+├── etf/
+│   ├── stats/
+│   └── plots/
+└── fund/
+    ├── stats/
+    └── plots/
 ```
 
 ## 6. 技术考虑
 
-### 6.1 性能优化
-- 使用向量化操作处理大量数据
-- 优化时使用多进程（backtesting.py 内置支持）
-- 缓存加载的数据避免重复读取
+### 6.1 性能
+- 数据文件数量庞大（基金 >3000 只），需按需加载。
+- `list_available_stocks` 需缓存扫描结果，避免重复递归读取。
+- 在优化模式下，建议限制参数空间或采用随机搜索。
 
 ### 6.2 错误处理
-- 文件不存在时的友好提示
-- 数据格式错误的详细报错
-- 策略运行异常的捕获和日志
-- 日期过滤参数无效或越界时的自动截断与警告输出
+- 缺失列或格式异常时提供明确错误信息，注明文件路径。
+- 当 Volume/Amount 为 0 时，提示用户策略不应依赖成交量指标。
+- 对无效日期范围或空数据，抛出 `ValueError` 并输出建议。
 
-### 6.3 扩展性
-- 模块化设计，易于添加新策略
-- 数据加载器可支持其他数据源格式
-- 策略基类可以提取共同逻辑
+### 6.3 可扩展性
+- 将数据解析逻辑独立到 `parsers/` 子模块，未来可接入港股、期货。
+- 策略与数据之间通过 metadata 耦合，便于针对不同标的启用差异化手续费。
 
 ### 6.4 用户体验
-- 清晰的命令行帮助信息
-- 进度条显示（优化时）
-- 彩色输出区分不同信息类型
-- 结果摘要表格显示
-
-### 6.5 日期过滤最佳实践
-- **推荐**: 选择至少5年的时间跨度以覆盖完整市场周期；特斯拉建议从2015年起，英伟达建议从2010年起
-- **推荐**: 在各主要市场阶段（2010-2015、2015-2020、2020-至今）分段回测以验证策略稳定性
-- **推荐**: 与参数优化联动，在目标区间内寻找最优参数组合
-- **推荐**: 回测后查看日志中“过滤前/后数据行数”确认样本量是否足够
-- **避免**: 时间范围过长（>15年）导致旧数据权重过大
-- **避免**: 时间跨度不足3年造成统计意义不充分
-- **避免**: 只覆盖牛市阶段，忽略下行周期
-- **避免**: 忽视日期格式，命令行入参必须为 `YYYY-MM-DD`
-
-**快速模板:**
-```bash
-./run_backtest.sh -s <股票> --start-date <YYYY-MM-DD> --end-date <YYYY-MM-DD>
-```
+- `run_backtest.sh` 输出中文提示，区分信息/警告/错误。
+- 当批量回测多个标的时，提供进度条或计数提示。
+- 在结果汇总中加入“标的类型 / 中文名称 / 年化收益 / 最大回撤”等列。
 
 ## 7. 测试计划
 
 ### 7.1 单元测试
-- `test_data_loader.py`: 测试数据加载和转换
-- `test_strategies.py`: 测试各策略类
-- `test_backtest_runner.py`: 测试回测执行器
+- `test_data_loader.py`: 验证 `trade_date` 解析、OHLCV 类型转换、子目录扫描。
+- `test_backtest_runner.py`: 测试 `--category`、`--stock` 多值解析、日期过滤。
+- `test_strategies.py`: 针对 ETF 数据运行典型场景，验证信号与手续费处理。
 
 ### 7.2 集成测试
-- 端到端测试完整流程
-- 测试所有参数组合
-- 验证输出文件正确性
+- 构建小型数据集（3 只 ETF + 2 只基金）跑全流程，检查输出文件存在性。
+- 在优化模式下验证统计 CSV 中包含最优参数列。
 
 ### 7.3 数据验证
-- 确认转换后的OHLCV格式正确
-- 验证日期索引连续性
-- 检查是否有缺失值或异常值
+- 随机抽样 10 只标的，对比 CSV 行数与 DataFrame 行数一致。
+- 验证涨跌幅计算：`close / pre_close - 1` 与 `pct_chg` 误差不超过 1bp。
 
 ## 8. 交付物
-
-### 8.1 代码模块
-- [x] `utils/data_loader.py` - 数据加载器
-- [x] `strategies/sma_cross.py` - 双均线策略
-- [x] `strategies/sma_trailing.py` - 带止损策略
-- [x] `strategies/sma4_cross.py` - 四均线策略
-- [x] `backtest_runner.py` - 回测执行器
-- [x] `run_backtest.sh` - Shell脚本
-
-### 8.2 文档
-- [x] 本设计文档
-- [ ] README_BACKTESTING.md - 用户使用指南
-- [ ] API文档（docstrings）
-
-### 8.3 示例输出
-- [ ] 示例统计报告
-- [ ] 示例HTML图表
-- [ ] 示例优化结果
+- `utils/data_loader.py`：新增通用 OHLCV 加载流程与多目录扫描能力。
+- `backtest_runner.py`：更新 CLI 参数、结果汇总格式和默认数据目录。
+- `run_backtest.sh`：支持中国标的输入、类别过滤、中文帮助文本。
+- `strategies/*`：根据需要调整手续费、参数范围。
+- 文档：更新 README & 运行指南，描述中国市场数据差异。
 
 ## 9. 时间估算
+- 数据加载器改造：4h
+- CLI 与脚本更新：3h
+- 策略与手续费调整：2h
+- 测试与验证：3h
+- 文档与示例更新：2h  
+**合计：14h**
 
-- 数据加载模块: 2-3小时
-- 策略实现: 2-3小时
-- 回测执行器: 3-4小时
-- Shell脚本: 1-2小时
-- 测试和调试: 2-3小时
-- 文档编写: 1-2小时
+## 10. 风险与挑战
+- 数据文件数量过大导致扫描性能下降 → 使用缓存/懒加载。
+- 场外基金缺乏真实成交量 → 某些指标失效，需要策略侧特殊处理。
+- 不同标的价格量级差异大（货币基金 vs 行业 ETF） → 设置统一基准或归一化。
+- 回测结果可能因为复权或净值拆分问题出现断层 → 需在数据加载阶段检测异常涨跌幅。
 
-**总计: 11-17小时**
+## 11. 新功能规划：`run_backtest.sh` 支持中国标的
 
-## 10. 风险和挑战
+### 11.1 功能描述
+将 `run_backtest.sh` 与 `backtest_runner.py` 从“美股双标的回测”升级为“支持中国 ETF / 基金全量回测”。该功能包括数据目录切换、标的分类选择、策略批量运行与输出结构调整。
 
-### 10.1 数据质量
-- 理杏仁数据可能有缺失值
-- 只有收盘价，无法构造真实的OHLC
-- PE-TTM等基本面数据如何利用
+### 11.2 TODO 列表
+1. **数据目录切换**  
+   - [ ] 将脚本与 Python 执行器的默认 `--data-dir` 改为 `data/chinese_stocks`.  
+   - [ ] 新增参数 `--category {etf,fund,all}`；当用户指定类别时限制扫描目录。
 
-### 10.2 策略适用性
-- 只有收盘价数据，某些策略可能不适用
-- 需要根据实际数据调整参数范围
+2. **标的解析与映射**  
+   - [ ] 更新 `list_available_stocks` 支持递归遍历并返回 `{code, path, category}`。  
+   - [ ] 支持 `--stock` 同时接收逗号分隔的多个代码或 `all`。  
+   - [x] 支持通过 CLI 参数限制回测标的数量（`--instrument-limit`）。  
+   - 已在 `backtest_runner.py` 与 `run_backtest.sh` 中增加 `--instrument-limit`，可截取筛选顺序中前 N 个标的用于回测。  
+   - [ ] 引入可选的中文名映射（JSON/CSV），在汇总输出中展示。
 
-### 10.3 回测准确性
-- 无成交量数据可能影响某些分析
-- 滑点和市场影响未考虑
-- 历史数据不代表未来表现
+3. **数据加载适配**  
+   - [ ] 新增 `load_ohlcv_csv`，解析 `trade_date`、生成标准 OHLCV。  
+   - [ ] 根据 `category` 应用默认佣金（ETF 使用 0.0005，基金使用 0.0）。  
+   - [ ] 保留原 `load_lixinger_data` 作为备用，但默认走新的解析流程。
 
-## 11. 后续优化方向
+4. **输出与日志**  
+   - [ ] 更新结果文件命名与目录结构，区分 ETF/Fund（如 `results/etf/stats`）。  
+   - [ ] 在 CLI 汇总表中新增列：`标的类型`、`中文名称`、`货币`。  
+   - [ ] 统一脚本提示语为“中国市场回测系统”，提示用户余额在 CNY。
 
-1. **数据增强**:
-   - 整合其他数据源获取完整OHLCV
-   - 加入成交量数据
-   - 利用PE-TTM等基本面数据构建策略
+5. **验证流程**  
+   - [ ] 为最少 2 个 ETF、1 个基金编写回测示例，确保脚本能顺利运行。  
+   - [ ] 更新 README/AGENTS 文档，指导如何指定中国标的与类别。  
+   - [ ] 记录潜在数据异常（如交易暂停导致的缺口），并在日志中输出警告。
 
-2. **策略扩展**:
-   - 基于PE-TTM的价值投资策略
-   - 结合多个技术指标的复合策略
-   - 机器学习预测策略
+6. **低波动标的过滤**  
+   - [x] 在数据加载或回测入口处计算近段时间的年化波动率或价差，若低于阈值（如年化标准差 < 2%），标记为“低波动”并跳过回测。  
+   - [x] 支持维护可配置黑名单（默认包含 159001.SZ 等货币基金类标的）。  
+   - [x] 在 CLI 输出中明确告知被过滤的标的及原因，避免用户困惑。  
+   - [x] 聚合摘要中记录被跳过的标的数量，为未来扩展留痕。  
+   - 已在 `utils/data_loader.py` 中新增 `LowVolatilityConfig` 与年化波动率计算逻辑。  
+   - `backtest_runner.py` 提供 `--min-annual-vol`、`--vol-lookback`、`--low-vol-blacklist` 等参数并输出过滤统计。  
+   - `pytest backtesting/test/test_low_vol_filter.py` 对 159001.SZ 样本完成验收验证。
 
-3. **功能增强**:
-   - Web界面可视化
-   - 实时数据回测
-   - 多股票组合回测
-   - 风险管理模块
-
-4. **性能优化**:
-   - 分布式优化
-   - GPU加速计算
-   - 增量更新机制
+### 11.3 验收标准
+- 默认执行 `./run_backtest.sh` 能列出中国标的并完成至少一个 ETF 的回测。  
+- `python backtest_runner.py -s all --category etf` 能批量输出结果到新目录结构。  
+- 文档与脚本帮助信息均不再提及 `data/american_stocks`。  
+- 所有自动化测试通过，且针对中国数据的新增测试覆盖数据解析与 CLI 逻辑。

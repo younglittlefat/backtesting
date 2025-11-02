@@ -1,8 +1,8 @@
 #!/bin/bash
 ################################################################################
-# 美股回测执行脚本
+# 中国市场回测执行脚本
 #
-# 使用backtesting.py框架对特斯拉和英伟达股票进行策略回测
+# 使用 backtesting.py 框架对中国市场 ETF / 基金等标的执行策略回测
 #
 # 作者: Claude Code
 # 日期: 2025-10-30
@@ -28,55 +28,56 @@ NC='\033[0m' # No Color
 ################################################################################
 show_help() {
     cat << EOF
-${BLUE}美股回测系统${NC} - 使用backtesting.py对美股进行策略回测
+${BLUE}中国市场回测系统${NC} - 使用 backtesting.py 对中国 ETF / 基金进行策略回测
 
 ${YELLOW}使用方法:${NC}
   $0 [选项]
 
 ${YELLOW}选项:${NC}
-  -s, --stock <name>       股票名称: tesla, nvidia, all (默认: all)
-  -t, --strategy <name>    策略名称: sma_cross, all (默认: sma_cross)
-  -o, --optimize           启用参数优化
-  -c, --commission <rate>  手续费率 (默认: 0.002, 即0.2%)
-  -m, --cash <amount>      初始资金 (默认: 10000美元)
-  -d, --output-dir <path>  输出目录 (默认: results)
-  --data-dir <path>        数据目录 (默认: data/american_stocks)
-  --start-date <date>      开始日期，格式：YYYY-MM-DD (例如: 2020-01-01)
-  --end-date <date>        结束日期，格式：YYYY-MM-DD (例如: 2025-12-31)
-  -h, --help               显示此帮助信息
+  -s, --stock <codes>          标的代码（逗号分隔），支持 category:etf 语法，默认 all
+  --category <names>           可选类别筛选（例如: etf,fund）
+  -t, --strategy <name>        策略名称: sma_cross, all (默认: sma_cross)
+  -o, --optimize               启用参数优化
+  -c, --commission <rate>      手续费率；未提供时按类别默认
+  -m, --cash <amount>          初始资金 (默认: 10000)
+  -d, --output-dir <path>      输出目录 (默认: results)
+  --data-dir <path>            数据目录 (默认: data/chinese_stocks)
+  --aggregate-output <path>    聚合结果输出 CSV（预留批量汇总接口）
+  --start-date <date>          开始日期 YYYY-MM-DD
+  --end-date <date>            结束日期 YYYY-MM-DD
+  --instrument-limit <n>       限制本次回测的标的数量，只取前 N 个
+  --verbose                    输出详细日志（默认仅显示汇总）
+  -h, --help                   显示此帮助信息
 
 ${YELLOW}示例:${NC}
-  ${GREEN}# 对特斯拉运行双均线策略${NC}
-  $0 -s tesla -t sma_cross
+  ${GREEN}# 对 159001.SZ 运行双均线策略${NC}
+  $0 -s 159001.SZ -t sma_cross
 
-  ${GREEN}# 对所有股票运行策略并优化参数${NC}
-  $0 -s all -t sma_cross -o
+  ${GREEN}# 批量回测所有 ETF 并优化参数${NC}
+  $0 --category etf -t sma_cross -o
 
-  ${GREEN}# 对英伟达运行策略，自定义手续费和初始资金${NC}
-  $0 -s nvidia -t sma_cross -c 0.001 -m 50000
+  ${GREEN}# 指定多个标的，自定义手续费与资金${NC}
+  $0 -s 159001.SZ,510300.SH -c 0.0005 -m 50000
 
-  ${GREEN}# 只分析最近5年的数据${NC}
-  $0 -s tesla --start-date 2020-01-01
+  ${GREEN}# 限定日期范围并导出聚合摘要${NC}
+  $0 -s all --start-date 2020-01-01 --aggregate-output results/summary.csv
 
-  ${GREEN}# 分析特定时间段（2015-2020）${NC}
-  $0 -s nvidia --start-date 2015-01-01 --end-date 2020-12-31
+  ${GREEN}# 仅回测筛选到的前 5 只标的${NC}
+  $0 --category etf --instrument-limit 5
 
-  ${GREEN}# 快速测试（特斯拉，不优化）${NC}
-  $0 -s tesla
+  ${GREEN}# 查看详细日志输出${NC}
+  $0 --category etf --instrument-limit 5 --verbose
 
-${YELLOW}可用股票:${NC}
-  - tesla   : 特斯拉
-  - nvidia  : 英伟达
-  - all     : 所有股票
-
-${YELLOW}可用策略:${NC}
-  - sma_cross : 双均线交叉策略
-  - all       : 所有策略
+${YELLOW}示例标的:${NC}
+  - 159001.SZ : 华夏上证50ETF
+  - 510300.SH : 华泰柏瑞沪深300ETF
+  - 000001.OF : 华夏成长基金
+  - category:etf : 所有 ETF
 
 ${YELLOW}环境要求:${NC}
   - Conda环境: $CONDA_ENV
   - Python 3.9+
-  - 已安装backtesting.py及依赖
+  - 已安装 backtesting.py 及依赖
 
 EOF
 }
@@ -120,13 +121,36 @@ main() {
     # 默认参数
     STOCK="all"
     STRATEGY="sma_cross"
-    OPTIMIZE=""
-    COMMISSION=""
-    CASH=""
-    OUTPUT_DIR=""
-    DATA_DIR=""
-    START_DATE=""
-    END_DATE=""
+    OPTIMIZE_FLAG=0
+
+    CATEGORY_VALUE=""
+    CATEGORY_ARGS=()
+
+    COMMISSION_VALUE=""
+    COMMISSION_ARGS=()
+
+    CASH_VALUE="10000"
+    CASH_ARGS=()
+
+    OUTPUT_DIR_VALUE="results"
+    OUTPUT_DIR_ARGS=()
+
+    DATA_DIR_VALUE="data/chinese_stocks"
+    DATA_DIR_ARGS=("--data-dir" "$DATA_DIR_VALUE")
+
+    AGGREGATE_VALUE=""
+    AGGREGATE_ARGS=()
+
+    START_DATE_VALUE=""
+    START_DATE_ARGS=()
+
+    END_DATE_VALUE=""
+    END_DATE_ARGS=()
+
+    INSTRUMENT_LIMIT_VALUE=""
+    INSTRUMENT_LIMIT_ARGS=()
+
+    VERBOSE_FLAG=0
 
     # 解析命令行参数
     while [[ $# -gt 0 ]]; do
@@ -140,32 +164,57 @@ main() {
                 shift 2
                 ;;
             -o|--optimize)
-                OPTIMIZE="--optimize"
+                OPTIMIZE_FLAG=1
                 shift
                 ;;
             -c|--commission)
-                COMMISSION="--commission $2"
+                COMMISSION_VALUE="$2"
+                COMMISSION_ARGS=("--commission" "$2")
                 shift 2
                 ;;
             -m|--cash)
-                CASH="--cash $2"
+                CASH_VALUE="$2"
+                CASH_ARGS=("--cash" "$2")
                 shift 2
                 ;;
             -d|--output-dir)
-                OUTPUT_DIR="--output-dir $2"
+                OUTPUT_DIR_VALUE="$2"
+                OUTPUT_DIR_ARGS=("--output-dir" "$2")
+                shift 2
+                ;;
+            --category)
+                CATEGORY_VALUE="$2"
+                CATEGORY_ARGS=("--category" "$2")
                 shift 2
                 ;;
             --data-dir)
-                DATA_DIR="--data-dir $2"
+                DATA_DIR_VALUE="$2"
+                DATA_DIR_ARGS=("--data-dir" "$2")
+                shift 2
+                ;;
+            --aggregate-output)
+                AGGREGATE_VALUE="$2"
+                AGGREGATE_ARGS=("--aggregate-output" "$2")
                 shift 2
                 ;;
             --start-date)
-                START_DATE="--start-date $2"
+                START_DATE_VALUE="$2"
+                START_DATE_ARGS=("--start-date" "$2")
                 shift 2
                 ;;
             --end-date)
-                END_DATE="--end-date $2"
+                END_DATE_VALUE="$2"
+                END_DATE_ARGS=("--end-date" "$2")
                 shift 2
+                ;;
+            --instrument-limit)
+                INSTRUMENT_LIMIT_VALUE="$2"
+                INSTRUMENT_LIMIT_ARGS=("--instrument-limit" "$2")
+                shift 2
+                ;;
+            --verbose)
+                VERBOSE_FLAG=1
+                shift
                 ;;
             -h|--help)
                 show_help
@@ -184,35 +233,91 @@ main() {
 
     # 显示配置
     echo -e "${BLUE}======================================================================${NC}"
-    echo -e "${BLUE}                        美股回测系统启动${NC}"
+    echo -e "${BLUE}                     中国市场回测系统启动${NC}"
     echo -e "${BLUE}======================================================================${NC}"
     echo -e "${YELLOW}项目目录:${NC} $PROJECT_ROOT"
     echo -e "${YELLOW}Conda环境:${NC} $CONDA_ENV"
-    echo -e "${YELLOW}股票选择:${NC} $STOCK"
+    echo -e "${YELLOW}标的选择:${NC} $STOCK"
+    if [ -n "$CATEGORY_VALUE" ]; then
+        echo -e "${YELLOW}类别筛选:${NC} $CATEGORY_VALUE"
+    else
+        echo -e "${YELLOW}类别筛选:${NC} 不限"
+    fi
     echo -e "${YELLOW}策略选择:${NC} $STRATEGY"
-    if [ -n "$OPTIMIZE" ]; then
+    if [ $OPTIMIZE_FLAG -eq 1 ]; then
         echo -e "${YELLOW}参数优化:${NC} ${GREEN}启用${NC}"
     else
         echo -e "${YELLOW}参数优化:${NC} 未启用"
     fi
-    if [ -n "$START_DATE" ]; then
-        echo -e "${YELLOW}开始日期:${NC} $(echo $START_DATE | cut -d' ' -f2)"
+    if [ -n "$COMMISSION_VALUE" ]; then
+        echo -e "${YELLOW}统一手续费:${NC} $COMMISSION_VALUE"
+    else
+        echo -e "${YELLOW}统一手续费:${NC} 按类别默认"
     fi
-    if [ -n "$END_DATE" ]; then
-        echo -e "${YELLOW}结束日期:${NC} $(echo $END_DATE | cut -d' ' -f2)"
+    echo -e "${YELLOW}初始资金:${NC} $CASH_VALUE"
+    echo -e "${YELLOW}数据目录:${NC} $DATA_DIR_VALUE"
+    echo -e "${YELLOW}输出目录:${NC} $OUTPUT_DIR_VALUE"
+    if [ -n "$AGGREGATE_VALUE" ]; then
+        echo -e "${YELLOW}聚合输出:${NC} $AGGREGATE_VALUE"
+    fi
+    if [ -n "$START_DATE_VALUE" ]; then
+        echo -e "${YELLOW}开始日期:${NC} $START_DATE_VALUE"
+    fi
+    if [ -n "$END_DATE_VALUE" ]; then
+        echo -e "${YELLOW}结束日期:${NC} $END_DATE_VALUE"
+    fi
+    if [ -n "$INSTRUMENT_LIMIT_VALUE" ]; then
+        echo -e "${YELLOW}标的数量限制:${NC} $INSTRUMENT_LIMIT_VALUE"
+    fi
+    if [ $VERBOSE_FLAG -eq 1 ]; then
+        echo -e "${YELLOW}详细日志:${NC} ${GREEN}启用${NC}"
+    else
+        echo -e "${YELLOW}详细日志:${NC} 关闭"
     fi
     echo -e "${BLUE}======================================================================${NC}"
     echo ""
 
-    # 激活conda环境并运行Python脚本
     echo -e "${BLUE}激活conda环境并开始回测...${NC}"
     echo ""
 
-    # 构建Python命令 - 使用conda run来避免路径问题
-    PYTHON_CMD="$CONDA_PATH run -n $CONDA_ENV python $PYTHON_SCRIPT --stock $STOCK --strategy $STRATEGY $OPTIMIZE $COMMISSION $CASH $OUTPUT_DIR $DATA_DIR $START_DATE $END_DATE"
+    CMD=("$CONDA_PATH" "run" "-n" "$CONDA_ENV" "python" "$PYTHON_SCRIPT" "--stock" "$STOCK" "--strategy" "$STRATEGY")
 
-    # 执行命令
-    eval "$PYTHON_CMD"
+    if [ -n "$CATEGORY_VALUE" ]; then
+        CMD+=("${CATEGORY_ARGS[@]}")
+    fi
+    if [ $OPTIMIZE_FLAG -eq 1 ]; then
+        CMD+=("--optimize")
+    fi
+    if [ -n "$COMMISSION_VALUE" ]; then
+        CMD+=("${COMMISSION_ARGS[@]}")
+    fi
+    if [ ${#CASH_ARGS[@]} -gt 0 ]; then
+        CMD+=("${CASH_ARGS[@]}")
+    fi
+    if [ ${#OUTPUT_DIR_ARGS[@]} -gt 0 ]; then
+        CMD+=("${OUTPUT_DIR_ARGS[@]}")
+    fi
+    if [ ${#DATA_DIR_ARGS[@]} -gt 0 ]; then
+        CMD+=("${DATA_DIR_ARGS[@]}")
+    fi
+    if [ -n "$AGGREGATE_VALUE" ]; then
+        CMD+=("${AGGREGATE_ARGS[@]}")
+    fi
+    if [ -n "$START_DATE_VALUE" ]; then
+        CMD+=("${START_DATE_ARGS[@]}")
+    fi
+    if [ -n "$END_DATE_VALUE" ]; then
+        CMD+=("${END_DATE_ARGS[@]}")
+    fi
+    if [ -n "$INSTRUMENT_LIMIT_VALUE" ]; then
+        CMD+=("${INSTRUMENT_LIMIT_ARGS[@]}")
+    fi
+    if [ $VERBOSE_FLAG -eq 1 ]; then
+        CMD+=("--verbose")
+    fi
+
+    echo -e "${YELLOW}执行命令:${NC} ${CMD[*]}"
+    "${CMD[@]}"
     EXIT_CODE=$?
 
     # 检查执行结果
