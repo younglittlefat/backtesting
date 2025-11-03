@@ -1007,8 +1007,9 @@ class TushareDataFetcher:
                     # 获取该ETF在当前日期块的数据
                     self.logger.info(f"【分块】开始获取代码 {ts_code}")
                     df_list = []
+                    df_adj_list = []
                     for chunk_start, chunk_end in date_chunks:
-                        # 获取该ETF在当前日期块的数据
+                        # 获取该ETF在当前日期块的日线数据
                         now_df = self.pro.fund_daily(
                             ts_code=ts_code,
                             start_date=chunk_start,
@@ -1016,14 +1017,44 @@ class TushareDataFetcher:
                         )
                         now_req_times += 1
                         df_list.append(now_df)
+
+                        # 获取该ETF在当前日期块的复权因子数据
+                        now_df_adj = self.pro.fund_adj(
+                            ts_code=ts_code,
+                            start_date=chunk_start,
+                            end_date=chunk_end
+                        )
+                        now_req_times += 1
+                        df_adj_list.append(now_df_adj)
+
+                    # 合并日线数据
                     df = self._safe_concat_dataframes(df_list)
-                    
+                    # 合并复权数据
+                    df_adj = self._safe_concat_dataframes(df_adj_list)
+
+                    # 将复权因子left join到日线数据
+                    if not df.empty and not df_adj.empty:
+                        df = pd.merge(df, df_adj[['trade_date', 'adj_factor']],
+                                     on='trade_date', how='left')
+                        self.logger.info(f"【分块】成功合并复权因子，ts_code: {ts_code}")
+
                     if len(df) == 0:
                         self.logger.info("【分块】获取失败！尝试获取完整周期数据")
                         df = self.pro.fund_daily(
                             ts_code=ts_code
                         )
                         now_req_times += 1
+
+                        # 获取复权因子（全周期）
+                        df_adj = self.pro.fund_adj(ts_code=ts_code)
+                        now_req_times += 1
+
+                        # 合并复权因子
+                        if not df.empty and not df_adj.empty:
+                            df = pd.merge(df, df_adj[['trade_date', 'adj_factor']],
+                                         on='trade_date', how='left')
+                            self.logger.info(f"【不分块】成功合并复权因子，ts_code: {ts_code}")
+
                         if len(df) == 0:
                             self.logger.error("【不分块】获取失败！请检查接口问题")
                         else:
@@ -1043,6 +1074,7 @@ class TushareDataFetcher:
                                 'low_price': row.get('low'),
                                 'close_price': row.get('close'),
                                 'pre_close': row.get('pre_close'),
+                                'adj_factor': row.get('adj_factor'),
                                 'change_amount': row.get('change'),
                                 'pct_change': row.get('pct_chg'),
                                 'volume': row.get('vol'),

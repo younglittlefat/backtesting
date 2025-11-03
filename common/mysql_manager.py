@@ -747,6 +747,7 @@ class MySQLManager:
             low_price DECIMAL(12,4) DEFAULT NULL COMMENT '最低价/最低点位',
             close_price DECIMAL(12,4) DEFAULT NULL COMMENT '收盘价/收盘点位',
             pre_close DECIMAL(12,4) DEFAULT NULL COMMENT '昨收盘价/昨收盘点位',
+            adj_factor DECIMAL(12,6) DEFAULT NULL COMMENT '复权因子',
             change_amount DECIMAL(12,4) DEFAULT NULL COMMENT '涨跌额/涨跌点',
             pct_change DECIMAL(8,4) DEFAULT NULL COMMENT '涨跌幅(%)',
             
@@ -909,7 +910,7 @@ class MySQLManager:
                 # 添加其他字段
                 allowed_fields = [
                     'open_price', 'high_price', 'low_price', 'close_price', 'pre_close',
-                    'change_amount', 'pct_change', 'volume', 'amount', 'unit_nav',
+                    'adj_factor', 'change_amount', 'pct_change', 'volume', 'amount', 'unit_nav',
                     'accum_nav', 'adj_nav', 'accum_div', 'net_asset', 'total_netasset', 'ann_date'
                 ]
                 
@@ -1647,11 +1648,11 @@ class MySQLManager:
                 sql = """
                 INSERT INTO instrument_daily (
                     data_type, ts_code, trade_date, open_price, high_price, low_price,
-                    close_price, pre_close, change_amount, pct_change, volume, amount,
+                    close_price, pre_close, adj_factor, change_amount, pct_change, volume, amount,
                     unit_nav, accum_nav, adj_nav, accum_div, net_asset, total_netasset,
                     ann_date, created_at, updated_at
                 ) VALUES (
-                    %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s,
+                    %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s,
                     CURRENT_TIMESTAMP, CURRENT_TIMESTAMP
                 )
                 ON DUPLICATE KEY UPDATE
@@ -1660,6 +1661,7 @@ class MySQLManager:
                     low_price = VALUES(low_price),
                     close_price = VALUES(close_price),
                     pre_close = VALUES(pre_close),
+                    adj_factor = VALUES(adj_factor),
                     change_amount = VALUES(change_amount),
                     pct_change = VALUES(pct_change),
                     volume = VALUES(volume),
@@ -1686,6 +1688,7 @@ class MySQLManager:
                         data.get('low_price'),
                         data.get('close_price'),
                         data.get('pre_close'),
+                        data.get('adj_factor'),
                         data.get('change_amount'),
                         data.get('pct_change'),
                         data.get('volume'),

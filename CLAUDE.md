@@ -8,7 +8,7 @@ Backtesting.py 是一个用于回测交易策略的 Python 库。它提供了一
 
 ## 环境配置
 
-**重要**: 本项目必须在名为 `backtesting` 的 conda 环境中运行。
+**重要**: 本项目必须在名为 `backtesting` 的 conda 环境中运行。你现在是在wsl里的Ubuntu 24系统中运行，但项目在windows的硬盘上（/mnt/d/git/backtesting），请妥善处理脚本调用、传入的路径
 
 ### Conda 环境设置
 ```bash
