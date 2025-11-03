@@ -23,7 +23,7 @@ class MySQLManager:
         self, 
         host: str = "localhost",
         user: str = "root", 
-        password: str = "qlib",
+        password: str = "qlib_data",
         database: str = "qlib_data",
         port: int = 3306,
         charset: str = "utf8mb4"

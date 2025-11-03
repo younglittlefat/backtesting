@@ -55,6 +55,50 @@ class MySQLToCSVExporter:
         "net_asset",
         "total_netasset",
     ]
+    DAILY_COLUMN_LAYOUT: Dict[str, List[str]] = {
+        "etf": [
+            "trade_date",
+            "instrument_name",
+            "open",
+            "high",
+            "low",
+            "close",
+            "pre_close",
+            "change",
+            "pct_chg",
+            "volume",
+            "amount",
+            "adj_factor",
+            "adj_close",
+        ],
+        "index": [
+            "trade_date",
+            "instrument_name",
+            "open",
+            "high",
+            "low",
+            "close",
+            "pre_close",
+            "change",
+            "pct_chg",
+            "volume",
+            "amount",
+            "adj_factor",
+            "adj_close",
+        ],
+        "fund": [
+            "trade_date",
+            "instrument_name",
+            "unit_nav",
+            "accum_nav",
+            "adj_nav",
+            "accum_div",
+            "net_asset",
+            "total_netasset",
+            "adj_factor",
+            "adj_close",
+        ],
+    }
 
     def __init__(
         self,
@@ -85,6 +129,7 @@ class MySQLToCSVExporter:
 
         self.basic_dir = self.output_dir / "basic_info"
         self.daily_dir = self.output_dir / "daily"
+        self._instrument_name_cache: Dict[str, Dict[str, str]] = {}
 
     @staticmethod
     def validate_date(date_str: str, label: str) -> str:
@@ -170,6 +215,153 @@ class MySQLToCSVExporter:
 
         if has_daily:
             self.daily_dir.mkdir(parents=True, exist_ok=True)
+
+    def _load_instrument_names(self, data_type: str) -> Dict[str, str]:
+        """
+        Preload instrument names for the given data type into an internal cache.
+
+        Args:
+            data_type: Instrument category, e.g. 'etf', 'index', or 'fund'.
+
+        Returns:
+            Dict[str, str]: Mapping from ts_code to instrument name.
+        """
+        if not self.db_manager:
+            self._instrument_name_cache[data_type] = {}
+            return {}
+
+        try:
+            records = self.db_manager.get_instrument_basic(data_type=data_type)
+        except Exception as exc:  # pragma: no cover - defensive logging
+            self.logger.warning("加载%s基础信息失败: %s", data_type, exc)
+            records = []
+
+        mapping: Dict[str, str] = {}
+        for record in records or []:
+            ts_code = record.get("ts_code")
+            if not ts_code:
+                continue
+            mapping[ts_code] = record.get("name") or ""
+
+        self._instrument_name_cache[data_type] = mapping
+        return mapping
+
+    def _resolve_instrument_name(self, data_type: str, ts_code: str) -> str:
+        """
+        Resolve the Chinese instrument name for a given code.
+
+        Args:
+            data_type: Instrument category.
+            ts_code: Touchstone security code.
+
+        Returns:
+            str: Instrument name if available, otherwise empty string.
+        """
+        if not ts_code:
+            return ""
+
+        cache = self._instrument_name_cache.get(data_type)
+        if cache is None:
+            cache = self._load_instrument_names(data_type)
+
+        if ts_code in cache:
+            return cache[ts_code]
+
+        if not self.db_manager:
+            cache[ts_code] = ""
+            return ""
+
+        try:
+            records = self.db_manager.get_instrument_basic(
+                data_type=data_type, ts_code=ts_code
+            )
+        except Exception as exc:  # pragma: no cover - defensive logging
+            self.logger.warning("查询%s(%s)名称失败: %s", data_type, ts_code, exc)
+            cache[ts_code] = ""
+            return ""
+
+        if records:
+            name = records[0].get("name") or ""
+            cache[ts_code] = name
+            return name
+
+        cache[ts_code] = ""
+        return ""
+
+    def _compute_adjustment_columns(
+        self, data_type: str, frame: pd.DataFrame
+    ) -> Dict[str, pd.Series]:
+        """
+        Compute adjustment-related columns for the provided frame.
+
+        Args:
+            data_type: Instrument category.
+            frame: Transformed daily data.
+
+        Returns:
+            Dict[str, pd.Series]: Mapping of column names to computed series.
+        """
+        adjustments: Dict[str, pd.Series] = {}
+        if frame.empty:
+            return adjustments
+
+        if data_type in {"etf", "index"}:
+            if "pct_chg" in frame.columns and "close" in frame.columns:
+                pct = pd.to_numeric(frame["pct_chg"], errors="coerce")
+                close = pd.to_numeric(frame["close"], errors="coerce")
+                if not close.empty:
+                    cumulative = pct.fillna(0.0).div(100.0).add(1.0).cumprod()
+                    last_value = cumulative.iloc[-1]
+                    if pd.notna(last_value) and last_value != 0:
+                        adj_factor = cumulative / last_value
+                        adjustments["adj_factor"] = adj_factor
+                        adjustments["adj_close"] = close * adj_factor
+        elif data_type == "fund":
+            if "unit_nav" in frame.columns and "adj_nav" in frame.columns:
+                unit_nav = pd.to_numeric(frame["unit_nav"], errors="coerce")
+                adj_nav = pd.to_numeric(frame["adj_nav"], errors="coerce")
+                factor = pd.Series([float("nan")] * len(frame), index=frame.index)
+                valid = unit_nav.notna() & adj_nav.notna() & (unit_nav != 0)
+                if valid.any():
+                    factor.loc[valid] = (
+                        adj_nav.loc[valid] / unit_nav.loc[valid]
+                    ).astype(float)
+                if factor.notna().any():
+                    adjustments["adj_factor"] = factor
+                if adj_nav.notna().any():
+                    adjustments["adj_close"] = adj_nav.astype(float)
+
+        return adjustments
+
+    def _enrich_daily_output(
+        self, data_type: str, ts_code: str, frame: pd.DataFrame
+    ) -> pd.DataFrame:
+        """
+        Attach instrument metadata and adjustment columns to the daily frame.
+
+        Args:
+            data_type: Instrument category.
+            ts_code: Instrument identifier.
+            frame: Already transformed daily data.
+
+        Returns:
+            pd.DataFrame: Frame with instrument name and adjustment metrics.
+        """
+        instrument_name = self._resolve_instrument_name(data_type, ts_code)
+        enriched = frame.copy()
+        enriched.insert(1, "instrument_name", instrument_name)
+
+        adjustments = self._compute_adjustment_columns(data_type, enriched)
+        for column, values in adjustments.items():
+            enriched[column] = values
+
+        layout = self.DAILY_COLUMN_LAYOUT.get(data_type)
+        if layout:
+            for column in layout:
+                if column not in enriched.columns:
+                    enriched[column] = pd.NA
+            enriched = enriched[layout]
+        return enriched
 
     def _prepare_basic_dataframe(
         self, data_type: str, records: List[Dict]
@@ -482,10 +674,14 @@ class MySQLToCSVExporter:
                             if transformed.empty:
                                 continue
 
+                            enriched = self._enrich_daily_output(
+                                data_type=dtype, ts_code=code, frame=transformed
+                            )
+
                             file_path = dtype_dir / f"{code}.csv"
                             write_header = not file_path.exists()
                             mode = "w" if write_header else "a"
-                            transformed.to_csv(
+                            enriched.to_csv(
                                 file_path,
                                 index=False,
                                 encoding="utf-8",
@@ -494,9 +690,9 @@ class MySQLToCSVExporter:
                                 header=write_header,
                             )
 
-                            dtype_stats["daily_records"] += len(transformed)
-                            date_min = transformed["trade_date"].min()
-                            date_max = transformed["trade_date"].max()
+                            dtype_stats["daily_records"] += len(enriched)
+                            date_min = enriched["trade_date"].min()
+                            date_max = enriched["trade_date"].max()
                             dtype_stats["date_range"] = self._update_date_range(
                                 dtype_stats["date_range"], date_min, date_max
                             )

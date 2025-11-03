@@ -66,7 +66,13 @@ except ImportError:
     __version__ = '?.?.?'  # Package not installed
 
 from . import lib  # noqa: F401
-from ._plotting import set_bokeh_output  # noqa: F401
+try:
+    from ._plotting import set_bokeh_output  # noqa: F401
+except ModuleNotFoundError:  # pragma: no cover
+    def set_bokeh_output(*_args, **_kwargs):
+        raise ModuleNotFoundError(
+            "Optional dependency 'bokeh' is required for plotting features."
+        )
 from .backtesting import Backtest, Strategy  # noqa: F401
 
 

@@ -37,6 +37,14 @@ trade_date,open,high,low,close,pre_close,change,pct_chg,volume,amount
 
 命令行层面使用不含扩展名的代码（如 `159001.SZ`）作为标识，脚本负责编码与文件名映射。
 
+### 1.5 MySQL 数据库洞察
+
+- `instrument_basic` 表保存统一基础信息，含 `ts_code`、`name`、`market` 等字段，指数类默认以上交所/深交所记录为主，可直接补充中文简称。
+- `instrument_daily` 按 `data_type` 保存行情数据：ETF/指数提供价格与涨跌幅列，基金额外包含 `unit_nav`、`adj_nav` 等净值字段，便于生成复权指标。
+- `fund_dividend` 与 `fund_share` 记录基金分红与份额规模，目前 ETF 未见分红记录，如需前后复权需结合这两个表核对关键日期。
+- 实测 `adj_nav` 仅在基金标的中非空（约 300 万条），ETF/指数则需基于 `pct_change` 加 `close` 自行累计复权因子。
+- 数据库已初始化 `market_data`、`stock_info` 等扩展表，虽未参与本次导出，但可在后续用于补充股票类标的或市场统计。
+
 ## 2. 策略选择
 
 ### 2.1 推荐策略
@@ -256,7 +264,9 @@ results/
 3. **数据加载适配**  
    - [ ] 新增 `load_ohlcv_csv`，解析 `trade_date`、生成标准 OHLCV。  
    - [ ] 根据 `category` 应用默认佣金（ETF 使用 0.0005，基金使用 0.0）。  
-   - [ ] 保留原 `load_lixinger_data` 作为备用，但默认走新的解析流程。
+   - [ ] 保留原 `load_lixinger_data` 作为备用，但默认走新的解析流程。  
+   - [ ] 调整 scripts/export_mysql_to_csv.py，利用 instrument_basic 表补齐 instrument_name 字段，并随日线 CSV 一并落盘。  
+   - [ ] 在导出阶段基于 `instrument_daily` 的行情与 `adj_nav` 数据计算 `adj_factor`、`adj_close` 复权指标，并补充对应单元测试。  
 
 4. **输出与日志**  
    - [ ] 更新结果文件命名与目录结构，区分 ETF/Fund（如 `results/etf/stats`）。  
