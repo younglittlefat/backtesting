@@ -97,8 +97,9 @@ class BaseFetcher:
         """
         try:
             result = self.db_manager.get_instrument_basic(data_type='fund', ts_code=ts_code)
-            if result and 'management' in result:
-                return result['management']
+            # result是列表，需要取第一个元素
+            if result and len(result) > 0 and 'management' in result[0]:
+                return result[0]['management']
             return None
         except Exception as e:
             self.logger.error(f"获取基金管理公司信息失败 {ts_code}: {e}")

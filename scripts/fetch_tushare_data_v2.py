@@ -151,7 +151,15 @@ class TushareDataFetcherV2:
                 self.logger.info("使用按ETF工具遍历策略（支持分块）")
                 etf_count = self.etf_fetcher.fetch_daily_by_instrument_chunked(start_date, end_date)
                 results['etf'] = etf_count
-            # 注：by_date模式暂未实现
+            elif strategies['etf'] == 'by_date':
+                self.logger.info("使用按日期遍历ETF策略")
+                # 按日期遍历获取ETF数据
+                trading_dates = self.base_fetcher.get_trading_calendar(start_date, end_date)
+                etf_total = 0
+                for trade_date in trading_dates:
+                    count = self.etf_fetcher.fetch_daily_by_date(trade_date)
+                    etf_total += count
+                results['etf'] = etf_total
 
         # 处理指数数据
         if 'index' in strategies and strategies['index'] == 'batch':
@@ -159,10 +167,84 @@ class TushareDataFetcherV2:
             index_count = self.index_fetcher.fetch_daily_optimized(start_date, end_date)
             results['index'] = index_count
 
-        # 处理基金数据（暂未实现）
-        results['fund'] = 0
+        # 处理基金净值数据
+        if 'fund' in strategies:
+            if strategies['fund'] == 'by_instrument':
+                self.logger.info("使用按基金工具遍历策略获取净值数据")
+                fund_count = self.fund_fetcher.fetch_nav_by_instrument(start_date, end_date)
+                results['fund'] = fund_count
+            elif strategies['fund'] == 'by_date':
+                self.logger.info("使用按日期遍历基金策略获取净值数据")
+                # 按日期遍历获取基金净值
+                trading_dates = self.base_fetcher.get_trading_calendar(start_date, end_date)
+                fund_total = 0
+                for trade_date in trading_dates:
+                    count = self.fund_fetcher.fetch_nav_by_date(trade_date)
+                    fund_total += count
+                results['fund'] = fund_total
+        else:
+            results['fund'] = 0
 
         return results
+
+    def fetch_fund_dividend(self, start_date: str, end_date: str) -> int:
+        """
+        获取基金分红数据
+
+        Args:
+            start_date: 开始日期
+            end_date: 结束日期
+
+        Returns:
+            int: 成功获取的记录数
+        """
+        if not self.should_process_data_type('fund'):
+            self.logger.info("跳过基金分红数据获取（数据类型过滤）")
+            return 0
+
+        self.logger.info(f"开始获取基金分红数据: {start_date} - {end_date}")
+        count = self.fund_fetcher.fetch_dividend_data(start_date, end_date)
+        self.logger.info(f"基金分红数据获取完成: {count}条")
+        return count
+
+    def fetch_fund_share(self, start_date: str, end_date: str) -> int:
+        """
+        获取基金规模数据（自动选择最优策略）
+
+        Args:
+            start_date: 开始日期
+            end_date: 结束日期
+
+        Returns:
+            int: 成功获取的记录数
+        """
+        if not self.should_process_data_type('fund'):
+            self.logger.info("跳过基金规模数据获取（数据类型过滤）")
+            return 0
+
+        self.logger.info(f"开始获取基金规模数据: {start_date} - {end_date}")
+
+        # 使用与基金净值相同的策略决策逻辑
+        trading_dates = self.base_fetcher.get_trading_calendar(start_date, end_date)
+        days_count = len(trading_dates)
+        fund_count = self.fund_fetcher.get_count()
+
+        if fund_count == 0:
+            self.logger.warning("获取基金数量失败，使用按日期遍历方式")
+            strategy = 'by_date'
+        else:
+            # Trade off决策：天数 > 工具数量时，按工具遍历更高效
+            strategy = 'by_instrument' if days_count > fund_count else 'by_date'
+
+        self.logger.info(f"基金规模数据获取策略: {strategy} (交易日: {days_count}天, 基金数: {fund_count}个)")
+
+        if strategy == 'by_instrument':
+            count = self.fund_fetcher.fetch_share_by_instrument_chunked(start_date, end_date)
+        else:
+            count = self.fund_fetcher.fetch_share_by_date(start_date, end_date)
+
+        self.logger.info(f"基金规模数据获取完成: {count}条")
+        return count
 
 
 def setup_logging():
@@ -183,7 +265,9 @@ def main():
     parser.add_argument('--start_date', required=True, help='开始日期(YYYYMMDD格式)')
     parser.add_argument('--end_date', required=True, help='结束日期(YYYYMMDD格式)')
     parser.add_argument('--basic_info', action='store_true', help='是否获取基本信息')
-    parser.add_argument('--daily_data', action='store_true', help='是否获取日线数据')
+    parser.add_argument('--daily_data', action='store_true', help='是否获取日线数据（ETF/指数/基金净值）')
+    parser.add_argument('--fetch_dividend', action='store_true', help='是否获取基金分红数据')
+    parser.add_argument('--fetch_fund_share', action='store_true', help='是否获取基金规模数据')
     parser.add_argument('--mode', choices=['append', 'replace', 'clean_append'],
                        default='append', help='数据处理模式')
     parser.add_argument('--data_type', choices=['etf', 'index', 'fund'],
@@ -223,13 +307,31 @@ def main():
             basic_results = fetcher.fetch_basic_info()
             logger.info(f"基本信息获取完成: {basic_results}")
 
-        # 获取日线数据
+        # 获取日线数据（ETF/指数/基金净值）
         if args.daily_data:
             logger.info(f"开始获取日线数据: {args.start_date} - {args.end_date}")
             daily_results = fetcher.fetch_daily_data(
                 args.start_date, args.end_date, ts_code=args.ts_code
             )
             logger.info(f"日线数据获取完成: {daily_results}")
+
+        # 获取基金分红数据
+        if args.fetch_dividend:
+            logger.info(f"开始获取基金分红数据: {args.start_date} - {args.end_date}")
+            if args.data_type and args.data_type != 'fund':
+                logger.warning("分红数据仅适用于基金，但当前数据类型不是fund，跳过分红数据获取")
+            else:
+                dividend_count = fetcher.fetch_fund_dividend(args.start_date, args.end_date)
+                logger.info(f"基金分红数据获取完成: {dividend_count}条")
+
+        # 获取基金规模数据
+        if args.fetch_fund_share:
+            logger.info(f"开始获取基金规模数据: {args.start_date} - {args.end_date}")
+            if args.data_type and args.data_type != 'fund':
+                logger.warning("基金规模数据仅适用于基金，但当前数据类型不是fund，跳过基金规模数据获取")
+            else:
+                share_count = fetcher.fetch_fund_share(args.start_date, args.end_date)
+                logger.info(f"基金规模数据获取完成: {share_count}条")
 
         logger.info("=== Tushare数据获取完成 (V2重构版) ===")
 
