@@ -255,13 +255,38 @@ def _infer_category(base_path: Path, csv_path: Path) -> str:
     try:
         rel_parts = csv_path.relative_to(base_path).parts
     except ValueError:
-        rel_parts = csv_path.parts
+        # relative_to 失败时，尝试从 csv_path 的父目录名推断
+        parent_name = csv_path.parent.name.lower()
+        if parent_name and parent_name not in {'data', 'csv', 'daily', 'intraday'}:
+            return parent_name
+        return "unknown"
 
-    if len(rel_parts) >= 2 and rel_parts[0].lower() in {'daily', 'intraday'}:
-        return rel_parts[1].lower()
+    # 情况1: 相对路径有多个部分且包含 daily/intraday
+    # 例如: daily/etf/510300.SH.csv -> 'etf'
+    # 例如: csv/daily/etf/510300.SH.csv -> 'etf'
+    if len(rel_parts) >= 2:
+        for i, part in enumerate(rel_parts[:-1]):  # 排除文件名本身
+            if part.lower() in {'daily', 'intraday'}:
+                # 下一部分是类别
+                if i + 1 < len(rel_parts) - 1:
+                    return rel_parts[i + 1].lower()
+
+    # 情况2: 相对路径只有一个文件名，从完整路径提取类别
+    # 例如: base_path=data/csv/daily/etf, csv_path=.../etf/159231.SZ.csv -> 'etf'
+    if len(rel_parts) == 1:
+        # 从完整路径的父目录提取类别
+        parent_name = csv_path.parent.name.lower()
+        if parent_name and parent_name not in {'data', 'csv', 'daily', 'intraday'}:
+            return parent_name
+
+    # 情况3: 其他情况，尝试从第一个部分提取
     if len(rel_parts) >= 1:
-        parent = Path(rel_parts[0]).stem.lower()
-        return parent if parent else "unknown"
+        first_part = rel_parts[0].lower()
+        # 如果第一部分不是文件名（即包含子目录），使用它
+        if first_part != csv_path.name.lower():
+            parent = Path(first_part).stem.lower()
+            return parent if parent else "unknown"
+
     return "unknown"
 
 
@@ -372,21 +397,50 @@ def load_chinese_ohlcv_data(
     if verbose:
         print(f"加载数据文件: {csv_path}")
         print(f"原始数据行数: {len(df)}")
-    required_cols = {'trade_date', 'open', 'high', 'low', 'close', 'volume'}
-    available_cols = {col.lower() for col in df.columns}
-    if not required_cols.issubset(available_cols):
-        raise ValueError(f"CSV文件缺少必要的列: {required_cols}. 可用列: {list(df.columns)}")
 
-    # 统一列名大小写，便于后续处理
-    ohlcv_df = _create_ohlcv_dataframe(
-        df=df.rename(columns={orig: orig.lower() for orig in df.columns}),
-        date_col='trade_date',
-        open_col='open',
-        high_col='high',
-        low_col='low',
-        close_col='close',
-        volume_col='volume',
-    )
+    # 统一列名大小写
+    df_lower = df.rename(columns={orig: orig.lower() for orig in df.columns})
+    available_cols = set(df_lower.columns)
+
+    # 检查是否有复权价格列
+    has_adj_prices = all(col in available_cols for col in ['adj_open', 'adj_high', 'adj_low', 'adj_close'])
+
+    if has_adj_prices:
+        # 使用复权价格
+        required_cols = {'trade_date', 'adj_open', 'adj_high', 'adj_low', 'adj_close', 'volume'}
+        if not required_cols.issubset(available_cols):
+            raise ValueError(f"CSV文件缺少必要的列: {required_cols}. 可用列: {list(df.columns)}")
+
+        if verbose:
+            print("使用复权价格进行回测")
+
+        ohlcv_df = _create_ohlcv_dataframe(
+            df=df_lower,
+            date_col='trade_date',
+            open_col='adj_open',
+            high_col='adj_high',
+            low_col='adj_low',
+            close_col='adj_close',
+            volume_col='volume',
+        )
+    else:
+        # 使用原始价格
+        required_cols = {'trade_date', 'open', 'high', 'low', 'close', 'volume'}
+        if not required_cols.issubset(available_cols):
+            raise ValueError(f"CSV文件缺少必要的列: {required_cols}. 可用列: {list(df.columns)}")
+
+        if verbose:
+            print("使用原始价格进行回测（未找到复权价格列）")
+
+        ohlcv_df = _create_ohlcv_dataframe(
+            df=df_lower,
+            date_col='trade_date',
+            open_col='open',
+            high_col='high',
+            low_col='low',
+            close_col='close',
+            volume_col='volume',
+        )
 
     if start_date or end_date:
         original_len = len(ohlcv_df)
