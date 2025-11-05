@@ -45,6 +45,7 @@ class MySQLToCSVExporter:
         "pct_change",
         "volume",
         "amount",
+        "adj_factor",
     ]
 
     FUND_COLUMNS = [
@@ -69,6 +70,9 @@ class MySQLToCSVExporter:
             "volume",
             "amount",
             "adj_factor",
+            "adj_open",
+            "adj_high",
+            "adj_low",
             "adj_close",
         ],
         "index": [
@@ -84,6 +88,9 @@ class MySQLToCSVExporter:
             "volume",
             "amount",
             "adj_factor",
+            "adj_open",
+            "adj_high",
+            "adj_low",
             "adj_close",
         ],
         "fund": [
@@ -306,16 +313,39 @@ class MySQLToCSVExporter:
             return adjustments
 
         if data_type in {"etf", "index"}:
-            if "pct_chg" in frame.columns and "close" in frame.columns:
-                pct = pd.to_numeric(frame["pct_chg"], errors="coerce")
-                close = pd.to_numeric(frame["close"], errors="coerce")
-                if not close.empty:
-                    cumulative = pct.fillna(0.0).div(100.0).add(1.0).cumprod()
-                    last_value = cumulative.iloc[-1]
-                    if pd.notna(last_value) and last_value != 0:
-                        adj_factor = cumulative / last_value
-                        adjustments["adj_factor"] = adj_factor
-                        adjustments["adj_close"] = close * adj_factor
+            # 优先使用数据库中的 adj_factor
+            if "adj_factor" in frame.columns and frame["adj_factor"].notna().any():
+                adj_factor = pd.to_numeric(frame["adj_factor"], errors="coerce")
+                self.logger.debug("使用数据库中的adj_factor字段")
+            elif "pct_chg" in frame.columns:
+                # 回退：向后复权（无向前看偏差）
+                pct = pd.to_numeric(frame["pct_chg"], errors="coerce").fillna(0.0)
+                adj_factor = (pct / 100.0 + 1.0).cumprod()
+                self.logger.debug("adj_factor缺失，使用向后复权作为回退")
+            else:
+                return adjustments
+
+            # 计算复权价格
+            if adj_factor.notna().any():
+                adjustments["adj_factor"] = adj_factor
+
+                # 计算复权 OHLC
+                if "close" in frame.columns:
+                    close = pd.to_numeric(frame["close"], errors="coerce")
+                    adjustments["adj_close"] = close * adj_factor
+
+                if "open" in frame.columns:
+                    open_price = pd.to_numeric(frame["open"], errors="coerce")
+                    adjustments["adj_open"] = open_price * adj_factor
+
+                if "high" in frame.columns:
+                    high_price = pd.to_numeric(frame["high"], errors="coerce")
+                    adjustments["adj_high"] = high_price * adj_factor
+
+                if "low" in frame.columns:
+                    low_price = pd.to_numeric(frame["low"], errors="coerce")
+                    adjustments["adj_low"] = low_price * adj_factor
+
         elif data_type == "fund":
             if "unit_nav" in frame.columns and "adj_nav" in frame.columns:
                 unit_nav = pd.to_numeric(frame["unit_nav"], errors="coerce")
@@ -911,7 +941,7 @@ def parse_arguments() -> argparse.Namespace:
     )
     parser.add_argument(
         "--db_password",
-        default="qlib",
+        default="qlib_data",
         help="MySQL密码，默认qlib",
     )
     parser.add_argument(

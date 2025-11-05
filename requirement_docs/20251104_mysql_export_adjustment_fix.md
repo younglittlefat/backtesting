@@ -419,7 +419,234 @@ python test_adj_computation.py
 
 ---
 
-**实施时间**: 约 2 小时
+---
+
+## 11. 新增功能记录（2025-11-04 后续）
+
+### 11.1 Feature 1: 回测结果CSV汇总自动生成
+
+**需求描述**：在回测完成后自动生成包含所有结果的CSV汇总文件
+
+**实施方案**：
+- **文件**: `backtest_runner.py:647-709`
+- **功能**: 自动生成 `results/summary/backtest_summary_YYYYMMDD_HHMMSS.csv`
+- **格式**: 与终端输出一致（代码、类型、策略、收益率、夏普比率、最大回撤）
+- **排序**: 按收益率降序排序
+- **编码**: UTF-8 BOM 支持中文
+
+**测试验证**：
+```bash
+./run_backtest.sh --start-date 20230102 --end-date 20251103 \
+  --data-dir data/csv/daily/etf --instrument-limit 10
+```
+
+**输出示例**：
+```
+汇总结果已保存: results/summary/backtest_summary_20251104_234123.csv
+```
+
+### 11.2 Feature 2: ETF基础信息导出修复
+
+**问题描述**：`scripts/export_mysql_to_csv.py` 同时使用 `--export_basic` 和 `--export_daily` 时，ETF基础信息导出为空
+
+**根本原因**：数据库 `instrument_basic` 表中缺少ETF基础信息数据，只有Fund数据
+
+**解决方案**：
+1. **数据导入**: 使用 `fetch_tushare_data_v2.py` 获取ETF基础信息
+   ```bash
+   python scripts/fetch_tushare_data_v2.py --start_date 20230102 \
+     --end_date 20251104 --data_type etf --basic_info
+   ```
+
+2. **验证结果**: ETF基础信息成功导入
+   - ETF记录数：1803条
+   - Fund记录数：4415条
+   - 总计：6218条
+
+**测试验证**：
+```bash
+# 单标的测试
+python scripts/export_mysql_to_csv.py --start_date 20240101 \
+  --end_date 20241031 --data_type etf --ts_code 510300.SH \
+  --export_basic --export_daily --output_dir test_export
+
+# 批量测试
+python scripts/export_mysql_to_csv.py --start_date 20240101 \
+  --end_date 20240131 --data_type etf --export_basic --export_daily \
+  --output_dir test_export_batch
+```
+
+**结果**：
+- ✅ ETF基础信息正确导出到 `etf_basic_info.csv`
+- ✅ ETF日线数据正确导出到各 `{ts_code}.csv` 文件
+- ✅ 批量导出1803个ETF基础信息，1348个标的日线数据
+
+**结论**：脚本代码本身无问题，问题已通过数据导入解决。
+
+---
+
+### 11.3 Feature 3: 回测结果中文名称映射
+
+**需求描述**：利用basic_info里的信息，为回测结果文件添加标的中文名称，包括backtest_summary_xxx.csv和stats里的xx.csv
+
+**实施方案**：
+- **文件**: `backtest_runner.py`
+- **核心功能**:
+  1. 从数据库批量获取标的中文名称
+  2. 更新summary CSV格式，添加"标的名称"列
+  3. 更新stats CSV，将"标的名称"从代码改为中文名
+  4. 更新终端输出，显示中文名称
+
+**技术实现**：
+
+1. **新增函数** (`backtest_runner.py:53-108`):
+   ```python
+   def enrich_instruments_with_names(instruments: List[InstrumentInfo]) -> List[InstrumentInfo]:
+       """从数据库获取标的中文名称，丰富InstrumentInfo对象"""
+       # 按类别批量查询basic_info
+       # 更新InstrumentInfo.display_name字段
+   ```
+
+2. **主流程集成** (`backtest_runner.py:609-611`):
+   ```python
+   # 从数据库获取中文名称
+   print("\n获取标的中文名称...")
+   instruments_to_process = enrich_instruments_with_names(instruments_to_process)
+   ```
+
+3. **Summary CSV更新** (`backtest_runner.py:758-766`):
+   ```python
+   summary_rows.append({
+       '代码': instrument.code,
+       '标的名称': resolve_display_name(instrument),  # 新增
+       '类型': instrument.category,
+       # ...
+   })
+   ```
+
+4. **终端输出更新** (`backtest_runner.py:714-737`):
+   ```python
+   header = f"{'代码':<12} {'名称':<16} {'类型':<8} ..."  # 新增名称列
+   ```
+
+**测试验证**：
+```bash
+# 测试多标的中文名映射
+conda run -n backtesting python backtest_runner.py \
+  --stock 510300.SH,159915.SZ,159001.SZ \
+  --start-date 2024-01-01 --end-date 2024-01-31 \
+  --data-dir data/csv/daily/etf --disable-low-vol-filter
+```
+
+**输出对比**：
+
+**之前**：
+```
+代码,类型,策略,收益率(%),夏普比率,最大回撤(%)
+510300.SH,etf,sma_cross,0.0,,-0.0
+```
+
+**之后**：
+```
+代码,标的名称,类型,策略,收益率(%),夏普比率,最大回撤(%)
+510300.SH,沪深300ETF,etf,sma_cross,0.0,,-0.0
+159915.SZ,创业板ETF,etf,sma_cross,0.0,,-0.0
+159001.SZ,货币ETF,etf,sma_cross,0.0,,-0.0
+```
+
+**验证结果**：
+- ✅ 数据库中文名称映射: 3/3个标的成功
+- ✅ Summary CSV包含"标的名称"列
+- ✅ Stats CSV的"标的名称"显示中文名
+- ✅ 终端输出显示中文名称
+- ✅ 自动fallback：无中文名时显示代码
+
+---
+
+**实施时间**: 约 3 小时
 **实施日期**: 2025-11-04
-**测试状态**: ✅ 全部通过（5/5 类别推断测试 + 实际回测验证）
-**下一步**: 生产环境验证，检查数据库 adj_factor 完整性
+**测试状态**: ✅ 全部通过（数据导入验证 + 功能测试验证 + 批量测试验证）
+**下一步**: 定期检查 Tushare 数据获取，确保基础信息完整性
+
+### 11.4 Feature 4: 回测结果CSV格式优化（2025-11-04）
+
+**需求描述**：优化回测结果CSV的数据格式，提高可读性和实用性
+1. 所有数字保留小数点后三位，避免过长影响观感
+2. 每个标的显示真正的回测起止日期，便于评估时间区间是否充足
+
+**实施方案**：
+
+**文件**: `backtest_runner.py`
+
+1. **汇总CSV格式优化** (`lines 764-778`):
+   ```python
+   # 获取实际回测起止日期
+   start_date = str(stats['Start'])[:10] if 'Start' in stats else '未知'
+   end_date = str(stats['End'])[:10] if 'End' in stats else '未知'
+
+   summary_rows.append({
+       '代码': instrument.code,
+       '标的名称': resolve_display_name(instrument),
+       '类型': instrument.category,
+       '策略': result['strategy'],
+       '回测开始日期': start_date,        # 新增：实际起始日期
+       '回测结束日期': end_date,          # 新增：实际结束日期
+       '收益率(%)': round(return_pct, 3) if return_pct is not None else None,     # 改进：3位小数
+       '夏普比率': round(sharpe_value, 3) if not pd.isna(sharpe_value) else None, # 改进：3位小数
+       '最大回撤(%)': round(max_dd, 3) if max_dd is not None else None,          # 改进：3位小数
+   })
+   ```
+
+2. **个别Stats CSV格式优化** (`lines 335-357`):
+   ```python
+   summary_data = {
+       '开始日期': str(stats['Start'])[:10],    # 改进：只显示日期部分
+       '结束日期': str(stats['End'])[:10],      # 改进：只显示日期部分
+       '初始资金': round(cash, 3),              # 改进：3位小数
+       '最终资金': round(stats['Equity Final [$]'], 3),      # 改进：3位小数
+       '收益率(%)': round(_safe_stat(stats, 'Return [%]'), 3),    # 改进：3位小数
+       '夏普比率': round(stats['Sharpe Ratio'], 3) if not pd.isna(stats['Sharpe Ratio']) else None,
+       # ... 所有数字字段都使用round(value, 3)
+   }
+   ```
+
+**改进对比**：
+
+**之前格式**：
+```csv
+代码,标的名称,类型,策略,收益率(%),夏普比率,最大回撤(%)
+510300.SH,沪深300ETF,etf,sma_cross,-28.689070892334555,-0.6023804664611816,-35.549211356466876
+```
+
+**之后格式**：
+```csv
+代码,标的名称,类型,策略,回测开始日期,回测结束日期,收益率(%),夏普比率,最大回撤(%)
+510300.SH,沪深300ETF,etf,sma_cross,2023-01-03,2024-10-31,-28.689,-0.602,-35.549
+```
+
+**优势**：
+1. ✅ **数字格式**: 所有数字统一保留3位小数，提高可读性
+2. ✅ **日期信息**: 添加实际回测起止日期，便于评估数据完整性
+3. ✅ **一致性**: 汇总CSV和个别stats CSV格式统一
+4. ✅ **实用性**: 可直接从CSV判断回测时间区间是否足够
+
+**测试验证**：
+```bash
+# 测试命令
+./run_backtest.sh --start-date 20230102 --end-date 20251103 \
+  --data-dir data/csv/daily/etf --instrument-limit 5
+
+# 验证结果
+cat results/summary/backtest_summary_20251104_235842.csv
+```
+
+**结果示例**：
+```csv
+代码,标的名称,类型,策略,回测开始日期,回测结束日期,收益率(%),夏普比率,最大回撤(%)
+159102.SZ,港股通生物科技ETF,etf,sma_cross,2025-09-16,2025-11-03,0.0,,-0.0
+159101.SZ,港股通科技ETF基金,etf,sma_cross,2025-09-03,2025-11-03,-0.684,-0.193,-7.493
+```
+
+**状态**: ✅ 已完成并验证
+
+---

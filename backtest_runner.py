@@ -29,6 +29,7 @@ from utils.data_loader import (
     load_instrument_data,
 )
 from strategies.sma_cross import SmaCross, OPTIMIZE_PARAMS, CONSTRAINTS
+from common.mysql_manager import MySQLManager
 
 
 # 可用的策略映射
@@ -47,6 +48,64 @@ DEFAULT_COMMISSION = 0.001
 def resolve_display_name(instrument: InstrumentInfo) -> str:
     """返回用于显示的标的名称."""
     return instrument.display_name or instrument.code
+
+
+def enrich_instruments_with_names(instruments: List[InstrumentInfo]) -> List[InstrumentInfo]:
+    """
+    从数据库获取标的中文名称，丰富InstrumentInfo对象。
+
+    Args:
+        instruments: 标的信息列表
+
+    Returns:
+        更新后的标的信息列表，包含中文名称
+    """
+    if not instruments:
+        return instruments
+
+    # 创建数据库连接
+    try:
+        db_manager = MySQLManager()
+    except Exception as exc:
+        print(f"警告: 无法连接数据库获取中文名称: {exc}")
+        return instruments
+
+    # 按类别分组以优化查询
+    by_category: Dict[str, List[InstrumentInfo]] = {}
+    for instrument in instruments:
+        if instrument.category not in by_category:
+            by_category[instrument.category] = []
+        by_category[instrument.category].append(instrument)
+
+    # 获取基础信息
+    name_mapping: Dict[str, str] = {}  # ts_code -> name
+    for category, cat_instruments in by_category.items():
+        codes = [inst.code for inst in cat_instruments]
+        try:
+            # 批量查询该类别的基础信息
+            basic_infos = db_manager.get_instrument_basic(data_type=category)
+            if basic_infos:
+                for info in basic_infos:
+                    ts_code = info.get('ts_code', '').strip()
+                    name = info.get('name', '').strip()
+                    if ts_code and name and ts_code in codes:
+                        name_mapping[ts_code] = name
+        except Exception as exc:
+            print(f"警告: 获取{category}类别基础信息失败: {exc}")
+            continue
+
+    # 更新InstrumentInfo对象
+    updated_instruments = []
+    for instrument in instruments:
+        display_name = name_mapping.get(instrument.code, None)
+        updated_instrument = instrument.with_display_name(display_name)
+        updated_instruments.append(updated_instrument)
+
+    # 统计获取情况
+    found_count = sum(1 for inst in updated_instruments if inst.display_name)
+    print(f"数据库中文名称映射: {found_count}/{len(instruments)} 个标的")
+
+    return updated_instruments
 
 
 def _duration_to_days(value) -> int:
@@ -273,29 +332,29 @@ def save_results(
         '货币': instrument.currency,
         '策略': strategy_name,
         '是否优化': '是' if optimized else '否',
-        '开始日期': str(stats['Start']),
-        '结束日期': str(stats['End']),
+        '开始日期': str(stats['Start'])[:10],  # 只显示日期部分
+        '结束日期': str(stats['End'])[:10],    # 只显示日期部分
         '持续天数': _duration_to_days(stats.get('Duration')),
-        '初始资金': cash,
-        '最终资金': stats['Equity Final [$]'],
-        '收益率(%)': _safe_stat(stats, 'Return [%]'),
-        '年化收益率(%)': _safe_stat(stats, 'Return (Ann.) [%]'),
-        '买入持有收益率(%)': _safe_stat(stats, 'Buy & Hold Return [%]', default=0.0),
-        '夏普比率': stats['Sharpe Ratio'],
-        '索提诺比率': stats['Sortino Ratio'],
-        '卡玛比率': stats['Calmar Ratio'],
-        '最大回撤(%)': _safe_stat(stats, 'Max. Drawdown [%]', default=0.0),
-        '平均回撤(%)': _safe_stat(stats, 'Avg. Drawdown [%]', default=0.0),
+        '初始资金': round(cash, 3),
+        '最终资金': round(stats['Equity Final [$]'], 3),
+        '收益率(%)': round(_safe_stat(stats, 'Return [%]'), 3),
+        '年化收益率(%)': round(_safe_stat(stats, 'Return (Ann.) [%]'), 3),
+        '买入持有收益率(%)': round(_safe_stat(stats, 'Buy & Hold Return [%]', default=0.0), 3),
+        '夏普比率': round(stats['Sharpe Ratio'], 3) if not pd.isna(stats['Sharpe Ratio']) else None,
+        '索提诺比率': round(stats['Sortino Ratio'], 3) if not pd.isna(stats['Sortino Ratio']) else None,
+        '卡玛比率': round(stats['Calmar Ratio'], 3) if not pd.isna(stats['Calmar Ratio']) else None,
+        '最大回撤(%)': round(_safe_stat(stats, 'Max. Drawdown [%]', default=0.0), 3),
+        '平均回撤(%)': round(_safe_stat(stats, 'Avg. Drawdown [%]', default=0.0), 3),
         '最大回撤持续天数': _duration_to_days(stats.get('Max. Drawdown Duration')),
         '交易次数': stats['# Trades'],
-        '胜率(%)': _safe_stat(stats, 'Win Rate [%]', default=0.0),
-        '最佳交易(%)': _safe_stat(stats, 'Best Trade [%]', default=0.0),
-        '最差交易(%)': _safe_stat(stats, 'Worst Trade [%]', default=0.0),
-        '平均交易(%)': _safe_stat(stats, 'Avg. Trade [%]', default=0.0),
-        '盈亏比': _safe_stat(stats, 'Profit Factor', default=0.0),
-        '期望值(%)': _safe_stat(stats, 'Expectancy [%]', default=0.0),
-        'SQN': _safe_stat(stats, 'SQN', default=0.0),
-        '手续费': stats.get('Commissions [$]', 0),
+        '胜率(%)': round(_safe_stat(stats, 'Win Rate [%]', default=0.0), 3),
+        '最佳交易(%)': round(_safe_stat(stats, 'Best Trade [%]', default=0.0), 3),
+        '最差交易(%)': round(_safe_stat(stats, 'Worst Trade [%]', default=0.0), 3),
+        '平均交易(%)': round(_safe_stat(stats, 'Avg. Trade [%]', default=0.0), 3),
+        '盈亏比': round(_safe_stat(stats, 'Profit Factor', default=0.0), 3),
+        '期望值(%)': round(_safe_stat(stats, 'Expectancy [%]', default=0.0), 3),
+        'SQN': round(_safe_stat(stats, 'SQN', default=0.0), 3),
+        '手续费': round(stats.get('Commissions [$]', 0), 3),
     }
 
     if optimized and hasattr(stats._strategy, 'n1'):
@@ -547,6 +606,10 @@ def main() -> int:
         print(f"\n标的数量限制: 仅回测前 {instrument_limit} 只标的。")
         instruments_to_process = instruments_to_process[:instrument_limit]
 
+    # 从数据库获取中文名称
+    print("\n获取标的中文名称...")
+    instruments_to_process = enrich_instruments_with_names(instruments_to_process)
+
     if args.strategy == 'all':
         strategies_to_process = list(STRATEGIES.keys())
     else:
@@ -648,7 +711,7 @@ def main() -> int:
         print("\n" + "=" * 70)
         print("回测汇总")
         print("=" * 70)
-        header = f"{'代码':<12} {'类型':<8} {'策略':<15} {'收益率':>10} {'夏普':>8} {'最大回撤':>10}"
+        header = f"{'代码':<12} {'名称':<16} {'类型':<8} {'策略':<15} {'收益率':>10} {'夏普':>8} {'最大回撤':>10}"
         print(header)
         print("-" * len(header))
         for result in all_results:
@@ -658,8 +721,14 @@ def main() -> int:
             sharpe_value = stats['Sharpe Ratio']
             sharpe_display = f"{sharpe_value:>7.2f}" if not pd.isna(sharpe_value) else "   -- "
             max_dd = _safe_stat(stats, 'Max. Drawdown [%]', default=0.0)
+
+            # 截断中文名称以适应显示宽度
+            display_name = resolve_display_name(instrument)
+            name_display = display_name[:15] + "..." if len(display_name) > 15 else display_name
+
             print(
                 f"{instrument.code:<12} "
+                f"{name_display:<16} "
                 f"{instrument.category:<8} "
                 f"{result['strategy']:<15} "
                 f"{return_pct:>9.2f}% "
@@ -670,15 +739,50 @@ def main() -> int:
 
         print(f"\n结果已保存到 {args.output_dir}/<category>/stats|plots/ 目录")
 
+        # 自动生成汇总CSV
         aggregate_payload = build_aggregate_payload(all_results)
+        timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+
+        # 如果用户指定了aggregate_output，使用用户指定的路径
         if args.aggregate_output:
-            aggregate_df = pd.DataFrame(aggregate_payload)
             aggregate_path = Path(args.aggregate_output)
-            aggregate_path.parent.mkdir(parents=True, exist_ok=True)
-            aggregate_df.to_csv(aggregate_path, index=False, encoding='utf-8-sig')
-            print(f"聚合结果已写入: {aggregate_path}")
         else:
-            print(f"聚合数据条目: {len(aggregate_payload)} (预留统一汇总接口)")
+            # 否则自动生成到 results/summary 目录
+            summary_dir = Path(args.output_dir) / 'summary'
+            summary_dir.mkdir(parents=True, exist_ok=True)
+            aggregate_path = summary_dir / f"backtest_summary_{timestamp}.csv"
+
+        # 构建汇总DataFrame，格式与终端输出一致
+        summary_rows = []
+        for result in all_results:
+            instrument = result['instrument']  # type: ignore[assignment]
+            stats = result['stats']  # type: ignore[assignment]
+            return_pct = _safe_stat(stats, 'Return [%]')
+            sharpe_value = stats['Sharpe Ratio']
+            max_dd = _safe_stat(stats, 'Max. Drawdown [%]', default=0.0)
+
+            # 获取实际回测起止日期
+            start_date = str(stats['Start'])[:10] if 'Start' in stats else '未知'
+            end_date = str(stats['End'])[:10] if 'End' in stats else '未知'
+
+            summary_rows.append({
+                '代码': instrument.code,
+                '标的名称': resolve_display_name(instrument),
+                '类型': instrument.category,
+                '策略': result['strategy'],
+                '回测开始日期': start_date,
+                '回测结束日期': end_date,
+                '收益率(%)': round(return_pct, 3) if return_pct is not None else None,
+                '夏普比率': round(sharpe_value, 3) if not pd.isna(sharpe_value) else None,
+                '最大回撤(%)': round(max_dd, 3) if max_dd is not None else None,
+            })
+
+        summary_df = pd.DataFrame(summary_rows)
+        # 按收益率降序排序
+        summary_df = summary_df.sort_values(by='收益率(%)', ascending=False)
+        aggregate_path.parent.mkdir(parents=True, exist_ok=True)
+        summary_df.to_csv(aggregate_path, index=False, encoding='utf-8-sig')
+        print(f"汇总结果已保存: {aggregate_path}")
 
         return 0
 

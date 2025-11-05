@@ -46,6 +46,7 @@ ${YELLOW}选项:${NC}
   --start-date <date>          开始日期 YYYY-MM-DD
   --end-date <date>            结束日期 YYYY-MM-DD
   --instrument-limit <n>       限制本次回测的标的数量，只取前 N 个
+  --keep-negative              保留收益率为负的标的结果文件（默认会删除）
   --verbose                    输出详细日志（默认仅显示汇总）
   -h, --help                   显示此帮助信息
 
@@ -67,6 +68,9 @@ ${YELLOW}示例:${NC}
 
   ${GREEN}# 查看详细日志输出${NC}
   $0 --category etf --instrument-limit 5 --verbose
+
+  ${GREEN}# 保留负收益率标的的结果文件${NC}
+  $0 --category etf --keep-negative
 
 ${YELLOW}示例标的:${NC}
   - 159001.SZ : 华夏上证50ETF
@@ -115,6 +119,90 @@ check_environment() {
 }
 
 ################################################################################
+# 清理负收益率标的结果文件
+################################################################################
+cleanup_negative_returns() {
+    local output_dir="$1"
+    local stats_deleted=0
+    local plots_deleted=0
+
+    if [ ! -d "$output_dir" ]; then
+        echo -e "${YELLOW}警告: 输出目录不存在: $output_dir${NC}"
+        return 0
+    fi
+
+    # 遍历所有类别子目录
+    for category_dir in "$output_dir"/*; do
+        if [ ! -d "$category_dir" ]; then
+            continue
+        fi
+
+        local category_name=$(basename "$category_dir")
+        if [ "$category_name" = "summary" ]; then
+            continue  # 跳过summary目录
+        fi
+
+        local stats_dir="$category_dir/stats"
+        local plots_dir="$category_dir/plots"
+
+        if [ ! -d "$stats_dir" ]; then
+            continue
+        fi
+
+        # 处理stats目录中的CSV文件
+        for stats_file in "$stats_dir"/*.csv; do
+            if [ ! -f "$stats_file" ]; then
+                continue
+            fi
+
+            # 跳过trades文件
+            if [[ "$stats_file" == *"_trades.csv" ]]; then
+                continue
+            fi
+
+            # 读取CSV文件，检查收益率列（第12列）
+            # 使用tail跳过标题行，然后用cut提取收益率列
+            local return_rate=$(tail -n +2 "$stats_file" | cut -d',' -f12 | head -n 1)
+
+            # 检查是否为数字且为负数
+            if [[ "$return_rate" =~ ^-[0-9]+\.?[0-9]*$ ]]; then
+                # 提取文件名中的标的代码和策略名
+                local filename=$(basename "$stats_file")
+                local instrument_code=$(echo "$filename" | cut -d'_' -f1)
+                local strategy_name=$(echo "$filename" | cut -d'_' -f2)
+
+                echo -e "${YELLOW}  删除负收益率标的: $instrument_code (收益率: ${return_rate}%)${NC}"
+
+                # 删除stats文件
+                rm -f "$stats_file"
+                stats_deleted=$((stats_deleted + 1))
+
+                # 删除对应的trades文件（如果存在）
+                local trades_file="${stats_file%%.csv}_trades.csv"
+                if [ -f "$trades_file" ]; then
+                    rm -f "$trades_file"
+                fi
+
+                # 删除对应的plots文件
+                if [ -d "$plots_dir" ]; then
+                    local plot_file="$plots_dir/${instrument_code}_${strategy_name}.html"
+                    if [ -f "$plot_file" ]; then
+                        rm -f "$plot_file"
+                        plots_deleted=$((plots_deleted + 1))
+                    fi
+                fi
+            fi
+        done
+    done
+
+    if [ $stats_deleted -gt 0 ] || [ $plots_deleted -gt 0 ]; then
+        echo -e "${GREEN}清理完成: 删除了 $stats_deleted 个统计文件和 $plots_deleted 个图表文件${NC}"
+    else
+        echo -e "${GREEN}无需清理: 未发现负收益率标的${NC}"
+    fi
+}
+
+################################################################################
 # 主函数
 ################################################################################
 main() {
@@ -149,6 +237,8 @@ main() {
 
     INSTRUMENT_LIMIT_VALUE=""
     INSTRUMENT_LIMIT_ARGS=()
+
+    KEEP_NEGATIVE_FLAG=0
 
     VERBOSE_FLAG=0
 
@@ -212,6 +302,10 @@ main() {
                 INSTRUMENT_LIMIT_ARGS=("--instrument-limit" "$2")
                 shift 2
                 ;;
+            --keep-negative)
+                KEEP_NEGATIVE_FLAG=1
+                shift
+                ;;
             --verbose)
                 VERBOSE_FLAG=1
                 shift
@@ -269,6 +363,11 @@ main() {
     if [ -n "$INSTRUMENT_LIMIT_VALUE" ]; then
         echo -e "${YELLOW}标的数量限制:${NC} $INSTRUMENT_LIMIT_VALUE"
     fi
+    if [ $KEEP_NEGATIVE_FLAG -eq 1 ]; then
+        echo -e "${YELLOW}负收益结果:${NC} ${GREEN}保留${NC}"
+    else
+        echo -e "${YELLOW}负收益结果:${NC} 删除"
+    fi
     if [ $VERBOSE_FLAG -eq 1 ]; then
         echo -e "${YELLOW}详细日志:${NC} ${GREEN}启用${NC}"
     else
@@ -323,6 +422,12 @@ main() {
     # 检查执行结果
     echo ""
     if [ $EXIT_CODE -eq 0 ]; then
+        # 如果回测成功且未启用keep-negative标志，则删除负收益率的结果文件
+        if [ $KEEP_NEGATIVE_FLAG -eq 0 ]; then
+            echo -e "${BLUE}正在清理负收益率标的结果文件...${NC}"
+            cleanup_negative_returns "$OUTPUT_DIR_VALUE"
+        fi
+
         echo -e "${GREEN}======================================================================${NC}"
         echo -e "${GREEN}                        回测完成！${NC}"
         echo -e "${GREEN}======================================================================${NC}"

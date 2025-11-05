@@ -23,6 +23,6 @@ build/*
 
 .venv/
 data/
-results/
+results*/
 __pycache__/
 logs/
