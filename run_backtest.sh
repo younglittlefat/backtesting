@@ -38,7 +38,9 @@ ${YELLOW}选项:${NC}
   --category <names>           可选类别筛选（例如: etf,fund）
   -t, --strategy <name>        策略名称: sma_cross, all (默认: sma_cross)
   -o, --optimize               启用参数优化
-  -c, --commission <rate>      手续费率；未提供时按类别默认
+  --cost-model <model>         费用模型: default, cn_etf, cn_stock, us_stock, custom (默认: cn_etf)
+  -c, --commission <rate>      自定义佣金率（覆盖cost-model配置）
+  --spread <rate>              自定义滑点率（覆盖cost-model配置）
   -m, --cash <amount>          初始资金 (默认: 10000)
   -d, --output-dir <path>      输出目录 (默认: results)
   --data-dir <path>            数据目录 (默认: data/chinese_stocks)
@@ -51,14 +53,23 @@ ${YELLOW}选项:${NC}
   -h, --help                   显示此帮助信息
 
 ${YELLOW}示例:${NC}
-  ${GREEN}# 对 159001.SZ 运行双均线策略${NC}
+  ${GREEN}# 对 159001.SZ 运行双均线策略（使用默认ETF费用）${NC}
   $0 -s 159001.SZ -t sma_cross
 
   ${GREEN}# 批量回测所有 ETF 并优化参数${NC}
   $0 --category etf -t sma_cross -o
 
-  ${GREEN}# 指定多个标的，自定义手续费与资金${NC}
-  $0 -s 159001.SZ,510300.SH -c 0.0005 -m 50000
+  ${GREEN}# 使用框架缺省配置（零成本），用于对比分析${NC}
+  $0 -s 510300.SH -t sma_cross --cost-model default
+
+  ${GREEN}# 回测个股，使用包含印花税的cn_stock模型${NC}
+  $0 -s 600519.SH -t sma_cross --cost-model cn_stock
+
+  ${GREEN}# 使用cn_etf模型但提高滑点${NC}
+  $0 -s 159001.SZ --cost-model cn_etf --spread 0.0005
+
+  ${GREEN}# 自定义费用参数${NC}
+  $0 -s 510300.SH --cost-model custom -c 0.002 --spread 0.001
 
   ${GREEN}# 限定日期范围并导出聚合摘要${NC}
   $0 -s all --start-date 2020-01-01 --aggregate-output results/summary.csv
@@ -214,8 +225,14 @@ main() {
     CATEGORY_VALUE=""
     CATEGORY_ARGS=()
 
+    COST_MODEL_VALUE="cn_etf"
+    COST_MODEL_ARGS=("--cost-model" "cn_etf")
+
     COMMISSION_VALUE=""
     COMMISSION_ARGS=()
+
+    SPREAD_VALUE=""
+    SPREAD_ARGS=()
 
     CASH_VALUE="10000"
     CASH_ARGS=()
@@ -257,9 +274,19 @@ main() {
                 OPTIMIZE_FLAG=1
                 shift
                 ;;
+            --cost-model)
+                COST_MODEL_VALUE="$2"
+                COST_MODEL_ARGS=("--cost-model" "$2")
+                shift 2
+                ;;
             -c|--commission)
                 COMMISSION_VALUE="$2"
                 COMMISSION_ARGS=("--commission" "$2")
+                shift 2
+                ;;
+            --spread)
+                SPREAD_VALUE="$2"
+                SPREAD_ARGS=("--spread" "$2")
                 shift 2
                 ;;
             -m|--cash)
@@ -343,10 +370,12 @@ main() {
     else
         echo -e "${YELLOW}参数优化:${NC} 未启用"
     fi
+    echo -e "${YELLOW}费用模型:${NC} $COST_MODEL_VALUE"
     if [ -n "$COMMISSION_VALUE" ]; then
-        echo -e "${YELLOW}统一手续费:${NC} $COMMISSION_VALUE"
-    else
-        echo -e "${YELLOW}统一手续费:${NC} 按类别默认"
+        echo -e "${YELLOW}佣金覆盖:${NC} $COMMISSION_VALUE"
+    fi
+    if [ -n "$SPREAD_VALUE" ]; then
+        echo -e "${YELLOW}滑点覆盖:${NC} $SPREAD_VALUE"
     fi
     echo -e "${YELLOW}初始资金:${NC} $CASH_VALUE"
     echo -e "${YELLOW}数据目录:${NC} $DATA_DIR_VALUE"
@@ -387,8 +416,14 @@ main() {
     if [ $OPTIMIZE_FLAG -eq 1 ]; then
         CMD+=("--optimize")
     fi
+    if [ ${#COST_MODEL_ARGS[@]} -gt 0 ]; then
+        CMD+=("${COST_MODEL_ARGS[@]}")
+    fi
     if [ -n "$COMMISSION_VALUE" ]; then
         CMD+=("${COMMISSION_ARGS[@]}")
+    fi
+    if [ -n "$SPREAD_VALUE" ]; then
+        CMD+=("${SPREAD_ARGS[@]}")
     fi
     if [ ${#CASH_ARGS[@]} -gt 0 ]; then
         CMD+=("${CASH_ARGS[@]}")

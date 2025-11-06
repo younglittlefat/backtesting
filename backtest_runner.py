@@ -28,6 +28,7 @@ from utils.data_loader import (
     list_available_instruments,
     load_instrument_data,
 )
+from utils.trading_cost import TradingCostConfig, TradingCostCalculator, get_cost_summary
 from strategies.sma_cross import SmaCross, OPTIMIZE_PARAMS, CONSTRAINTS
 from common.mysql_manager import MySQLManager
 
@@ -38,11 +39,8 @@ STRATEGIES = {
 }
 
 
-CATEGORY_DEFAULT_COMMISSION = {
-    'etf': 0.0005,
-    'fund': 0.0000,
-}
-DEFAULT_COMMISSION = 0.001
+# 默认使用中国A股ETF的成本模型
+DEFAULT_COST_MODEL = 'cn_etf'
 
 
 def resolve_display_name(instrument: InstrumentInfo) -> str:
@@ -220,6 +218,7 @@ def run_single_backtest(
     instrument: InstrumentInfo,
     strategy_name,
     cash: float = 10000,
+    cost_config: Optional[TradingCostConfig] = None,
     commission: float = 0.002,
     optimize: bool = False,
     output_dir: str = 'results',
@@ -229,13 +228,34 @@ def run_single_backtest(
 ) -> pd.Series:
     """
     运行单次回测。
+
+    Args:
+        cost_config: 交易成本配置对象（优先使用）
+        commission: 旧版本兼容参数，当 cost_config 为 None 时使用
     """
     display_name = resolve_display_name(instrument)
+
+    # 确定使用的成本配置
+    if cost_config is not None:
+        cost_calculator = TradingCostCalculator(cost_config)
+        spread = cost_config.spread
+        commission_display = f"{cost_config.name}"
+    else:
+        # 向后兼容：如果没有提供 cost_config，使用旧的 commission 参数
+        cost_calculator = commission
+        spread = 0.0
+        commission_display = f"{commission:.4f}"
+
     if verbose:
         print("\n" + "=" * 70)
         print(f"回测: {display_name} ({instrument.code}) - {strategy_name}")
         print(f"标的类型: {instrument.category} | 货币: {instrument.currency}")
-        print(f"初始资金: {cash:,.2f} | 手续费率: {commission:.4f}")
+        print(f"初始资金: {cash:,.2f}")
+        if cost_config is not None:
+            print(f"费用模型: {commission_display}")
+            print(get_cost_summary(cost_config))
+        else:
+            print(f"手续费率: {commission_display}")
         if start_date or end_date:
             date_range = f"{start_date or '开始'} 至 {end_date or '结束'}"
             print(f"日期范围: {date_range}")
@@ -245,7 +265,7 @@ def run_single_backtest(
         data,
         strategy_class,
         cash=cash,
-        commission=commission,
+        commission=cost_calculator,
         exclusive_orders=True,
         finalize_trades=True,
     )
@@ -420,11 +440,23 @@ def main() -> int:
         help='启用参数优化。',
     )
     parser.add_argument(
+        '--cost-model',
+        choices=['default', 'cn_etf', 'cn_stock', 'us_stock', 'custom'],
+        default='cn_etf',
+        help='交易成本模型，默认 cn_etf（中国A股ETF）。',
+    )
+    parser.add_argument(
         '-c',
         '--commission',
         type=float,
         default=None,
-        help='统一手续费率，未指定时按标的类别使用默认值。',
+        help='自定义佣金率（覆盖cost-model配置），使用custom模型时必填。',
+    )
+    parser.add_argument(
+        '--spread',
+        type=float,
+        default=None,
+        help='自定义滑点率（覆盖cost-model配置）。',
     )
     parser.add_argument(
         '-m',
@@ -509,10 +541,11 @@ def main() -> int:
     print(f"策略选择:     {args.strategy}")
     print(f"参数优化:     {'是' if args.optimize else '否'}")
     print(f"初始资金:     {args.cash:,.2f}")
+    print(f"费用模型:     {args.cost_model}")
     if args.commission is not None:
-        print(f"统一手续费:   {args.commission:.4f}")
-    else:
-        print("统一手续费:   按类别默认值")
+        print(f"佣金覆盖:     {args.commission:.4%}")
+    if args.spread is not None:
+        print(f"滑点覆盖:     {args.spread:.4%}")
     if args.category:
         print(f"类别筛选:     {args.category}")
     if args.start_date:
@@ -654,11 +687,23 @@ def main() -> int:
                 )
                 continue
 
-        commission_rate = (
-            args.commission
-            if args.commission is not None
-            else CATEGORY_DEFAULT_COMMISSION.get(instrument.category, DEFAULT_COMMISSION)
-        )
+        # 配置交易成本模型
+        if args.cost_model == 'custom':
+            if args.commission is None:
+                print(f"\n错误: 使用 custom 模型时必须指定 --commission 参数")
+                continue
+            cost_config = TradingCostConfig(
+                name='custom',
+                commission_rate=args.commission,
+                spread=args.spread or 0.0,
+            )
+        else:
+            cost_config = TradingCostConfig.get_preset(args.cost_model)
+            # 允许参数覆盖
+            if args.commission is not None:
+                cost_config.commission_rate = args.commission
+            if args.spread is not None:
+                cost_config.spread = args.spread
 
         for strategy_name in strategies_to_process:
             strategy_class = STRATEGIES[strategy_name]
@@ -669,7 +714,7 @@ def main() -> int:
                     instrument=instrument,
                     strategy_name=strategy_name,
                     cash=args.cash,
-                    commission=commission_rate,
+                    cost_config=cost_config,
                     optimize=args.optimize,
                     output_dir=args.output_dir,
                     start_date=args.start_date,
@@ -681,7 +726,7 @@ def main() -> int:
                         'instrument': instrument,
                         'strategy': strategy_name,
                         'stats': stats,
-                        'commission': commission_rate,
+                        'cost_model': cost_config.name,
                     }
                 )
             except Exception as exc:
