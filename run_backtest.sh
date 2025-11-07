@@ -44,7 +44,7 @@ ${YELLOW}选项:${NC}
   --spread <rate>              自定义滑点率（覆盖cost-model配置）
   -m, --cash <amount>          初始资金 (默认: 10000)
   -d, --output-dir <path>      输出目录 (默认: results)
-  --data-dir <path>            数据目录 (默认: data/chinese_stocks)
+  --data-dir <path>            数据目录 (默认: data/chinese_stocks，ETF数据使用 data/csv/daily)
   --aggregate-output <path>    聚合结果输出 CSV（预留批量汇总接口）
   --start-date <date>          开始日期 YYYY-MM-DD
   --end-date <date>            结束日期 YYYY-MM-DD
@@ -54,8 +54,8 @@ ${YELLOW}选项:${NC}
   -h, --help                   显示此帮助信息
 
 ${YELLOW}示例:${NC}
-  ${GREEN}# 使用筛选器生成的ETF池进行回测${NC}
-  $0 --stock-list results/trend_etf_pool_20251107.csv -t sma_cross -o
+  ${GREEN}# 使用筛选器生成的ETF池进行回测（需指定data-dir）${NC}
+  $0 --stock-list results/trend_etf_pool_20251107.csv -t sma_cross -o --data-dir data/csv/daily
 
   ${GREEN}# 对 159001.SZ 运行双均线策略（使用默认ETF费用）${NC}
   $0 -s 159001.SZ -t sma_cross
@@ -441,6 +441,9 @@ main() {
 
     echo -e "${BLUE}激活conda环境并开始回测...${NC}"
     echo ""
+
+    # 设置环境变量以减少进度条输出噪音
+    export BACKTESTING_DISABLE_PROGRESS=true
 
     # 构建命令，根据是否有股票列表文件选择不同的股票参数
     if [ -n "$STOCK_LIST_VALUE" ]; then

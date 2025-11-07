@@ -102,6 +102,18 @@ def parse_arguments():
         help='收益回撤比筛选百分位数 (默认: 70%%)'
     )
     parser.add_argument(
+        '--min-volatility', type=float, default=0.20,
+        help='最小年化波动率 (默认: 0.20 = 20%%)'
+    )
+    parser.add_argument(
+        '--max-volatility', type=float, default=0.60,
+        help='最大年化波动率 (默认: 0.60 = 60%%)'
+    )
+    parser.add_argument(
+        '--momentum-min-positive', action='store_true',
+        help='仅要求动量为正（不进行排名筛选）'
+    )
+    parser.add_argument(
         '--max-correlation', type=float, default=0.7,
         help='组合优化最大相关系数阈值 (默认: 0.7)'
     )
@@ -176,6 +188,12 @@ def load_config(config_path: str = None, args: argparse.Namespace = None) -> Fil
             config.adx_percentile = args.adx_percentile
         if args.ret_dd_percentile:
             config.ret_dd_percentile = args.ret_dd_percentile
+        if hasattr(args, 'min_volatility') and args.min_volatility is not None:
+            config.min_volatility = args.min_volatility
+        if hasattr(args, 'max_volatility') and args.max_volatility is not None:
+            config.max_volatility = args.max_volatility
+        if hasattr(args, 'momentum_min_positive') and args.momentum_min_positive:
+            config.momentum_min_positive = True
         if args.ma_short:
             config.ma_short = args.ma_short
         if args.ma_long:
@@ -201,10 +219,12 @@ def print_config_summary(config: FilterConfig, args: argparse.Namespace):
     """打印配置摘要"""
     print("📋 筛选配置摘要:")
     print(f"  🎯 目标组合大小: {config.target_portfolio_size} 只")
-    print(f"  💰 流动性阈值: {config.min_turnover/1e8:.1f} 亿元")
+    print(f"  💰 流动性阈值: {config.min_turnover/1e8:.2f} 亿元")
     print(f"  📅 最小上市天数: {config.min_listing_days} 天")
-    print(f"  📊 ADX筛选: 保留前 {config.adx_percentile}%")
-    print(f"  📈 收益回撤比筛选: 保留前 {config.ret_dd_percentile}%")
+    print(f"  📊 ADX筛选: 保留前 {100 - config.adx_percentile:.0f}%")
+    print(f"  📈 收益回撤比筛选: 保留前 {100 - config.ret_dd_percentile:.0f}%")
+    print(f"  🌊 波动率范围: {config.min_volatility*100:.0f}% - {config.max_volatility*100:.0f}%")
+    print(f"  🚀 动量要求: {'仅要求>0' if config.momentum_min_positive else '排名筛选'}")
     print(f"  🔗 最大相关性: {args.max_correlation}")
     print(f"  📈 双均线参数: MA({config.ma_short}, {config.ma_long})")
     print()

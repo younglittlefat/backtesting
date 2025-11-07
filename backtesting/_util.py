@@ -17,7 +17,10 @@ import pandas as pd
 
 try:
     from tqdm.auto import tqdm as _tqdm
-    _tqdm = partial(_tqdm, leave=False)
+    # 检查环境变量，允许用户控制进度条显示
+    import os
+    disable_progress = os.environ.get('BACKTESTING_DISABLE_PROGRESS', 'false').lower() in ('true', '1', 'yes')
+    _tqdm = partial(_tqdm, leave=False, disable=disable_progress, mininterval=5)
 except ImportError:
     def _tqdm(seq, **_):
         return seq

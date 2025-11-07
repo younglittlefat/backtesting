@@ -734,6 +734,13 @@ def main() -> int:
         for strategy_name in strategies_to_process:
             strategy_class = STRATEGIES[strategy_name]
             try:
+                if not verbose:
+                    # 在非详细模式下提供进度反馈
+                    current_idx = instruments_to_process.index(instrument) + 1
+                    total_instruments = len(instruments_to_process)
+                    display_name = resolve_display_name(instrument)
+                    print(f"[{current_idx}/{total_instruments}] 回测 {display_name} ({instrument.code}) - {strategy_name}")
+
                 stats = run_single_backtest(
                     data=data,
                     strategy_class=strategy_class,
