@@ -26,6 +26,7 @@ ETF趋势筛选系统 - 命令行入口
         --with-analysis
 """
 import argparse
+import math
 import sys
 from datetime import datetime
 from pathlib import Path
@@ -100,6 +101,14 @@ def parse_arguments():
     parser.add_argument(
         '--ret-dd-percentile', type=float, default=70,
         help='收益回撤比筛选百分位数 (默认: 70%%)'
+    )
+    parser.add_argument(
+        '--disable-ma-filter', action='store_true',
+        help='禁用双均线回测过滤，仅依赖ADX/波动率/动量条件'
+    )
+    parser.add_argument(
+        '--enable-ma-filter', action='store_true',
+        help='启用双均线回测过滤（默认禁用，可通过该选项开启）'
     )
     parser.add_argument(
         '--min-volatility', type=float, default=0.20,
@@ -202,6 +211,10 @@ def load_config(config_path: str = None, args: argparse.Namespace = None) -> Fil
             config.adx_period = args.adx_period
         if args.target_size:
             config.target_portfolio_size = args.target_size
+        if getattr(args, 'enable_ma_filter', False):
+            config.enable_ma_backtest_filter = True
+        elif getattr(args, 'disable_ma_filter', False):
+            config.enable_ma_backtest_filter = False
 
     return config
 
@@ -222,9 +235,13 @@ def print_config_summary(config: FilterConfig, args: argparse.Namespace):
     print(f"  💰 流动性阈值: {config.min_turnover/1e8:.2f} 亿元")
     print(f"  📅 最小上市天数: {config.min_listing_days} 天")
     print(f"  📊 ADX筛选: 保留前 {100 - config.adx_percentile:.0f}%")
-    print(f"  📈 收益回撤比筛选: 保留前 {100 - config.ret_dd_percentile:.0f}%")
+    ret_dd_summary = f"保留前 {100 - config.ret_dd_percentile:.0f}%"
+    if not config.enable_ma_backtest_filter:
+        ret_dd_summary += "（已禁用）"
+    print(f"  📈 收益回撤比筛选: {ret_dd_summary}")
     print(f"  🌊 波动率范围: {config.min_volatility*100:.0f}% - {config.max_volatility*100:.0f}%")
     print(f"  🚀 动量要求: {'仅要求>0' if config.momentum_min_positive else '排名筛选'}")
+    print(f"  📏 双均线过滤: {'启用' if config.enable_ma_backtest_filter else '禁用'}")
     print(f"  🔗 最大相关性: {args.max_correlation}")
     print(f"  📈 双均线参数: MA({config.ma_short}, {config.ma_long})")
     print()
@@ -349,7 +366,10 @@ def main():
             for i, etf in enumerate(selected_etfs[:5]):
                 print(f"  {i+1}. {etf['ts_code']} - {etf['name']}")
                 if 'industry' in etf:
-                    print(f"     行业: {etf['industry']}, 收益回撤比: {etf.get('return_dd_ratio', 'N/A')}")
+                    ret_dd = etf.get('return_dd_ratio', 'N/A')
+                    if isinstance(ret_dd, float) and math.isnan(ret_dd):
+                        ret_dd = 'N/A'
+                    print(f"     行业: {etf['industry']}, 收益回撤比: {ret_dd}")
 
         # 获取统计摘要
         stats = selector.get_summary_stats()

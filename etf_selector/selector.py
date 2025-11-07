@@ -221,6 +221,8 @@ class TrendETFSelector:
             - ts_code, name, industry
             - adx_mean, return_dd_ratio, volatility, momentum_3m, momentum_12m
         """
+        use_ma_filter = self.config.enable_ma_backtest_filter
+
         if verbose:
             print("🧮 第二级筛选：趋势性量化分析")
             print(f"  📊 待分析ETF数量: {len(etf_codes)}")
@@ -258,14 +260,19 @@ class TrendETFSelector:
                 if np.isnan(adx_mean):
                     continue
 
-                # 2. 双均线回测
-                backtest_metrics = calculate_backtest_metrics(
-                    data, short=self.config.ma_short, long=self.config.ma_long, use_adj=True
-                )
+                if use_ma_filter:
+                    # 2. 双均线回测
+                    backtest_metrics = calculate_backtest_metrics(
+                        data, short=self.config.ma_short, long=self.config.ma_long, use_adj=True
+                    )
 
-                annual_return = backtest_metrics['annual_return']
-                max_drawdown = backtest_metrics['max_drawdown']
-                return_dd_ratio = backtest_metrics['return_dd_ratio']
+                    annual_return = backtest_metrics['annual_return']
+                    max_drawdown = backtest_metrics['max_drawdown']
+                    return_dd_ratio = backtest_metrics['return_dd_ratio']
+                else:
+                    annual_return = np.nan
+                    max_drawdown = np.nan
+                    return_dd_ratio = np.nan
 
                 # 3. 波动率
                 returns = data['adj_close'].pct_change().dropna()
@@ -334,16 +341,24 @@ class TrendETFSelector:
         if verbose:
             print(f"  🎯 ADX筛选(>{adx_threshold:.1f}): 保留 {len(df)} 只")
 
-        # 收益回撤比筛选：保留前ret_dd_percentile%的标的
-        if len(df) > 0:
+        # 收益回撤比筛选：保留前ret_dd_percentile%的标的（可选）
+        if len(df) > 0 and use_ma_filter:
             ret_dd_threshold = np.percentile(df['return_dd_ratio'], self.config.ret_dd_percentile)
             df = df[df['return_dd_ratio'] >= ret_dd_threshold]
 
             if verbose:
                 print(f"  📈 收益回撤比筛选(>{ret_dd_threshold:.2f}): 保留 {len(df)} 只")
+        elif len(df) > 0 and not use_ma_filter and verbose:
+            print("  ⚠️ 已禁用双均线回测过滤，跳过收益回撤比筛选")
 
         # 按收益回撤比降序排序
-        df = df.sort_values('return_dd_ratio', ascending=False).reset_index(drop=True)
+        if use_ma_filter:
+            df = df.sort_values('return_dd_ratio', ascending=False).reset_index(drop=True)
+        else:
+            sort_columns = ['adx_mean', 'momentum_12m', 'momentum_3m']
+            df = df.sort_values(
+                by=sort_columns, ascending=[False, False, False], na_position='last'
+            ).reset_index(drop=True)
 
         # 添加排名信息
         df['stage2_rank'] = range(1, len(df) + 1)
@@ -351,9 +366,15 @@ class TrendETFSelector:
         if verbose:
             print(f"  🏆 第二级筛选完成，共 {len(df)} 只标的通过")
             if len(df) > 0:
-                print(f"  📊 收益回撤比范围: {df['return_dd_ratio'].min():.2f} ~ {df['return_dd_ratio'].max():.2f}")
                 print(f"  📊 ADX均值范围: {df['adx_mean'].min():.1f} ~ {df['adx_mean'].max():.1f}")
                 print(f"  📊 波动率范围: {df['volatility'].min():.1%} ~ {df['volatility'].max():.1%}")
+                if use_ma_filter:
+                    print(
+                        f"  📊 收益回撤比范围: "
+                        f"{df['return_dd_ratio'].min():.2f} ~ {df['return_dd_ratio'].max():.2f}"
+                    )
+                else:
+                    print("  📊 已禁用收益回撤比排名，结果按ADX+动量排序")
 
         return df.to_dict('records')
 

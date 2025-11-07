@@ -22,6 +22,7 @@ class FilterConfig:
     ma_short: int = 20  # 双均线短周期
     ma_long: int = 50  # 双均线长周期
     ret_dd_percentile: float = 70  # 收益回撤比排名百分位（保留前30%）
+    enable_ma_backtest_filter: bool = False  # 是否启用双均线回测过滤（默认禁用）
 
     min_volatility: float = 0.20  # 最小年化波动率
     max_volatility: float = 0.60  # 最大年化波动率

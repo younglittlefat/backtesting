@@ -34,6 +34,23 @@ def geometric_mean(returns: pd.Series) -> float:
     return np.exp(np.log(returns).sum() / (len(returns) or np.nan)) - 1
 
 
+# Helper to compute safe log returns without triggering divide/log warnings
+def _safe_log_returns(series: np.ndarray) -> np.ndarray:
+    if len(series) < 2:
+        return np.array([], dtype=float)
+
+    series = series.astype(float)
+    prev = series[:-1]
+    curr = series[1:]
+
+    with np.errstate(divide='ignore', invalid='ignore'):
+        ratio = np.divide(curr, prev, out=np.full_like(prev, np.nan), where=prev != 0)
+        ratio = np.where(ratio <= 0, np.nan, ratio)
+        log_returns = np.log(ratio)
+
+    return log_returns
+
+
 def compute_stats(
         trades: Union[List['Trade'], pd.DataFrame],
         equity: np.ndarray,
@@ -153,8 +170,8 @@ def compute_stats(
         s.loc['Sortino Ratio'] = (annualized_return - risk_free_rate) / (np.sqrt(np.mean(day_returns.clip(-np.inf, 0)**2)) * np.sqrt(annual_trading_days))  # noqa: E501
     max_dd = -np.nan_to_num(dd.max())
     s.loc['Calmar Ratio'] = annualized_return / (-max_dd or np.nan)
-    equity_log_returns = np.log(equity[1:] / equity[:-1])
-    market_log_returns = np.log(c[1:] / c[:-1])
+    equity_log_returns = _safe_log_returns(equity)
+    market_log_returns = _safe_log_returns(c)
     beta = np.nan
     if len(equity_log_returns) > 1 and len(market_log_returns) > 1:
         # len == 0 on dummy call `stats_keys = compute_stats(...)` pre optimization

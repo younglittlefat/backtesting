@@ -61,15 +61,15 @@ class SmaCross(Strategy):
         if crossover(self.sma1, self.sma2):
             # 如果有空头仓位，先平仓
             self.position.close()
-            # 买入
-            self.buy()
+            # 买入 - 使用90%的可用资金，避免保证金不足
+            self.buy(size=0.90)
 
         # 短期均线下穿长期均线 -> 卖出信号（死叉）
         elif crossover(self.sma2, self.sma1):
             # 如果有多头仓位，先平仓
             self.position.close()
-            # 卖出（做空）
-            self.sell()
+            # 卖出（做空）- 使用90%的可用资金
+            self.sell(size=0.90)
 
 
 # 参数优化配置
