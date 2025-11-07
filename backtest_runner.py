@@ -422,6 +422,12 @@ def main() -> int:
         help='标的代码（逗号分隔），默认为 all 处理所有标的。支持 category:etf 语法。',
     )
     parser.add_argument(
+        '--stock-list',
+        type=str,
+        default=None,
+        help='从CSV文件读取标的列表（需包含ts_code列），优先级高于-s参数。',
+    )
+    parser.add_argument(
         '--category',
         default=None,
         help='按类别过滤标的（逗号分隔），例如 etf,fund。',
@@ -596,6 +602,26 @@ def main() -> int:
     print(f"\n可用标的总数: {len(available_instruments)}")
     category_summary = ", ".join(f"{cat}={count}" for cat, count in category_counts.items())
     print(f"按类别统计: {category_summary}")
+
+    # 处理股票列表文件（如果提供）
+    if args.stock_list:
+        try:
+            print(f"\n从股票列表文件读取标的: {args.stock_list}")
+            stock_list_df = pd.read_csv(args.stock_list)
+
+            if 'ts_code' not in stock_list_df.columns:
+                print(f"错误: 股票列表文件缺少 'ts_code' 列")
+                return 1
+
+            stock_list_codes = stock_list_df['ts_code'].dropna().unique().tolist()
+            print(f"✅ 从文件读取了 {len(stock_list_codes)} 只标的")
+
+            # 将股票列表转换为逗号分隔的字符串，覆盖args.stock
+            args.stock = ','.join(stock_list_codes)
+
+        except Exception as e:
+            print(f"错误: 读取股票列表文件失败: {e}")
+            return 1
 
     requested_tokens = parse_multi_values(args.stock)
     pending_codes: List[str] = []

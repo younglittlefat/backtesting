@@ -35,6 +35,7 @@ ${YELLOW}使用方法:${NC}
 
 ${YELLOW}选项:${NC}
   -s, --stock <codes>          标的代码（逗号分隔），支持 category:etf 语法，默认 all
+  --stock-list <csv_file>      从CSV文件读取标的列表（需包含ts_code列），优先级高于-s参数
   --category <names>           可选类别筛选（例如: etf,fund）
   -t, --strategy <name>        策略名称: sma_cross, all (默认: sma_cross)
   -o, --optimize               启用参数优化
@@ -53,6 +54,9 @@ ${YELLOW}选项:${NC}
   -h, --help                   显示此帮助信息
 
 ${YELLOW}示例:${NC}
+  ${GREEN}# 使用筛选器生成的ETF池进行回测${NC}
+  $0 --stock-list results/trend_etf_pool_20251107.csv -t sma_cross -o
+
   ${GREEN}# 对 159001.SZ 运行双均线策略（使用默认ETF费用）${NC}
   $0 -s 159001.SZ -t sma_cross
 
@@ -219,6 +223,8 @@ cleanup_negative_returns() {
 main() {
     # 默认参数
     STOCK="all"
+    STOCK_LIST_VALUE=""
+    STOCK_LIST_ARGS=()
     STRATEGY="sma_cross"
     OPTIMIZE_FLAG=0
 
@@ -264,6 +270,11 @@ main() {
         case $1 in
             -s|--stock)
                 STOCK="$2"
+                shift 2
+                ;;
+            --stock-list)
+                STOCK_LIST_VALUE="$2"
+                STOCK_LIST_ARGS=("--stock-list" "$2")
                 shift 2
                 ;;
             -t|--strategy)
@@ -352,13 +363,36 @@ main() {
     # 检查环境
     check_environment
 
+    # 检查股票列表文件（如果指定）
+    if [ -n "$STOCK_LIST_VALUE" ]; then
+        if [ ! -f "$STOCK_LIST_VALUE" ]; then
+            echo -e "${RED}错误: 股票列表文件不存在: $STOCK_LIST_VALUE${NC}"
+            exit 1
+        fi
+
+        # 检查CSV文件是否包含ts_code列
+        if ! head -n 1 "$STOCK_LIST_VALUE" | grep -q "ts_code"; then
+            echo -e "${RED}错误: 股票列表文件缺少 'ts_code' 列: $STOCK_LIST_VALUE${NC}"
+            exit 1
+        fi
+
+        # 统计股票数量（减去标题行）
+        local stock_count=$(tail -n +2 "$STOCK_LIST_VALUE" | wc -l)
+        echo -e "${GREEN}✓ 股票列表文件有效: $stock_count 只标的${NC}"
+        echo ""
+    fi
+
     # 显示配置
     echo -e "${BLUE}======================================================================${NC}"
     echo -e "${BLUE}                     中国市场回测系统启动${NC}"
     echo -e "${BLUE}======================================================================${NC}"
     echo -e "${YELLOW}项目目录:${NC} $PROJECT_ROOT"
     echo -e "${YELLOW}Conda环境:${NC} $CONDA_ENV"
-    echo -e "${YELLOW}标的选择:${NC} $STOCK"
+    if [ -n "$STOCK_LIST_VALUE" ]; then
+        echo -e "${YELLOW}股票列表:${NC} $STOCK_LIST_VALUE (优先级高于-s参数)"
+    else
+        echo -e "${YELLOW}标的选择:${NC} $STOCK"
+    fi
     if [ -n "$CATEGORY_VALUE" ]; then
         echo -e "${YELLOW}类别筛选:${NC} $CATEGORY_VALUE"
     else
@@ -408,7 +442,12 @@ main() {
     echo -e "${BLUE}激活conda环境并开始回测...${NC}"
     echo ""
 
-    CMD=("$CONDA_PATH" "run" "-n" "$CONDA_ENV" "python" "$PYTHON_SCRIPT" "--stock" "$STOCK" "--strategy" "$STRATEGY")
+    # 构建命令，根据是否有股票列表文件选择不同的股票参数
+    if [ -n "$STOCK_LIST_VALUE" ]; then
+        CMD=("$CONDA_PATH" "run" "-n" "$CONDA_ENV" "python" "$PYTHON_SCRIPT" "${STOCK_LIST_ARGS[@]}" "--strategy" "$STRATEGY")
+    else
+        CMD=("$CONDA_PATH" "run" "-n" "$CONDA_ENV" "python" "$PYTHON_SCRIPT" "--stock" "$STOCK" "--strategy" "$STRATEGY")
+    fi
 
     if [ -n "$CATEGORY_VALUE" ]; then
         CMD+=("${CATEGORY_ARGS[@]}")
