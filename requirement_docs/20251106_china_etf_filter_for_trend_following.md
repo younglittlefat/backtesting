@@ -812,7 +812,7 @@ python -m etf_selector.main \
 python run_selector_backtest.py --target-size 20 --optimize --with-analysis
 
 # 回测集成
-./run_backtest.sh --stock-list results/trend_etf_pool.csv --strategy sma_cross
+./run_backtest.sh --stock-list results/trend_etf_pool.csv --strategy sma_cross --optimize --data-dir data/csv/daily
 ```
 
 #### 输出文件
