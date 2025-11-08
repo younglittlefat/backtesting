@@ -1,19 +1,24 @@
 {
   "sma_cross": {
-    "optimized": false,
-    "optimization_date": null,
+    "optimized": true,
+    "optimization_date": "2025-11-08 11:02:10",
     "optimization_period": null,
-    "stock_pool": null,
+    "stock_pool": "全局稳健优化 (共3只标的)",
     "params": {
       "n1": 10,
       "n2": 20
     },
     "performance": {
-      "sharpe_ratio": null,
-      "annual_return": null,
-      "max_drawdown": null,
-      "return_pct": null
+      "sharpe_ratio": 1.7338124272540993,
+      "annual_return": 268.3635926472524,
+      "max_drawdown": -11.229611627893144,
+      "return_pct": 102.12016663460344,
+      "median_sharpe": 1.1901272059384687,
+      "avg_sharpe": 1.3095846350525913,
+      "win_rate": 1.0,
+      "sharpe_std": 0.30936724199734855,
+      "robustness_score": 1.5451933928497443
     },
-    "notes": "默认参数配置"
+    "notes": "全局稳健参数优化 (综合评分=1.5452)\n中位数夏普=1.1901, 平均夏普=1.3096, 胜率=100.0%, 稳定性(标准差)=0.3094"
   }
 }

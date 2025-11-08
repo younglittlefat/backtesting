@@ -10,6 +10,7 @@ import os
 from datetime import datetime
 from pathlib import Path
 from typing import Dict, Any, Optional
+import numpy as np
 
 
 class StrategyParamsManager:
@@ -28,6 +29,32 @@ class StrategyParamsManager:
 
         self.config_file = Path(config_file)
         self.ensure_config_file()
+
+    @staticmethod
+    def _convert_to_json_serializable(obj):
+        """
+        递归转换对象为 JSON 可序列化格式
+
+        Args:
+            obj: 需要转换的对象
+
+        Returns:
+            JSON 可序列化的对象
+        """
+        if isinstance(obj, dict):
+            return {k: StrategyParamsManager._convert_to_json_serializable(v) for k, v in obj.items()}
+        elif isinstance(obj, (list, tuple)):
+            return [StrategyParamsManager._convert_to_json_serializable(item) for item in obj]
+        elif isinstance(obj, (np.integer, np.int64, np.int32, np.int16, np.int8)):
+            return int(obj)
+        elif isinstance(obj, (np.floating, np.float64, np.float32, np.float16)):
+            return float(obj)
+        elif isinstance(obj, np.ndarray):
+            return obj.tolist()
+        elif hasattr(obj, '__dict__'):
+            return StrategyParamsManager._convert_to_json_serializable(obj.__dict__)
+        else:
+            return obj
 
     def ensure_config_file(self):
         """确保配置文件存在，如果不存在则创建默认配置"""
@@ -67,8 +94,10 @@ class StrategyParamsManager:
 
     def save_config(self, config: Dict[str, Any]):
         """保存配置文件"""
+        # 转换为 JSON 可序列化格式
+        serializable_config = self._convert_to_json_serializable(config)
         with open(self.config_file, 'w', encoding='utf-8') as f:
-            json.dump(config, f, ensure_ascii=False, indent=2)
+            json.dump(serializable_config, f, ensure_ascii=False, indent=2)
 
     def get_strategy_params(self, strategy_name: str) -> Dict[str, Any]:
         """

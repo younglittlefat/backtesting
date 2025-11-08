@@ -190,6 +190,249 @@ def parse_blacklist(raw: Optional[str]) -> List[str]:
     return values
 
 
+def find_robust_params(
+    all_results: List[Dict[str, object]],
+    verbose: bool = False
+) -> tuple:
+    """
+    寻找全局稳健参数
+
+    采用综合评分法，而非单纯选择单个标的的最优参数
+    评分标准：
+    1. 中位数夏普比率（30%）- 抗极端值
+    2. 平均夏普比率（20%）- 整体表现
+    3. 胜率（30%）- 正收益标的比例
+    4. 稳定性（20%）- 夏普标准差倒数
+
+    Args:
+        all_results: 所有回测结果列表
+        verbose: 是否输出详细信息
+
+    Returns:
+        (best_params, best_metrics, best_result, params_analysis)
+    """
+    from collections import defaultdict
+
+    # 筛选有优化参数的结果
+    optimized_results = [
+        result for result in all_results
+        if 'optimized_params' in result and result['optimized_params'] is not None
+    ]
+
+    if not optimized_results:
+        return None, None, None, None
+
+    # 按参数分组
+    params_groups = defaultdict(list)
+    for result in optimized_results:
+        params = result['optimized_params']  # type: ignore[assignment]
+        params_key = (params['n1'], params['n2'])
+        params_groups[params_key].append(result)
+
+    # 计算每组参数的综合评分
+    best_score = -float('inf')
+    best_params_key = None
+    best_result = None
+    params_analysis = []
+
+    for params_key, group_results in params_groups.items():
+        # 提取夏普比率值
+        sharpe_values = []
+        return_values = []
+        for r in group_results:
+            stats = r['stats']  # type: ignore[assignment]
+            sharpe = stats['Sharpe Ratio']
+            return_pct = stats['Return [%]']
+
+            if not pd.isna(sharpe):
+                sharpe_values.append(float(sharpe))
+            if not pd.isna(return_pct):
+                return_values.append(float(return_pct))
+
+        if not sharpe_values:
+            continue
+
+        # 1. 中位数夏普
+        median_sharpe = float(np.median(sharpe_values))
+
+        # 2. 平均夏普
+        avg_sharpe = float(np.mean(sharpe_values))
+
+        # 3. 胜率（夏普>0 或 收益>0 的比例）
+        sharpe_win_rate = sum(s > 0 for s in sharpe_values) / len(sharpe_values)
+        return_win_rate = sum(r > 0 for r in return_values) / len(return_values) if return_values else 0
+        win_rate = max(sharpe_win_rate, return_win_rate)
+
+        # 4. 稳定性（标准差越小越好）
+        sharpe_std = float(np.std(sharpe_values))
+        stability_score = 1.0 / (sharpe_std + 0.01) if sharpe_std > 0 else 10.0
+
+        # 综合评分
+        score = (
+            0.30 * median_sharpe +
+            0.20 * avg_sharpe +
+            0.30 * win_rate +
+            0.20 * min(stability_score, 5.0)  # 限制稳定性得分上限避免极端值
+        )
+
+        # 记录分析结果
+        analysis_entry = {
+            'params': params_key,
+            'n1': params_key[0],
+            'n2': params_key[1],
+            'median_sharpe': median_sharpe,
+            'avg_sharpe': avg_sharpe,
+            'win_rate': win_rate,
+            'sharpe_std': sharpe_std,
+            'stability_score': stability_score,
+            'score': score,
+            'num_instruments': len(group_results)
+        }
+        params_analysis.append(analysis_entry)
+
+        if score > best_score:
+            best_score = score
+            best_params_key = params_key
+            best_metrics = analysis_entry
+            # 找到该参数组中表现最好的一个标的作为代表
+            best_result = max(group_results, key=lambda x: x['stats']['Sharpe Ratio'] if not pd.isna(x['stats']['Sharpe Ratio']) else -float('inf'))  # type: ignore[assignment, index]
+
+    # 按综合评分排序
+    params_analysis.sort(key=lambda x: x['score'], reverse=True)
+
+    if verbose and params_analysis:
+        print("\n" + "=" * 70)
+        print("参数稳健性分析")
+        print("=" * 70)
+        print(f"候选参数组合: {len(params_analysis)} 种\n")
+
+        for i, analysis in enumerate(params_analysis[:5], 1):  # 只显示前5个
+            print(f"参数 (n1={analysis['n1']}, n2={analysis['n2']}):")
+            print(f"  中位数夏普: {analysis['median_sharpe']:.4f}")
+            print(f"  平均夏普:   {analysis['avg_sharpe']:.4f}")
+            print(f"  胜率:       {analysis['win_rate']*100:.1f}% ({int(analysis['win_rate']*analysis['num_instruments'])}/{analysis['num_instruments']}盈利)")
+            print(f"  稳定性:     {'高' if analysis['sharpe_std'] < 0.5 else '中' if analysis['sharpe_std'] < 1.0 else '低'} (标准差={analysis['sharpe_std']:.2f})")
+            print(f"  综合评分:   {analysis['score']:.4f} {'← 最优' if i == 1 else ''}")
+            print()
+
+    if best_params_key is None:
+        return None, None, None, params_analysis
+
+    best_params = {'n1': best_params_key[0], 'n2': best_params_key[1]}
+    return best_params, best_metrics, best_result, params_analysis
+
+
+def save_best_params(
+    all_results: List[Dict[str, object]],
+    save_params_file: str,
+    strategy_name: str,
+    start_date: Optional[str] = None,
+    end_date: Optional[str] = None,
+    verbose: bool = False
+) -> None:
+    """
+    保存表现最佳的全局稳健参数
+
+    使用综合评分法找出在所有标的上表现最稳健的参数，
+    而非单纯选择某个标的的历史最优参数。
+
+    Args:
+        all_results: 所有回测结果列表
+        save_params_file: 参数配置文件路径
+        strategy_name: 策略名称
+        start_date: 回测开始日期
+        end_date: 回测结束日期
+        verbose: 是否输出详细信息
+    """
+    try:
+        # 使用全局稳健参数查找方法
+        best_params, best_metrics, best_result, params_analysis = find_robust_params(
+            all_results, verbose=verbose
+        )
+
+        if best_params is None or best_result is None:
+            if verbose:
+                print("\n⚠️ 未找到有效的优化参数，跳过参数保存")
+            return
+
+        # 获取代表标的信息
+        instrument = best_result['instrument']  # type: ignore[assignment]
+        stats = best_result['stats']  # type: ignore[assignment]
+
+        params_manager = StrategyParamsManager(save_params_file)
+
+        # 构建性能统计（使用该参数在代表标的上的表现）
+        performance_stats = {
+            'sharpe_ratio': float(stats['Sharpe Ratio']) if stats['Sharpe Ratio'] is not None else None,
+            'annual_return': float(stats['Return (Ann.) [%]']) if stats['Return (Ann.) [%]'] is not None else None,
+            'max_drawdown': float(stats['Max. Drawdown [%]']) if stats['Max. Drawdown [%]'] is not None else None,
+            'return_pct': float(stats['Return [%]']) if stats['Return [%]'] is not None else None,
+            # 新增：全局稳健性指标
+            'median_sharpe': best_metrics['median_sharpe'],
+            'avg_sharpe': best_metrics['avg_sharpe'],
+            'win_rate': best_metrics['win_rate'],
+            'sharpe_std': best_metrics['sharpe_std'],
+            'robustness_score': best_metrics['score']
+        }
+
+        # 构建优化期间信息
+        optimization_period = None
+        if start_date and end_date:
+            optimization_period = f"{start_date} 至 {end_date}"
+        elif start_date:
+            optimization_period = f"{start_date} 至今"
+        elif end_date:
+            optimization_period = f"开始 至 {end_date}"
+
+        # 构建股票池信息
+        num_instruments = len([r for r in all_results if 'optimized_params' in r])
+        if num_instruments > 1:
+            stock_pool = f"全局稳健优化 (共{num_instruments}只标的)"
+        else:
+            stock_pool = f"{resolve_display_name(instrument)}"
+
+        # 构建详细说明
+        notes = (
+            f"全局稳健参数优化 (综合评分={best_metrics['score']:.4f})\n"
+            f"中位数夏普={best_metrics['median_sharpe']:.4f}, "
+            f"平均夏普={best_metrics['avg_sharpe']:.4f}, "
+            f"胜率={best_metrics['win_rate']*100:.1f}%, "
+            f"稳定性(标准差)={best_metrics['sharpe_std']:.4f}"
+        )
+
+        # 保存优化结果
+        params_manager.save_optimization_results(
+            strategy_name=strategy_name,
+            optimized_params=best_params,
+            performance_stats=performance_stats,
+            optimization_period=optimization_period,
+            stock_pool=stock_pool,
+            notes=notes
+        )
+
+        # 输出摘要信息
+        if verbose:
+            print(f"\n✓ 全局稳健参数已保存到 {save_params_file}")
+            print(f"  参数: n1={best_params['n1']}, n2={best_params['n2']}")
+            print(f"  中位数夏普: {best_metrics['median_sharpe']:.4f}")
+            print(f"  平均夏普: {best_metrics['avg_sharpe']:.4f}")
+            print(f"  胜率: {best_metrics['win_rate']*100:.1f}%")
+            print(f"  稳定性: 标准差={best_metrics['sharpe_std']:.4f}")
+            print(f"  综合评分: {best_metrics['score']:.4f}")
+            print(f"  该参数在{int(best_metrics['win_rate']*num_instruments)}/{num_instruments}个标的上盈利")
+        else:
+            print(f"\n✓ 全局稳健参数已保存到 {save_params_file}")
+            print(f"  参数: n1={best_params['n1']}, n2={best_params['n2']}")
+            print(f"  胜率: {best_metrics['win_rate']*100:.1f}% ({int(best_metrics['win_rate']*num_instruments)}/{num_instruments}个标的盈利)")
+            print(f"  平均夏普: {best_metrics['avg_sharpe']:.4f}, 中位数夏普: {best_metrics['median_sharpe']:.4f}")
+
+    except Exception as e:
+        print(f"\n⚠️ 保存优化参数失败: {e}")
+        if verbose:
+            import traceback
+            print(traceback.format_exc())
+
+
 def build_aggregate_payload(results: List[Dict[str, object]]) -> List[Dict[str, object]]:
     """
     构建聚合统计数据的占位结构，便于未来汇总分析。
@@ -226,7 +469,7 @@ def run_single_backtest(
     start_date: Optional[str] = None,
     end_date: Optional[str] = None,
     verbose: bool = False,
-    save_params_file: Optional[str] = None,
+    save_params_file: Optional[str] = None,  # 保留参数但不在函数内使用
 ) -> pd.Series:
     """
     运行单次回测。
@@ -290,52 +533,7 @@ def run_single_backtest(
             if hasattr(stats._strategy, 'n2'):
                 print(f"  长期均线 (n2): {stats._strategy.n2}")
 
-        # 保存优化参数到配置文件（如果指定了）
-        if save_params_file and hasattr(stats._strategy, 'n1') and hasattr(stats._strategy, 'n2'):
-            try:
-                params_manager = StrategyParamsManager(save_params_file)
-
-                # 构建优化参数
-                optimized_params = {
-                    'n1': stats._strategy.n1,
-                    'n2': stats._strategy.n2
-                }
-
-                # 构建性能统计
-                performance_stats = {
-                    'sharpe_ratio': float(stats['Sharpe Ratio']) if stats['Sharpe Ratio'] is not None else None,
-                    'annual_return': float(stats['Return (Ann.) [%]']) if stats['Return (Ann.) [%]'] is not None else None,
-                    'max_drawdown': float(stats['Max. Drawdown [%]']) if stats['Max. Drawdown [%]'] is not None else None,
-                    'return_pct': float(stats['Return [%]']) if stats['Return [%]'] is not None else None
-                }
-
-                # 构建优化期间信息
-                optimization_period = None
-                if start_date and end_date:
-                    optimization_period = f"{start_date} 至 {end_date}"
-                elif start_date:
-                    optimization_period = f"{start_date} 至今"
-                elif end_date:
-                    optimization_period = f"开始 至 {end_date}"
-
-                # 保存优化结果
-                params_manager.save_optimization_results(
-                    strategy_name=strategy_name,
-                    optimized_params=optimized_params,
-                    performance_stats=performance_stats,
-                    optimization_period=optimization_period,
-                    stock_pool=f"{resolve_display_name(instrument)}",
-                    notes=f"基于 {resolve_display_name(instrument)} 的参数优化"
-                )
-
-                if verbose:
-                    print(f"\n✓ 优化参数已保存到 {save_params_file}")
-
-            except Exception as e:
-                print(f"\n⚠️ 保存优化参数失败: {e}")
-                if verbose:
-                    import traceback
-                    print(traceback.format_exc())
+        # 注意：参数保存逻辑已移至主函数，在所有回测完成后统一保存最优参数
     else:
         if verbose:
             print("\n运行回测...")
@@ -373,7 +571,8 @@ def run_single_backtest(
         print(f"\n生成图表: {plot_file}")
     bt.plot(filename=str(plot_file), open_browser=False)
 
-    return stats
+    # 返回 stats 和 bt 对象（用于获取优化参数）
+    return stats, bt
 
 
 def save_results(
@@ -796,7 +995,7 @@ def main() -> int:
                     display_name = resolve_display_name(instrument)
                     print(f"[{current_idx}/{total_instruments}] 回测 {display_name} ({instrument.code}) - {strategy_name}")
 
-                stats = run_single_backtest(
+                stats, bt_result = run_single_backtest(
                     data=data,
                     strategy_class=strategy_class,
                     instrument=instrument,
@@ -810,14 +1009,25 @@ def main() -> int:
                     verbose=verbose,
                     save_params_file=args.save_params,
                 )
-                all_results.append(
-                    {
-                        'instrument': instrument,
-                        'strategy': strategy_name,
-                        'stats': stats,
-                        'cost_model': cost_config.name,
-                    }
-                )
+
+                # 保存结果和优化参数信息
+                result_entry = {
+                    'instrument': instrument,
+                    'strategy': strategy_name,
+                    'stats': stats,
+                    'cost_model': cost_config.name,
+                }
+
+                # 如果是优化模式，保存优化参数信息
+                if args.optimize and hasattr(bt_result, '_strategy'):
+                    strategy_obj = bt_result._strategy
+                    if hasattr(strategy_obj, 'n1') and hasattr(strategy_obj, 'n2'):
+                        result_entry['optimized_params'] = {
+                            'n1': strategy_obj.n1,
+                            'n2': strategy_obj.n2
+                        }
+
+                all_results.append(result_entry)
             except Exception as exc:
                 print(f"\n错误: 运行回测失败: {exc}")
                 import traceback
@@ -917,6 +1127,17 @@ def main() -> int:
         aggregate_path.parent.mkdir(parents=True, exist_ok=True)
         summary_df.to_csv(aggregate_path, index=False, encoding='utf-8-sig')
         print(f"汇总结果已保存: {aggregate_path}")
+
+        # 保存最优参数到配置文件（如果指定了save_params且在优化模式）
+        if args.save_params and args.optimize:
+            save_best_params(
+                all_results=all_results,
+                save_params_file=args.save_params,
+                strategy_name=args.strategy if args.strategy != 'all' else 'sma_cross',
+                start_date=args.start_date,
+                end_date=args.end_date,
+                verbose=verbose
+            )
 
         return 0
 

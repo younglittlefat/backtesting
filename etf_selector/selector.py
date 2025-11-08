@@ -401,13 +401,7 @@ class TrendETFSelector:
         output_path = Path(output_path)
         output_path.parent.mkdir(parents=True, exist_ok=True)
 
-        # 添加时间戳
-        timestamp = datetime.now().strftime('%Y%m%d_%H%M%S')
-        if not output_path.stem.endswith(timestamp[:8]):  # 如果文件名还没有日期
-            stem = output_path.stem + f'_{timestamp[:8]}'  # 只加日期，不加时分秒
-            output_path = output_path.with_stem(stem)
-
-        # 导出CSV
+        # 导出CSV（直接使用指定的路径，不添加时间戳）
         df.to_csv(output_path, index=False, encoding='utf-8-sig')
         print(f"✅ 结果已导出: {output_path} ({len(df)} 只ETF)")
 
