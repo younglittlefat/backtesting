@@ -30,6 +30,7 @@ from utils.data_loader import (
 )
 from utils.trading_cost import TradingCostConfig, TradingCostCalculator, get_cost_summary
 from strategies.sma_cross import SmaCross, OPTIMIZE_PARAMS, CONSTRAINTS
+from utils.strategy_params_manager import StrategyParamsManager
 from common.mysql_manager import MySQLManager
 
 
@@ -225,6 +226,7 @@ def run_single_backtest(
     start_date: Optional[str] = None,
     end_date: Optional[str] = None,
     verbose: bool = False,
+    save_params_file: Optional[str] = None,
 ) -> pd.Series:
     """
     运行单次回测。
@@ -287,6 +289,53 @@ def run_single_backtest(
                 print(f"  短期均线 (n1): {stats._strategy.n1}")
             if hasattr(stats._strategy, 'n2'):
                 print(f"  长期均线 (n2): {stats._strategy.n2}")
+
+        # 保存优化参数到配置文件（如果指定了）
+        if save_params_file and hasattr(stats._strategy, 'n1') and hasattr(stats._strategy, 'n2'):
+            try:
+                params_manager = StrategyParamsManager(save_params_file)
+
+                # 构建优化参数
+                optimized_params = {
+                    'n1': stats._strategy.n1,
+                    'n2': stats._strategy.n2
+                }
+
+                # 构建性能统计
+                performance_stats = {
+                    'sharpe_ratio': float(stats['Sharpe Ratio']) if stats['Sharpe Ratio'] is not None else None,
+                    'annual_return': float(stats['Return (Ann.) [%]']) if stats['Return (Ann.) [%]'] is not None else None,
+                    'max_drawdown': float(stats['Max. Drawdown [%]']) if stats['Max. Drawdown [%]'] is not None else None,
+                    'return_pct': float(stats['Return [%]']) if stats['Return [%]'] is not None else None
+                }
+
+                # 构建优化期间信息
+                optimization_period = None
+                if start_date and end_date:
+                    optimization_period = f"{start_date} 至 {end_date}"
+                elif start_date:
+                    optimization_period = f"{start_date} 至今"
+                elif end_date:
+                    optimization_period = f"开始 至 {end_date}"
+
+                # 保存优化结果
+                params_manager.save_optimization_results(
+                    strategy_name=strategy_name,
+                    optimized_params=optimized_params,
+                    performance_stats=performance_stats,
+                    optimization_period=optimization_period,
+                    stock_pool=f"{resolve_display_name(instrument)}",
+                    notes=f"基于 {resolve_display_name(instrument)} 的参数优化"
+                )
+
+                if verbose:
+                    print(f"\n✓ 优化参数已保存到 {save_params_file}")
+
+            except Exception as e:
+                print(f"\n⚠️ 保存优化参数失败: {e}")
+                if verbose:
+                    import traceback
+                    print(traceback.format_exc())
     else:
         if verbose:
             print("\n运行回测...")
@@ -530,6 +579,12 @@ def main() -> int:
         action='store_true',
         help='输出详细日志（默认仅显示回测汇总）。',
     )
+    parser.add_argument(
+        '--save-params',
+        type=str,
+        default=None,
+        help='保存优化参数到指定配置文件（仅在optimize模式下有效）。',
+    )
 
     args = parser.parse_args()
 
@@ -753,6 +808,7 @@ def main() -> int:
                     start_date=args.start_date,
                     end_date=args.end_date,
                     verbose=verbose,
+                    save_params_file=args.save_params,
                 )
                 all_results.append(
                     {

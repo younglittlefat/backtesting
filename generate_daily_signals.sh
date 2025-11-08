@@ -52,6 +52,7 @@ ${YELLOW}基本选项:${NC}
   --csv <file>                 输出CSV文件路径（可选）
   --n1 <n>                     短期均线周期（覆盖策略默认值）
   --n2 <n>                     长期均线周期（覆盖策略默认值）
+  --load-params <file>         从配置文件加载策略参数（覆盖--n1和--n2）
   -h, --help                   显示此帮助信息
 
 ${YELLOW}示例:${NC}
@@ -77,7 +78,13 @@ ${YELLOW}示例:${NC}
     --portfolio-file positions/portfolio.json \\
     --n1 15 --n2 50
 
-  ${GREEN}# 6. 无状态模式（原有功能，不使用持仓管理）${NC}
+  ${GREEN}# 6. 使用优化后的策略参数${NC}
+  $0 --analyze \\
+    --stock-list results/trend_etf_pool_20251107.csv \\
+    --portfolio-file positions/portfolio.json \\
+    --load-params config/strategy_params.json
+
+  ${GREEN}# 7. 无状态模式（原有功能，不使用持仓管理）${NC}
   $0 --stock-list results/trend_etf_pool_20251107.csv --cash 200000 --positions 15
 
 ${YELLOW}持仓管理工作流:${NC}
@@ -144,6 +151,7 @@ main() {
     CSV=""
     N1=""
     N2=""
+    LOAD_PARAMS=""
 
     # 解析命令行参数
     while [[ $# -gt 0 ]]; do
@@ -213,6 +221,10 @@ main() {
                 N2="$2"
                 shift 2
                 ;;
+            --load-params)
+                LOAD_PARAMS="$2"
+                shift 2
+                ;;
             -h|--help)
                 show_help
                 exit 0
@@ -258,6 +270,9 @@ main() {
     fi
     if [ -n "$N2" ]; then
         echo -e "${YELLOW}长期均线:${NC} $N2 日"
+    fi
+    if [ -n "$LOAD_PARAMS" ]; then
+        echo -e "${YELLOW}参数配置:${NC} $LOAD_PARAMS"
     fi
     if [ -n "$OUTPUT" ]; then
         echo -e "${YELLOW}报告输出:${NC} $OUTPUT"
@@ -318,6 +333,10 @@ main() {
         if [ -n "$N2" ]; then
             CMD+=("--n2" "$N2")
         fi
+
+        if [ -n "$LOAD_PARAMS" ]; then
+            CMD+=("--load-params" "$LOAD_PARAMS")
+        fi
     else
         # 无状态模式（原有逻辑）
         if [ -z "$STOCK_LIST" ]; then
@@ -349,6 +368,10 @@ main() {
 
         if [ -n "$N2" ]; then
             CMD+=("--n2" "$N2")
+        fi
+
+        if [ -n "$LOAD_PARAMS" ]; then
+            CMD+=("--load-params" "$LOAD_PARAMS")
         fi
     fi
 

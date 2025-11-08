@@ -51,11 +51,15 @@ ${YELLOW}选项:${NC}
   --instrument-limit <n>       限制本次回测的标的数量，只取前 N 个
   --keep-negative              保留收益率为负的标的结果文件（默认会删除）
   --verbose                    输出详细日志（默认仅显示汇总）
+  --save-params <file>         保存优化参数到配置文件（仅在--optimize时有效）
   -h, --help                   显示此帮助信息
 
 ${YELLOW}示例:${NC}
   ${GREEN}# 使用筛选器生成的ETF池进行回测（需指定data-dir）${NC}
   $0 --stock-list results/trend_etf_pool_20251107.csv -t sma_cross -o --data-dir data/csv/daily
+
+  ${GREEN}# 回测并保存优化参数到配置文件${NC}
+  $0 --stock-list results/trend_etf_pool_20251107.csv -t sma_cross -o --save-params config/strategy_params.json
 
   ${GREEN}# 对 159001.SZ 运行双均线策略（使用默认ETF费用）${NC}
   $0 -s 159001.SZ -t sma_cross
@@ -263,6 +267,9 @@ main() {
 
     KEEP_NEGATIVE_FLAG=0
 
+    SAVE_PARAMS_VALUE=""
+    SAVE_PARAMS_ARGS=()
+
     VERBOSE_FLAG=0
 
     # 解析命令行参数
@@ -347,6 +354,11 @@ main() {
             --verbose)
                 VERBOSE_FLAG=1
                 shift
+                ;;
+            --save-params)
+                SAVE_PARAMS_VALUE="$2"
+                SAVE_PARAMS_ARGS=("--save-params" "$2")
+                shift 2
                 ;;
             -h|--help)
                 show_help
@@ -436,6 +448,9 @@ main() {
     else
         echo -e "${YELLOW}详细日志:${NC} 关闭"
     fi
+    if [ -n "$SAVE_PARAMS_VALUE" ]; then
+        echo -e "${YELLOW}参数保存:${NC} $SAVE_PARAMS_VALUE"
+    fi
     echo -e "${BLUE}======================================================================${NC}"
     echo ""
 
@@ -490,6 +505,9 @@ main() {
     fi
     if [ $VERBOSE_FLAG -eq 1 ]; then
         CMD+=("--verbose")
+    fi
+    if [ -n "$SAVE_PARAMS_VALUE" ]; then
+        CMD+=("${SAVE_PARAMS_ARGS[@]}")
     fi
 
     echo -e "${YELLOW}执行命令:${NC} ${CMD[*]}"

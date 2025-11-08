@@ -1,0 +1,19 @@
+{
+  "sma_cross": {
+    "optimized": false,
+    "optimization_date": null,
+    "optimization_period": null,
+    "stock_pool": null,
+    "params": {
+      "n1": 10,
+      "n2": 20
+    },
+    "performance": {
+      "sharpe_ratio": null,
+      "annual_return": null,
+      "max_drawdown": null,
+      "return_pct": null
+    },
+    "notes": "默认参数配置"
+  }
+}

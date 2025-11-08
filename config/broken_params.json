@@ -1,0 +1,8 @@
+{
+  "sma_cross": {
+    "optimized": true,
+    "params": {
+      "n1": 15,
+      "n2": 60
+    # 故意缺少闭合括号，造成JSON格式错误
+}

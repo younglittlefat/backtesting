@@ -27,6 +27,7 @@ sys.path.insert(0, str(PROJECT_ROOT))
 from backtesting import Backtest
 from backtesting.lib import crossover
 from utils.data_loader import load_chinese_ohlcv_data, load_dual_price_data
+from utils.strategy_params_manager import StrategyParamsManager
 from portfolio_manager import Portfolio, PortfolioTrader, TradeLogger, Trade
 
 
@@ -751,6 +752,7 @@ def main():
     # 策略参数
     parser.add_argument('--n1', type=int, help='短期均线周期')
     parser.add_argument('--n2', type=int, help='长期均线周期')
+    parser.add_argument('--load-params', type=str, help='从配置文件加载策略参数')
 
     # 价格模式
     parser.add_argument('--disable-dual-price', action='store_true',
@@ -843,10 +845,29 @@ def main():
 
         # 准备策略参数
         strategy_params = {}
+
+        # 优先从配置文件加载参数
+        if args.load_params:
+            try:
+                params_manager = StrategyParamsManager(args.load_params)
+                loaded_params = params_manager.get_strategy_params(args.strategy)
+                strategy_params.update(loaded_params)
+                print(f"✓ 从配置文件加载参数: {loaded_params}")
+            except Exception as e:
+                print(f"⚠️ 加载配置文件失败: {e}")
+                print("使用命令行参数或默认参数")
+
+        # 命令行参数会覆盖配置文件参数（如果同时指定）
         if args.n1:
             strategy_params['n1'] = args.n1
+            print(f"使用命令行指定的 n1: {args.n1}")
         if args.n2:
             strategy_params['n2'] = args.n2
+            print(f"使用命令行指定的 n2: {args.n2}")
+
+        # 如果没有任何参数，使用策略的默认参数
+        if not strategy_params:
+            print("使用策略默认参数")
 
         # 获取费用配置
         cost_config = COST_MODELS.get(args.cost_model, COST_MODELS['cn_etf'])
