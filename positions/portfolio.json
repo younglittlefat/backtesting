@@ -1,0 +1,20 @@
+{
+  "cash": 50000.0,
+  "positions": [
+    {
+      "ts_code": "588170.SH",
+      "shares": 10000,
+      "entry_price": 1.52,
+      "entry_date": "2025-11-01",
+      "cost": 15230.0
+    },
+    {
+      "ts_code": "589010.SH",
+      "shares": 10000,
+      "entry_price": 1.73,
+      "entry_date": "2025-11-02",
+      "cost": 17330.0
+    }
+  ],
+  "last_update": "2025-11-08 00:38:20"
+}

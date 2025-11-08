@@ -26,7 +26,8 @@ sys.path.insert(0, str(PROJECT_ROOT))
 
 from backtesting import Backtest
 from backtesting.lib import crossover
-from utils.data_loader import load_chinese_ohlcv_data
+from utils.data_loader import load_chinese_ohlcv_data, load_dual_price_data
+from portfolio_manager import Portfolio, PortfolioTrader, TradeLogger, Trade
 
 
 # 费用模型配置
@@ -47,7 +48,8 @@ class SignalGenerator:
                  cash: float = 100000,
                  cost_model: str = 'cn_etf',
                  data_dir: str = 'data/csv/daily',
-                 lookback_days: int = 250):
+                 lookback_days: int = 250,
+                 use_dual_price: bool = True):
         """
         初始化信号生成器
 
@@ -58,6 +60,7 @@ class SignalGenerator:
             cost_model: 费用模型
             data_dir: 数据目录
             lookback_days: 回看天数（用于计算指标）
+            use_dual_price: 是否使用双价格模式
         """
         self.strategy_class = strategy_class
         self.strategy_params = strategy_params or {}
@@ -65,6 +68,7 @@ class SignalGenerator:
         self.cost_model = cost_model
         self.data_dir = data_dir
         self.lookback_days = lookback_days
+        self.use_dual_price = use_dual_price
 
         # 获取费用配置
         if cost_model not in COST_MODELS:
@@ -73,6 +77,16 @@ class SignalGenerator:
         cost_config = COST_MODELS[cost_model]
         self.commission = cost_config['commission']
         self.spread = cost_config.get('spread', 0.0)
+
+        # 计算日期范围
+        if lookback_days > 0:
+            end_date = datetime.now()
+            start_date = end_date - timedelta(days=lookback_days * 2)  # 预留更多天数以防节假日
+            self.start_date = start_date.strftime('%Y-%m-%d')
+            self.end_date = end_date.strftime('%Y-%m-%d')
+        else:
+            self.start_date = None
+            self.end_date = None
 
     def load_instrument_data(self, ts_code: str) -> Optional[pd.DataFrame]:
         """
@@ -209,6 +223,150 @@ class SignalGenerator:
 
         return result
 
+    def get_signal(self, ts_code: str) -> Dict:
+        """
+        获取标的信号（根据use_dual_price自动选择方法）
+
+        Args:
+            ts_code: 标的代码
+
+        Returns:
+            信号字典
+        """
+        if self.use_dual_price:
+            return self.get_current_signal_dual_price(ts_code)
+        else:
+            return self.get_current_signal(ts_code)
+
+    def get_current_signal_dual_price(self, ts_code: str) -> Dict:
+        """
+        获取标的当前的交易信号（双价格模式）
+
+        使用复权价格计算信号，同时返回原始价格用于交易
+
+        Args:
+            ts_code: 标的代码
+
+        Returns:
+            信号字典，包含：
+            - signal: 'BUY', 'SELL', 'HOLD', 'ERROR'
+            - adj_price: 复权价格（用于信号计算）
+            - real_price: 原始价格（用于实际交易）
+            - price: 兼容性价格（为原始price, 等于real_price）
+            - adj_factor: 复权因子
+            - sma_short: 短期均线值
+            - sma_long: 长期均线值
+            - signal_strength: 信号强度（均线差值百分比）
+            - message: 说明信息
+        """
+        result = {
+            'ts_code': ts_code,
+            'signal': 'ERROR',
+            'adj_price': 0,      # 复权价格（用于信号）
+            'real_price': 0,     # 原始价格（用于交易）
+            'price': 0,          # 兼容性价格（等于real_price）
+            'adj_factor': 1.0,   # 复权因子
+            'sma_short': 0,
+            'sma_long': 0,
+            'signal_strength': 0,
+            'message': ''
+        }
+
+        try:
+            # 加载双价格数据
+            csv_path = self._get_csv_path(ts_code)
+            if not csv_path.exists():
+                result['message'] = f'数据文件不存在: {csv_path}'
+                return result
+
+            adj_df, real_df, price_mapping = load_dual_price_data(
+                csv_path,
+                verbose=False,
+                start_date=self.start_date,
+                end_date=self.end_date
+            )
+
+            if len(adj_df) < max(self.strategy_params.get('n1', 10),
+                                self.strategy_params.get('n2', 20)) + 10:
+                result['message'] = '数据点不足，无法计算均线'
+                return result
+
+            # 使用复权价格运行回测以获取策略状态（信号计算）
+            bt = Backtest(
+                adj_df,
+                self.strategy_class,
+                cash=self.cash,
+                commission=self.commission,
+                exclusive_orders=True
+            )
+
+            # 设置策略参数
+            if self.strategy_params:
+                stats = bt.run(**self.strategy_params)
+            else:
+                stats = bt.run()
+
+            # 获取策略实例
+            strategy = stats._strategy
+
+            # 获取最新的指标值（基于复权价格）
+            sma_short = strategy.sma1[-1]
+            sma_long = strategy.sma2[-1]
+
+            # 获取前一天的指标值（用于检测交叉）
+            sma_short_prev = strategy.sma1[-2] if len(strategy.sma1) > 1 else sma_short
+            sma_long_prev = strategy.sma2[-2] if len(strategy.sma2) > 1 else sma_long
+
+            # 设置价格信息
+            result['adj_price'] = price_mapping['latest_adj_price']     # 复权价格
+            result['real_price'] = price_mapping['latest_real_price']   # 原始价格
+            result['price'] = price_mapping['latest_real_price']        # 兼容性（等于原始价格）
+            result['adj_factor'] = price_mapping['adj_factor']
+            result['sma_short'] = sma_short
+            result['sma_long'] = sma_long
+
+            # 计算信号强度（均线差值的百分比）
+            signal_strength = ((sma_short - sma_long) / sma_long) * 100
+            result['signal_strength'] = signal_strength
+
+            # 判断信号（基于复权价格的均线）
+            # 金叉：短期均线从下方穿过长期均线
+            if sma_short_prev <= sma_long_prev and sma_short > sma_long:
+                result['signal'] = 'BUY'
+                result['message'] = f'金叉买入信号！短期均线({strategy.n1}日)上穿长期均线({strategy.n2}日)'
+            # 死叉：短期均线从上方穿过长期均线
+            elif sma_short_prev >= sma_long_prev and sma_short < sma_long:
+                result['signal'] = 'SELL'
+                result['message'] = f'死叉卖出信号！短期均线({strategy.n1}日)下穿长期均线({strategy.n2}日)'
+            # 持有状态
+            elif sma_short > sma_long:
+                result['signal'] = 'HOLD_LONG'
+                result['message'] = f'持有多头。短期均线在长期均线上方（{signal_strength:.2f}%）'
+            else:
+                result['signal'] = 'HOLD_SHORT'
+                result['message'] = f'持有空头。短期均线在长期均线下方（{signal_strength:.2f}%）'
+
+        except Exception as e:
+            result['message'] = f'双价格策略运行失败: {e}'
+
+        return result
+
+    def _get_csv_path(self, ts_code: str) -> Path:
+        """根据股票代码构造CSV文件路径"""
+        # 推测ETF数据路径
+        csv_path = Path(self.data_dir) / 'etf' / f'{ts_code}.csv'
+        if csv_path.exists():
+            return csv_path
+
+        # 其他可能的路径
+        for subdir in ['fund', 'stock', '']:
+            csv_path = Path(self.data_dir) / subdir / f'{ts_code}.csv'
+            if csv_path.exists():
+                return csv_path
+
+        # 默认返回ETF路径（让调用者处理文件不存在的情况）
+        return Path(self.data_dir) / 'etf' / f'{ts_code}.csv'
+
     def generate_signals_for_pool(self,
                                   stock_list_file: str,
                                   target_positions: int = 10) -> Tuple[pd.DataFrame, Dict]:
@@ -238,7 +396,7 @@ class SignalGenerator:
         signals = []
         for i, ts_code in enumerate(ts_codes, 1):
             print(f"[{i}/{len(ts_codes)}] 分析 {ts_code}...", end=' ')
-            signal = self.get_current_signal(ts_code)
+            signal = self.get_signal(ts_code)
             signals.append(signal)
             print(f"{signal['signal']}")
 
@@ -414,6 +572,144 @@ def print_signal_report(signals_df: pd.DataFrame,
         print(f"报告已保存到: {output_file}")
 
 
+def print_portfolio_status(portfolio: Portfolio,
+                          current_prices: Dict[str, float],
+                          max_positions: int):
+    """
+    打印持仓状态报告
+
+    Args:
+        portfolio: 投资组合对象
+        current_prices: 当前价格字典
+        max_positions: 最大持仓数
+    """
+    lines = []
+
+    lines.append("=" * 80)
+    lines.append("当前持仓状态")
+    lines.append("=" * 80)
+    lines.append("")
+
+    # 资金信息
+    market_value = portfolio.get_total_market_value(current_prices)
+    total_cost = portfolio.get_total_cost()
+    total_pnl = portfolio.get_total_pnl(current_prices)
+    total_assets = portfolio.cash + market_value
+    pnl_pct = (total_pnl / total_cost * 100) if total_cost > 0 else 0
+
+    lines.append("💰 资金信息")
+    lines.append("-" * 80)
+    lines.append(f"  可用现金: ¥{portfolio.cash:,.2f}")
+    lines.append(f"  持仓市值: ¥{market_value:,.2f}")
+    lines.append(f"  总资产:   ¥{total_assets:,.2f}")
+    pnl_sign = '+' if total_pnl >= 0 else ''
+    lines.append(f"  持仓盈亏: {pnl_sign}¥{total_pnl:,.2f} ({pnl_sign}{pnl_pct:.2f}%)")
+    lines.append("")
+
+    # 持仓明细
+    lines.append(f"📊 持仓明细 ({len(portfolio.positions)}/{max_positions})")
+    lines.append("-" * 80)
+
+    if portfolio.positions:
+        for pos in portfolio.positions:
+            current_price = current_prices.get(pos.ts_code, pos.entry_price)
+            current_value = pos.shares * current_price
+            pnl = current_value - pos.cost
+            pnl_pct = (pnl / pos.cost * 100) if pos.cost > 0 else 0
+            pnl_sign = '+' if pnl >= 0 else ''
+
+            lines.append(f"  {pos.ts_code}")
+            lines.append(f"    持仓数量: {pos.shares} 股")
+            lines.append(f"    买入价格: ¥{pos.entry_price:.2f} ({pos.entry_date})")
+            lines.append(f"    当前价格: ¥{current_price:.2f}")
+            lines.append(f"    持仓成本: ¥{pos.cost:,.2f}")
+            lines.append(f"    当前市值: ¥{current_value:,.2f}")
+            lines.append(f"    盈亏:     {pnl_sign}¥{pnl:,.2f} ({pnl_sign}{pnl_pct:.2f}%)")
+            lines.append("")
+    else:
+        lines.append("  (无持仓)")
+        lines.append("")
+
+    lines.append(f"最后更新: {portfolio.last_update}")
+    lines.append("=" * 80)
+
+    print("\n".join(lines))
+
+
+def print_trade_plan(sell_trades: List[Trade],
+                    buy_trades: List[Trade],
+                    portfolio: Portfolio):
+    """
+    打印交易计划
+
+    Args:
+        sell_trades: 卖出交易列表
+        buy_trades: 买入交易列表
+        portfolio: 当前持仓
+    """
+    lines = []
+
+    lines.append("")
+    lines.append("=" * 80)
+    lines.append("交易建议")
+    lines.append("=" * 80)
+    lines.append("")
+
+    # 卖出操作
+    if sell_trades:
+        lines.append(f"📉 卖出操作 ({len(sell_trades)})")
+        lines.append("-" * 80)
+        for i, trade in enumerate(sell_trades, 1):
+            lines.append(f"  [{i}] {trade.ts_code}")
+            lines.append(f"      操作: 卖出")
+            lines.append(f"      价格: ¥{trade.price:.2f}")
+            lines.append(f"      数量: {trade.shares} 股")
+            lines.append(f"      预计收入: ¥{trade.amount:,.2f}")
+            lines.append(f"      原因: {trade.reason}")
+            lines.append("")
+
+    # 买入操作
+    if buy_trades:
+        lines.append(f"📈 买入操作 ({len(buy_trades)})")
+        lines.append("-" * 80)
+        for i, trade in enumerate(buy_trades, 1):
+            lines.append(f"  [{i}] {trade.ts_code}")
+            lines.append(f"      操作: 买入")
+            lines.append(f"      价格: ¥{trade.price:.2f}")
+            lines.append(f"      数量: {trade.shares} 股")
+            lines.append(f"      预计成本: ¥{abs(trade.amount):,.2f}")
+            lines.append(f"      原因: {trade.reason}")
+            lines.append("")
+
+    if not sell_trades and not buy_trades:
+        lines.append("✅ 无需交易")
+        lines.append("-" * 80)
+        lines.append("  当前持仓无需调整，继续持有即可。")
+        lines.append("")
+
+    # 交易后预期状态
+    lines.append("📊 交易后预期状态")
+    lines.append("-" * 80)
+
+    # 计算预期现金
+    expected_cash = portfolio.cash
+    for trade in sell_trades:
+        expected_cash += trade.amount
+    for trade in buy_trades:
+        expected_cash += trade.amount  # amount是负数
+
+    # 计算预期持仓数
+    expected_positions = portfolio.get_position_count() - len(sell_trades) + len(buy_trades)
+
+    lines.append(f"  预期现金: ¥{expected_cash:,.2f}")
+    lines.append(f"  预期持仓数: {expected_positions}")
+    lines.append("")
+
+    lines.append("=" * 80)
+
+    print("\n".join(lines))
+
+
 def main():
     """主函数"""
     parser = argparse.ArgumentParser(
@@ -421,12 +717,26 @@ def main():
         formatter_class=argparse.RawDescriptionHelpFormatter
     )
 
-    parser.add_argument('--stock-list', required=True,
+    # 工作模式
+    mode_group = parser.add_mutually_exclusive_group()
+    mode_group.add_argument('--init', type=float, metavar='CASH',
+                           help='初始化持仓文件（指定初始资金）')
+    mode_group.add_argument('--status', action='store_true',
+                           help='查看持仓状态')
+    mode_group.add_argument('--analyze', action='store_true',
+                           help='分析模式（生成交易建议但不执行）')
+    mode_group.add_argument('--execute', action='store_true',
+                           help='执行模式（执行交易并更新持仓）')
+
+    # 基本参数
+    parser.add_argument('--stock-list',
                        help='股票列表CSV文件路径')
+    parser.add_argument('--portfolio-file',
+                       help='持仓文件路径（JSON格式）')
     parser.add_argument('--strategy', default='sma_cross',
                        help='策略名称（默认: sma_cross）')
     parser.add_argument('--cash', type=float, default=100000,
-                       help='可用资金（默认: 100000）')
+                       help='可用资金（默认: 100000，仅无状态模式）')
     parser.add_argument('--positions', type=int, default=10,
                        help='目标持仓数量（默认: 10）')
     parser.add_argument('--cost-model', default='cn_etf',
@@ -442,7 +752,205 @@ def main():
     parser.add_argument('--n1', type=int, help='短期均线周期')
     parser.add_argument('--n2', type=int, help='长期均线周期')
 
+    # 价格模式
+    parser.add_argument('--disable-dual-price', action='store_true',
+                       help='禁用双价格模式（回退到旧的单价格模式，不推荐）')
+
     args = parser.parse_args()
+
+    # ========== 模式1：初始化持仓 ==========
+    if args.init is not None:
+        if not args.portfolio_file:
+            print("错误: 初始化模式必须指定 --portfolio-file")
+            sys.exit(1)
+
+        if args.init <= 0:
+            print("错误: 初始资金必须大于0")
+            sys.exit(1)
+
+        portfolio = Portfolio.initialize(args.init, args.portfolio_file)
+        print("=" * 80)
+        print("✓ 持仓状态已初始化")
+        print("=" * 80)
+        print(f"  初始资金: ¥{args.init:,.2f}")
+        print(f"  持仓文件: {args.portfolio_file}")
+        print("=" * 80)
+        return
+
+    # ========== 模式2：查看持仓状态 ==========
+    if args.status:
+        if not args.portfolio_file:
+            print("错误: 状态查看模式必须指定 --portfolio-file")
+            sys.exit(1)
+
+        try:
+            portfolio = Portfolio.load(args.portfolio_file)
+        except FileNotFoundError:
+            print(f"错误: 持仓文件不存在: {args.portfolio_file}")
+            print("请先使用 --init 初始化持仓文件")
+            sys.exit(1)
+
+        # 获取当前价格
+        cost_config = COST_MODELS.get(args.cost_model, COST_MODELS['cn_etf'])
+        generator = SignalGenerator(
+            strategy_class=None,  # 不需要策略
+            cash=0,
+            cost_model=args.cost_model,
+            data_dir=args.data_dir,
+            lookback_days=args.lookback_days
+        )
+
+        current_prices = {}
+        for pos in portfolio.positions:
+            df = generator.load_instrument_data(pos.ts_code)
+            if df is not None:
+                current_prices[pos.ts_code] = df['Close'].iloc[-1]
+            else:
+                current_prices[pos.ts_code] = pos.entry_price
+
+        print_portfolio_status(portfolio, current_prices, args.positions)
+        return
+
+    # ========== 模式3 & 4：分析和执行模式 ==========
+    if args.analyze or args.execute:
+        if not args.portfolio_file:
+            print("错误: 分析/执行模式必须指定 --portfolio-file")
+            sys.exit(1)
+
+        if not args.stock_list:
+            print("错误: 分析/执行模式必须指定 --stock-list")
+            sys.exit(1)
+
+        # 加载持仓
+        try:
+            portfolio = Portfolio.load(args.portfolio_file)
+        except FileNotFoundError:
+            print(f"错误: 持仓文件不存在: {args.portfolio_file}")
+            print("请先使用 --init 初始化持仓文件")
+            sys.exit(1)
+
+        # 加载策略
+        try:
+            if args.strategy == 'sma_cross':
+                from strategies.sma_cross import SmaCross
+                strategy_class = SmaCross
+            else:
+                print(f"错误: 未知策略 '{args.strategy}'")
+                sys.exit(1)
+        except ImportError as e:
+            print(f"错误: 无法加载策略 '{args.strategy}': {e}")
+            sys.exit(1)
+
+        # 准备策略参数
+        strategy_params = {}
+        if args.n1:
+            strategy_params['n1'] = args.n1
+        if args.n2:
+            strategy_params['n2'] = args.n2
+
+        # 获取费用配置
+        cost_config = COST_MODELS.get(args.cost_model, COST_MODELS['cn_etf'])
+
+        # 创建信号生成器
+        generator = SignalGenerator(
+            strategy_class=strategy_class,
+            strategy_params=strategy_params,
+            cash=portfolio.cash,
+            cost_model=args.cost_model,
+            data_dir=args.data_dir,
+            lookback_days=args.lookback_days,
+            use_dual_price=not args.disable_dual_price
+        )
+
+        # 读取股票列表
+        stock_df = pd.read_csv(args.stock_list)
+        if 'ts_code' not in stock_df.columns:
+            print(f"错误: 股票列表文件缺少 'ts_code' 列: {args.stock_list}")
+            sys.exit(1)
+
+        ts_codes = stock_df['ts_code'].tolist()
+
+        # 生成所有标的的信号
+        print(f"开始分析 {len(ts_codes)} 只标的...")
+        print("=" * 80)
+
+        signals = {}
+        current_prices = {}
+
+        for i, ts_code in enumerate(ts_codes, 1):
+            print(f"[{i}/{len(ts_codes)}] 分析 {ts_code}...", end=' ')
+            signal = generator.get_signal(ts_code)
+            signals[ts_code] = signal
+            current_prices[ts_code] = signal['price']
+            print(f"{signal['signal']}")
+
+        print("")
+
+        # 显示当前持仓状态
+        print_portfolio_status(portfolio, current_prices, args.positions)
+
+        # 创建交易引擎
+        trader = PortfolioTrader(
+            portfolio=portfolio,
+            commission=cost_config['commission'],
+            spread=cost_config.get('spread', 0.0),
+            max_positions=args.positions
+        )
+
+        # 生成交易计划
+        sell_trades, buy_trades = trader.generate_trade_plan(signals)
+
+        # 显示交易计划
+        print_trade_plan(sell_trades, buy_trades, portfolio)
+
+        # 执行模式
+        if args.execute:
+            if not sell_trades and not buy_trades:
+                print("无需执行任何交易。")
+                return
+
+            # 确认执行
+            print("")
+            print("⚠️  即将执行交易操作，请确认：")
+            print(f"  - 卖出 {len(sell_trades)} 只标的")
+            print(f"  - 买入 {len(buy_trades)} 只标的")
+            print("")
+
+            confirm = input("是否确认执行？(yes/no): ").strip().lower()
+            if confirm != 'yes':
+                print("已取消执行。")
+                return
+
+            # 执行交易
+            print("")
+            print("开始执行交易...")
+            trader.execute_trades(sell_trades, buy_trades, dry_run=False)
+
+            for trade in sell_trades:
+                print(f"✓ 卖出: {trade.ts_code} {trade.shares}股 @¥{trade.price:.2f} 收入¥{trade.amount:,.2f}")
+
+            for trade in buy_trades:
+                print(f"✓ 买入: {trade.ts_code} {trade.shares}股 @¥{trade.price:.2f} 成本¥{abs(trade.amount):,.2f}")
+
+            # 保存持仓
+            portfolio.save()
+            print(f"\n✓ 持仓已更新: {args.portfolio_file}")
+
+            # 记录交易历史
+            if sell_trades or buy_trades:
+                history_dir = Path(args.portfolio_file).parent / 'history'
+                logger = TradeLogger(str(history_dir))
+                all_trades = sell_trades + buy_trades
+                logger.log_trades(all_trades)
+                today = datetime.now().strftime('%Y%m%d')
+                print(f"✓ 交易记录已保存: {history_dir}/trades_{today}.json")
+
+        return
+
+    # ========== 无状态模式（原有逻辑）==========
+    if not args.stock_list:
+        print("错误: 必须指定 --stock-list")
+        sys.exit(1)
 
     # 检查股票列表文件
     if not os.path.exists(args.stock_list):
@@ -475,7 +983,8 @@ def main():
         cash=args.cash,
         cost_model=args.cost_model,
         data_dir=args.data_dir,
-        lookback_days=args.lookback_days
+        lookback_days=args.lookback_days,
+        use_dual_price=not args.disable_dual_price
     )
 
     # 生成信号
@@ -496,3 +1005,4 @@ def main():
 
 if __name__ == '__main__':
     main()
+

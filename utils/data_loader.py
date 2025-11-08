@@ -500,6 +500,156 @@ def load_instrument_data(
 
 
 
+def load_dual_price_data(
+    csv_path: Path,
+    start_date: Optional[str] = None,
+    end_date: Optional[str] = None,
+    *,
+    verbose: bool = True,
+) -> Tuple[pd.DataFrame, pd.DataFrame, Dict]:
+    """
+    加载双价格数据：同时返回复权价格（用于信号）和原始价格（用于交易）。
+
+    Args:
+        csv_path: CSV 文件路径
+        start_date: 开始日期（YYYY-MM-DD）
+        end_date: 结束日期（YYYY-MM-DD）
+        verbose: 是否显示详细信息
+
+    Returns:
+        tuple: (复权价格DataFrame, 原始价格DataFrame, 价格映射字典)
+            - 复权价格DataFrame: 用于信号计算的OHLCV数据
+            - 原始价格DataFrame: 用于实际交易的OHLCV数据
+            - 价格映射字典: {
+                'adj_factor': 复权因子,
+                'latest_adj_price': 最新复权价格,
+                'latest_real_price': 最新原始价格
+              }
+    """
+    if not csv_path.exists():
+        raise FileNotFoundError(f"数据文件不存在: {csv_path}")
+
+    df = pd.read_csv(csv_path)
+    if verbose:
+        print(f"加载双价格数据: {csv_path}")
+        print(f"原始数据行数: {len(df)}")
+
+    # 统一列名大小写
+    df_lower = df.rename(columns={orig: orig.lower() for orig in df.columns})
+    available_cols = set(df_lower.columns)
+
+    # 检查是否有复权价格列和原始价格列
+    has_adj_prices = all(col in available_cols for col in ['adj_open', 'adj_high', 'adj_low', 'adj_close'])
+    has_real_prices = all(col in available_cols for col in ['open', 'high', 'low', 'close'])
+    has_adj_factor = 'adj_factor' in available_cols
+
+    if not (has_adj_prices and has_real_prices):
+        # 如果没有双价格数据，回退到单价格模式
+        if has_adj_prices:
+            if verbose:
+                print("只有复权价格，使用复权价格作为双价格")
+            adj_df = _create_ohlcv_dataframe(
+                df=df_lower,
+                date_col='trade_date',
+                open_col='adj_open',
+                high_col='adj_high',
+                low_col='adj_low',
+                close_col='adj_close',
+                volume_col='volume',
+            )
+            real_df = adj_df.copy()  # 复权价格作为原始价格
+            price_mapping = {
+                'adj_factor': 1.0,
+                'latest_adj_price': adj_df['Close'].iloc[-1] if len(adj_df) > 0 else 0.0,
+                'latest_real_price': adj_df['Close'].iloc[-1] if len(adj_df) > 0 else 0.0,
+            }
+        elif has_real_prices:
+            if verbose:
+                print("只有原始价格，使用原始价格作为双价格")
+            real_df = _create_ohlcv_dataframe(
+                df=df_lower,
+                date_col='trade_date',
+                open_col='open',
+                high_col='high',
+                low_col='low',
+                close_col='close',
+                volume_col='volume',
+            )
+            adj_df = real_df.copy()  # 原始价格作为复权价格
+            price_mapping = {
+                'adj_factor': 1.0,
+                'latest_adj_price': real_df['Close'].iloc[-1] if len(real_df) > 0 else 0.0,
+                'latest_real_price': real_df['Close'].iloc[-1] if len(real_df) > 0 else 0.0,
+            }
+        else:
+            raise ValueError(f"CSV文件缺少价格数据列。可用列: {list(df.columns)}")
+    else:
+        # 有完整的双价格数据
+        if verbose:
+            print("使用双价格模式：复权价格用于信号，原始价格用于交易")
+
+        # 创建复权价格DataFrame
+        adj_df = _create_ohlcv_dataframe(
+            df=df_lower,
+            date_col='trade_date',
+            open_col='adj_open',
+            high_col='adj_high',
+            low_col='adj_low',
+            close_col='adj_close',
+            volume_col='volume',
+        )
+
+        # 创建原始价格DataFrame
+        real_df = _create_ohlcv_dataframe(
+            df=df_lower,
+            date_col='trade_date',
+            open_col='open',
+            high_col='high',
+            low_col='low',
+            close_col='close',
+            volume_col='volume',
+        )
+
+        # 构建价格映射
+        latest_adj_factor = df_lower['adj_factor'].iloc[-1] if has_adj_factor and len(df_lower) > 0 else 1.0
+        latest_adj_price = adj_df['Close'].iloc[-1] if len(adj_df) > 0 else 0.0
+        latest_real_price = real_df['Close'].iloc[-1] if len(real_df) > 0 else 0.0
+
+        price_mapping = {
+            'adj_factor': latest_adj_factor,
+            'latest_adj_price': latest_adj_price,
+            'latest_real_price': latest_real_price,
+        }
+
+    # 应用日期过滤（对两个DataFrame）
+    if start_date or end_date:
+        original_len = len(adj_df)
+        if start_date:
+            start_dt = pd.to_datetime(start_date)
+            adj_df = adj_df[adj_df.index >= start_dt]
+            real_df = real_df[real_df.index >= start_dt]
+        if end_date:
+            end_dt = pd.to_datetime(end_date)
+            adj_df = adj_df[adj_df.index <= end_dt]
+            real_df = real_df[real_df.index <= end_dt]
+        filtered = original_len - len(adj_df)
+        if filtered > 0 and verbose:
+            print(f"过滤掉 {filtered} 行数据")
+
+    if len(adj_df) == 0 or len(real_df) == 0:
+        raise ValueError("处理后数据为空（可能是日期过滤范围不正确）")
+
+    if verbose:
+        print(f"处理后数据行数: {len(adj_df)}")
+        print(f"日期范围: {adj_df.index[0]} 至 {adj_df.index[-1]}")
+        print(f"复权价格范围: {adj_df['Close'].min():.4f} - {adj_df['Close'].max():.4f}")
+        print(f"原始价格范围: {real_df['Close'].min():.4f} - {real_df['Close'].max():.4f}")
+        print(f"最新复权因子: {price_mapping['adj_factor']:.6f}")
+        print()
+
+    return adj_df, real_df, price_mapping
+
+
 def get_stock_name(csv_path: str) -> str:
     """
     从文件名提取股票名称

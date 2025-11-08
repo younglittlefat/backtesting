@@ -33,10 +33,17 @@ ${BLUE}每日交易信号生成系统${NC} - 分析股票池并生成买入/卖�
 ${YELLOW}使用方法:${NC}
   $0 [选项]
 
-${YELLOW}选项:${NC}
+${YELLOW}工作模式（四选一）:${NC}
+  --init <资金>                初始化持仓文件（指定初始资金）
+  --status                     查看当前持仓状态
+  --analyze                    分析模式（生成交易建议但不执行）⭐ 推荐日常使用
+  --execute                    执行模式（执行交易并更新持仓）
+
+${YELLOW}基本选项:${NC}
   --stock-list <csv_file>      股票列表CSV文件（必需，需包含ts_code列）
+  --portfolio-file <json>      持仓文件路径（持仓管理模式必需）
   --strategy <name>            策略名称（默认: sma_cross）
-  --cash <amount>              可用资金（默认: 100000）
+  --cash <amount>              可用资金（默认: 100000，仅无状态模式）
   --positions <n>              目标持仓数量（默认: 10）
   --cost-model <model>         费用模型（默认: cn_etf）
   --data-dir <path>            数据目录（默认: data/csv/daily）
@@ -48,24 +55,36 @@ ${YELLOW}选项:${NC}
   -h, --help                   显示此帮助信息
 
 ${YELLOW}示例:${NC}
-  ${GREEN}# 使用默认参数生成信号${NC}
-  $0 --stock-list results/trend_etf_pool_20251107.csv
+  ${GREEN}# 1. 初始化持仓（仅第一次使用）${NC}
+  $0 --init 100000 --portfolio-file positions/portfolio.json
 
-  ${GREEN}# 指定可用资金和目标持仓数${NC}
+  ${GREEN}# 2. 查看当前持仓状态${NC}
+  $0 --status --portfolio-file positions/portfolio.json
+
+  ${GREEN}# 3. 每日分析（推荐）${NC}
+  $0 --analyze \\
+    --stock-list results/trend_etf_pool_20251107.csv \\
+    --portfolio-file positions/portfolio.json
+
+  ${GREEN}# 4. 确认后执行交易${NC}
+  $0 --execute \\
+    --stock-list results/trend_etf_pool_20251107.csv \\
+    --portfolio-file positions/portfolio.json
+
+  ${GREEN}# 5. 使用自定义策略参数${NC}
+  $0 --analyze \\
+    --stock-list results/trend_etf_pool_20251107.csv \\
+    --portfolio-file positions/portfolio.json \\
+    --n1 15 --n2 50
+
+  ${GREEN}# 6. 无状态模式（原有功能，不使用持仓管理）${NC}
   $0 --stock-list results/trend_etf_pool_20251107.csv --cash 200000 --positions 15
 
-  ${GREEN}# 使用自定义策略参数${NC}
-  $0 --stock-list results/trend_etf_pool_20251107.csv --n1 5 --n2 20
-
-  ${GREEN}# 保存报告到文件${NC}
-  $0 --stock-list results/trend_etf_pool_20251107.csv --output signals/daily_report.txt --csv signals/signals.csv
-
-${YELLOW}工作流程:${NC}
-  1. 每天收盘后（15:30之后）运行此脚本
-  2. 脚本会分析股票池中所有标的的最新数据
-  3. 检测是否有金叉（买入）或死叉（卖出）信号
-  4. 生成资金分配方案，告诉您买入哪些股票、买入多少股
-  5. 根据建议执行交易
+${YELLOW}持仓管理工作流:${NC}
+  1. 首次使用：使用 --init 初始化持仓文件
+  2. 每日分析：使用 --analyze 查看交易建议
+  3. 确认执行：使用 --execute 执行交易并更新持仓
+  4. 随时查看：使用 --status 查看持仓状态
 
 ${YELLOW}环境要求:${NC}
   - Conda环境: $CONDA_ENV
@@ -108,8 +127,13 @@ check_environment() {
 # 主函数
 ################################################################################
 main() {
+    # 工作模式
+    MODE=""
+    INIT_CASH=""
+
     # 默认参数
     STOCK_LIST=""
+    PORTFOLIO_FILE=""
     STRATEGY="sma_cross"
     CASH="100000"
     POSITIONS="10"
@@ -124,8 +148,29 @@ main() {
     # 解析命令行参数
     while [[ $# -gt 0 ]]; do
         case $1 in
+            --init)
+                MODE="init"
+                INIT_CASH="$2"
+                shift 2
+                ;;
+            --status)
+                MODE="status"
+                shift
+                ;;
+            --analyze)
+                MODE="analyze"
+                shift
+                ;;
+            --execute)
+                MODE="execute"
+                shift
+                ;;
             --stock-list)
                 STOCK_LIST="$2"
+                shift 2
+                ;;
+            --portfolio-file)
+                PORTFOLIO_FILE="$2"
                 shift 2
                 ;;
             --strategy)
@@ -180,21 +225,8 @@ main() {
         esac
     done
 
-    # 检查必需参数
-    if [ -z "$STOCK_LIST" ]; then
-        echo -e "${RED}错误: 必须指定 --stock-list 参数${NC}"
-        echo "使用 -h 或 --help 查看帮助"
-        exit 1
-    fi
-
     # 检查环境
     check_environment
-
-    # 检查股票列表文件
-    if [ ! -f "$STOCK_LIST" ]; then
-        echo -e "${RED}错误: 股票列表文件不存在: $STOCK_LIST${NC}"
-        exit 1
-    fi
 
     # 显示配置
     echo -e "${BLUE}======================================================================${NC}"
@@ -202,12 +234,25 @@ main() {
     echo -e "${BLUE}======================================================================${NC}"
     echo -e "${YELLOW}运行时间:${NC} $(date '+%Y-%m-%d %H:%M:%S')"
     echo -e "${YELLOW}项目目录:${NC} $PROJECT_ROOT"
-    echo -e "${YELLOW}股票列表:${NC} $STOCK_LIST"
+
+    if [ -n "$MODE" ]; then
+        echo -e "${YELLOW}工作模式:${NC} $MODE"
+    fi
+
+    if [ -n "$STOCK_LIST" ]; then
+        echo -e "${YELLOW}股票列表:${NC} $STOCK_LIST"
+    fi
+
+    if [ -n "$PORTFOLIO_FILE" ]; then
+        echo -e "${YELLOW}持仓文件:${NC} $PORTFOLIO_FILE"
+    fi
+
     echo -e "${YELLOW}策略名称:${NC} $STRATEGY"
     echo -e "${YELLOW}可用资金:${NC} ¥$CASH"
     echo -e "${YELLOW}目标持仓:${NC} $POSITIONS"
     echo -e "${YELLOW}费用模型:${NC} $COST_MODEL"
     echo -e "${YELLOW}数据目录:${NC} $DATA_DIR"
+
     if [ -n "$N1" ]; then
         echo -e "${YELLOW}短期均线:${NC} $N1 日"
     fi
@@ -225,36 +270,90 @@ main() {
 
     # 构建命令
     CMD=("$CONDA_PATH" "run" "-n" "$CONDA_ENV" "python" "$PYTHON_SCRIPT")
-    CMD+=("--stock-list" "$STOCK_LIST")
-    CMD+=("--strategy" "$STRATEGY")
-    CMD+=("--cash" "$CASH")
-    CMD+=("--positions" "$POSITIONS")
-    CMD+=("--cost-model" "$COST_MODEL")
-    CMD+=("--data-dir" "$DATA_DIR")
-    CMD+=("--lookback-days" "$LOOKBACK_DAYS")
 
-    if [ -n "$OUTPUT" ]; then
-        # 确保输出目录存在
-        mkdir -p "$(dirname "$OUTPUT")"
-        CMD+=("--output" "$OUTPUT")
-    fi
+    # 添加模式参数
+    if [ "$MODE" = "init" ]; then
+        if [ -z "$PORTFOLIO_FILE" ]; then
+            echo -e "${RED}错误: 初始化模式必须指定 --portfolio-file${NC}"
+            exit 1
+        fi
+        CMD+=("--init" "$INIT_CASH")
+        CMD+=("--portfolio-file" "$PORTFOLIO_FILE")
+    elif [ "$MODE" = "status" ]; then
+        if [ -z "$PORTFOLIO_FILE" ]; then
+            echo -e "${RED}错误: 状态查看模式必须指定 --portfolio-file${NC}"
+            exit 1
+        fi
+        CMD+=("--status")
+        CMD+=("--portfolio-file" "$PORTFOLIO_FILE")
+        CMD+=("--data-dir" "$DATA_DIR")
+    elif [ "$MODE" = "analyze" ] || [ "$MODE" = "execute" ]; then
+        if [ -z "$PORTFOLIO_FILE" ]; then
+            echo -e "${RED}错误: 分析/执行模式必须指定 --portfolio-file${NC}"
+            exit 1
+        fi
+        if [ -z "$STOCK_LIST" ]; then
+            echo -e "${RED}错误: 分析/执行模式必须指定 --stock-list${NC}"
+            exit 1
+        fi
 
-    if [ -n "$CSV" ]; then
-        # 确保输出目录存在
-        mkdir -p "$(dirname "$CSV")"
-        CMD+=("--csv" "$CSV")
-    fi
+        if [ "$MODE" = "analyze" ]; then
+            CMD+=("--analyze")
+        else
+            CMD+=("--execute")
+        fi
 
-    if [ -n "$N1" ]; then
-        CMD+=("--n1" "$N1")
-    fi
+        CMD+=("--stock-list" "$STOCK_LIST")
+        CMD+=("--portfolio-file" "$PORTFOLIO_FILE")
+        CMD+=("--strategy" "$STRATEGY")
+        CMD+=("--positions" "$POSITIONS")
+        CMD+=("--cost-model" "$COST_MODEL")
+        CMD+=("--data-dir" "$DATA_DIR")
+        CMD+=("--lookback-days" "$LOOKBACK_DAYS")
 
-    if [ -n "$N2" ]; then
-        CMD+=("--n2" "$N2")
+        if [ -n "$N1" ]; then
+            CMD+=("--n1" "$N1")
+        fi
+
+        if [ -n "$N2" ]; then
+            CMD+=("--n2" "$N2")
+        fi
+    else
+        # 无状态模式（原有逻辑）
+        if [ -z "$STOCK_LIST" ]; then
+            echo -e "${RED}错误: 必须指定 --stock-list${NC}"
+            exit 1
+        fi
+
+        CMD+=("--stock-list" "$STOCK_LIST")
+        CMD+=("--strategy" "$STRATEGY")
+        CMD+=("--cash" "$CASH")
+        CMD+=("--positions" "$POSITIONS")
+        CMD+=("--cost-model" "$COST_MODEL")
+        CMD+=("--data-dir" "$DATA_DIR")
+        CMD+=("--lookback-days" "$LOOKBACK_DAYS")
+
+        if [ -n "$OUTPUT" ]; then
+            mkdir -p "$(dirname "$OUTPUT")"
+            CMD+=("--output" "$OUTPUT")
+        fi
+
+        if [ -n "$CSV" ]; then
+            mkdir -p "$(dirname "$CSV")"
+            CMD+=("--csv" "$CSV")
+        fi
+
+        if [ -n "$N1" ]; then
+            CMD+=("--n1" "$N1")
+        fi
+
+        if [ -n "$N2" ]; then
+            CMD+=("--n2" "$N2")
+        fi
     fi
 
     # 执行
-    echo -e "${BLUE}开始生成交易信号...${NC}"
+    echo -e "${BLUE}开始执行...${NC}"
     echo ""
     "${CMD[@]}"
     EXIT_CODE=$?
@@ -263,11 +362,11 @@ main() {
     echo ""
     if [ $EXIT_CODE -eq 0 ]; then
         echo -e "${GREEN}======================================================================${NC}"
-        echo -e "${GREEN}                        信号生成完成！${NC}"
+        echo -e "${GREEN}                        执行完成！${NC}"
         echo -e "${GREEN}======================================================================${NC}"
     else
         echo -e "${RED}======================================================================${NC}"
-        echo -e "${RED}                        信号生成失败 (错误码: $EXIT_CODE)${NC}"
+        echo -e "${RED}                        执行失败 (错误码: $EXIT_CODE)${NC}"
         echo -e "${RED}======================================================================${NC}"
     fi
 
