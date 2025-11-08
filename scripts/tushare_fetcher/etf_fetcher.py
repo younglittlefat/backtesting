@@ -36,7 +36,7 @@ class ETFFetcher(BaseFetcher):
 
     def fetch_basic_info(self) -> int:
         """
-        获取ETF基本信息
+        获取ETF基本信息（使用批量插入优化）
 
         Returns:
             int: 成功获取的ETF数量
@@ -51,13 +51,17 @@ class ETFFetcher(BaseFetcher):
                 self.logger.warning("未获取到ETF基本信息")
                 return 0
 
-            success_count = 0
-            progress_bar = tqdm(df.iterrows(), total=len(df), desc="获取ETF基本信息", unit="条")
+            # 准备批量插入数据
+            data_list = []
+            progress_bar = tqdm(df.iterrows(), total=len(df), desc="准备ETF基本信息", unit="条")
 
             for _, row in progress_bar:
                 try:
                     # 映射字段
                     data = {
+                        'data_type': 'etf',
+                        'ts_code': row['ts_code'],
+                        'name': row['name'],
                         'symbol': row.get('ts_code', '').split('.')[0] if row.get('ts_code') else None,
                         'market': 'SH' if row.get('ts_code', '').endswith('.SH') else 'SZ',
                         'fullname': row.get('name'),
@@ -77,26 +81,25 @@ class ETFFetcher(BaseFetcher):
 
                     # 过滤None值和NaN值
                     data = self._clean_data(data)
-
-                    success = self.db_manager.add_instrument_basic(
-                        data_type='etf',
-                        ts_code=row['ts_code'],
-                        name=row['name'],
-                        **data
-                    )
-
-                    if success:
-                        success_count += 1
-
-                    progress_bar.set_postfix({"成功": success_count})
+                    data_list.append(data)
 
                 except Exception as e:
-                    self.logger.error(f"添加ETF基本信息失败 {row.get('ts_code', 'unknown')}: {e}")
+                    self.logger.error(f"准备ETF基本信息失败 {row.get('ts_code', 'unknown')}: {e}")
                     continue
 
             progress_bar.close()
-            self.logger.info(f"ETF基本信息获取完成，成功{success_count}条")
-            return success_count
+
+            # 批量插入数据
+            if data_list:
+                self.logger.info(f"开始批量插入{len(data_list)}条ETF基本信息")
+                success_count = self.db_manager.batch_insert_instrument_basic(
+                    data_list, batch_size=1000
+                )
+                self.logger.info(f"ETF基本信息获取完成，成功{success_count}条")
+                return success_count
+            else:
+                self.logger.warning("没有准备好的ETF基本信息数据")
+                return 0
 
         except Exception as e:
             self.logger.error(f"获取ETF基本信息失败: {e}")
@@ -104,7 +107,7 @@ class ETFFetcher(BaseFetcher):
 
     def fetch_daily_by_date(self, trade_date: str, max_retries: int = 3) -> int:
         """
-        获取指定日期的ETF日线数据
+        获取指定日期的ETF日线数据（包含复权信息，使用批量插入优化）
 
         Args:
             trade_date: 交易日期(YYYYMMDD)
@@ -117,25 +120,46 @@ class ETFFetcher(BaseFetcher):
             try:
                 self.logger.info(f"获取ETF日线数据: {trade_date} (第{retry+1}次尝试)")
 
+                # 获取日线数据
                 df = self.pro.fund_daily(trade_date=trade_date)
+                self.rate_limiter.increment()
 
                 if df.empty:
                     self.logger.warning(f"未获取到{trade_date}的ETF日线数据")
                     return 0
 
-                success_count = 0
+                # 获取复权因子数据
+                df_adj = self.pro.fund_adj(trade_date=trade_date)
+                self.rate_limiter.increment()
+
+                # 合并复权因子
+                if not df_adj.empty:
+                    df = pd.merge(df, df_adj[['ts_code', 'trade_date', 'adj_factor']],
+                                on=['ts_code', 'trade_date'], how='left')
+                    self.logger.debug(f"成功合并复权因子，日期: {trade_date}")
+                else:
+                    self.logger.warning(f"未获取到{trade_date}的复权因子数据")
+                    # 添加空的adj_factor列
+                    df['adj_factor'] = None
+
+                # 准备批量插入数据
+                data_list = []
                 progress_bar = tqdm(df.iterrows(), total=len(df),
-                                  desc=f"ETF日线[{trade_date}]", unit="条", leave=False)
+                                  desc=f"准备ETF日线[{trade_date}]", unit="条", leave=False)
 
                 for _, row in progress_bar:
                     try:
                         # 映射字段
                         data = {
+                            'data_type': 'etf',
+                            'ts_code': row['ts_code'],
+                            'trade_date': row['trade_date'],
                             'open_price': row.get('open'),
                             'high_price': row.get('high'),
                             'low_price': row.get('low'),
                             'close_price': row.get('close'),
                             'pre_close': row.get('pre_close'),
+                            'adj_factor': row.get('adj_factor'),
                             'change_amount': row.get('change'),
                             'pct_change': row.get('pct_chg'),
                             'volume': row.get('vol'),
@@ -144,26 +168,25 @@ class ETFFetcher(BaseFetcher):
 
                         # 过滤None值和NaN值
                         data = self._clean_data(data)
-
-                        success = self.db_manager.add_instrument_daily(
-                            data_type='etf',
-                            ts_code=row['ts_code'],
-                            trade_date=row['trade_date'],
-                            **data
-                        )
-
-                        if success:
-                            success_count += 1
-
-                        progress_bar.set_postfix({"成功": success_count})
+                        data_list.append(data)
 
                     except Exception as e:
-                        self.logger.error(f"添加ETF日线数据失败 {row.get('ts_code', 'unknown')}: {e}")
+                        self.logger.error(f"准备ETF日线数据失败 {row.get('ts_code', 'unknown')}: {e}")
                         continue
 
                 progress_bar.close()
-                self.logger.info(f"ETF日线数据获取完成 {trade_date}，成功{success_count}条")
-                return success_count
+
+                # 批量插入数据
+                if data_list:
+                    self.logger.info(f"开始批量插入{len(data_list)}条ETF日线数据")
+                    success_count = self.db_manager.batch_insert_instrument_daily(
+                        data_list, batch_size=1000
+                    )
+                    self.logger.info(f"ETF日线数据获取完成 {trade_date}，成功{success_count}条")
+                    return success_count
+                else:
+                    self.logger.warning(f"没有准备好的ETF日线数据")
+                    return 0
 
             except Exception as e:
                 self.logger.error(f"获取ETF日线数据失败 {trade_date} (第{retry+1}次): {e}")
@@ -279,24 +302,27 @@ class ETFFetcher(BaseFetcher):
                             self.logger.info(f"全周期数据过滤后: {len(df)}条")
 
                     if not df.empty:
-                        # 批量处理数据
-                        for _, row in df.iterrows():
-                            data = {
-                                'data_type': 'etf',
-                                'ts_code': row['ts_code'],
-                                'trade_date': row['trade_date'],
-                                'open_price': row.get('open'),
-                                'high_price': row.get('high'),
-                                'low_price': row.get('low'),
-                                'close_price': row.get('close'),
-                                'pre_close': row.get('pre_close'),
-                                'adj_factor': row.get('adj_factor'),
-                                'change_amount': row.get('change'),
-                                'pct_change': row.get('pct_chg'),
-                                'volume': row.get('vol'),
-                                'amount': row.get('amount')
-                            }
-                            data = self._clean_data(data)
+                        # 向量化处理数据（优化性能）
+                        # 重命名列以匹配数据库字段
+                        df_renamed = df.rename(columns={
+                            'open': 'open_price',
+                            'high': 'high_price',
+                            'low': 'low_price',
+                            'close': 'close_price',
+                            'change': 'change_amount',
+                            'pct_chg': 'pct_change',
+                            'vol': 'volume'
+                        })
+
+                        # 添加data_type列
+                        df_renamed['data_type'] = 'etf'
+
+                        # 转换为字典列表
+                        records = df_renamed.to_dict('records')
+
+                        # 批量添加数据
+                        for record in records:
+                            data = self._clean_data(record)
                             self.data_processor.add_data(data)
 
                         # 定期刷新缓冲区

@@ -107,7 +107,7 @@ class BaseFetcher:
 
     def _clean_data(self, data: Dict) -> Dict:
         """
-        清理数据，去除None值和NaN值
+        清理数据，去除None值和NaN值，并截断超长字符串
 
         Args:
             data: 待清理的数据字典
@@ -115,11 +115,45 @@ class BaseFetcher:
         Returns:
             Dict: 清理后的数据字典
         """
+        # 定义字段的最大长度限制（与数据库表定义一致）
+        field_max_lengths = {
+            'ts_code': 20,
+            'symbol': 20,
+            'name': 100,
+            'fullname': 200,
+            'market': 20,
+            'tracking_index': 100,
+            'publisher': 50,
+            'index_type': 50,
+            'category': 50,
+            'base_date': 10,
+            'weight_rule': 100,
+            'management': 100,
+            'custodian': 100,
+            'fund_type': 50,
+            'invest_type': 50,
+            'benchmark': 500,  # 扩大到500，以容纳更长的基准信息
+            'list_date': 10,
+            'found_date': 10,
+            'due_date': 10,
+            'delist_date': 10,
+            'status': 10,
+            'description': 1000,  # 文本字段可以更长
+        }
+
         cleaned_data = {}
         for k, v in data.items():
             if v is not None and v != '':
                 if isinstance(v, float) and pd.isna(v):
                     continue
+
+                # 如果是字符串类型，检查是否需要截断
+                if isinstance(v, str) and k in field_max_lengths:
+                    max_len = field_max_lengths[k]
+                    if len(v) > max_len:
+                        v = v[:max_len]
+                        self.logger.debug(f"字段 {k} 被截断为 {max_len} 个字符")
+
                 cleaned_data[k] = v
         return cleaned_data
 

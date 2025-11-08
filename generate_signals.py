@@ -102,6 +102,10 @@ class SignalGenerator:
             self.start_date = None
             self.end_date = None
 
+        # 追踪最新价格日期
+        self.latest_price_date = None
+        self.lookback_start_date = None
+
     def load_instrument_data(self, ts_code: str) -> Optional[pd.DataFrame]:
         """
         加载标的数据
@@ -138,8 +142,22 @@ class SignalGenerator:
             if df is None or len(df) < 30:
                 return None
 
+            # 追踪最新价格日期（来自完整数据）
+            if self.latest_price_date is None and len(df) > 0:
+                if hasattr(df.index, 'date'):
+                    self.latest_price_date = str(df.index[-1].date())
+                else:
+                    self.latest_price_date = str(df.index[-1])
+
             # 只保留最近的lookback_days天数据
             df = df.tail(self.lookback_days)
+
+            # 追踪lookback窗口的起始日期
+            if self.lookback_start_date is None and len(df) > 0:
+                if hasattr(df.index, 'date'):
+                    self.lookback_start_date = str(df.index[0].date())
+                else:
+                    self.lookback_start_date = str(df.index[0])
 
             return df
 
@@ -299,6 +317,19 @@ class SignalGenerator:
                 start_date=self.start_date,
                 end_date=self.end_date
             )
+
+            # 追踪最新价格日期和lookback开始日期（来自adj_df）
+            if self.latest_price_date is None and len(adj_df) > 0:
+                if hasattr(adj_df.index, 'date'):
+                    self.latest_price_date = str(adj_df.index[-1].date())
+                else:
+                    self.latest_price_date = str(adj_df.index[-1])
+
+            if self.lookback_start_date is None and len(adj_df) > 0:
+                if hasattr(adj_df.index, 'date'):
+                    self.lookback_start_date = str(adj_df.index[0].date())
+                else:
+                    self.lookback_start_date = str(adj_df.index[0])
 
             if len(adj_df) < max(self.strategy_params.get('n1', 10),
                                 self.strategy_params.get('n2', 20)) + 10:
@@ -938,6 +969,18 @@ def main():
             current_prices[ts_code] = signal['price']
             print(f"{signal['signal']}")
 
+        print("")
+
+        # 显示数据日期信息
+        print("=" * 80)
+        print("📊 数据信息")
+        print("=" * 80)
+        if generator.latest_price_date:
+            print(f"最新价格日期:  {generator.latest_price_date}")
+        if generator.lookback_start_date:
+            print(f"Lookback起始:  {generator.lookback_start_date}")
+        print(f"Lookback周期:   {args.lookback_days} 天")
+        print("=" * 80)
         print("")
 
         # 显示当前持仓状态
