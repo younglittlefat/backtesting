@@ -20,6 +20,9 @@ from typing import Dict, List, Tuple, Optional
 import pandas as pd
 import numpy as np
 
+# 禁用进度条输出（在导入backtesting之前设置）
+os.environ['BACKTESTING_DISABLE_PROGRESS'] = 'true'
+
 # 添加项目根目录到Python路径
 PROJECT_ROOT = Path(__file__).parent
 sys.path.insert(0, str(PROJECT_ROOT))
@@ -29,6 +32,10 @@ from backtesting.lib import crossover
 from utils.data_loader import load_chinese_ohlcv_data, load_dual_price_data
 from utils.strategy_params_manager import StrategyParamsManager
 from portfolio_manager import Portfolio, PortfolioTrader, TradeLogger, Trade
+
+# 过滤掉关于未平仓交易的UserWarning
+warnings.filterwarnings('ignore', message='.*Some trades remain open.*')
+warnings.filterwarnings('ignore', category=UserWarning, module='backtesting')
 
 
 # 费用模型配置

@@ -5,7 +5,9 @@
 使用 backtesting.py 框架对中国 ETF/基金等标的进行批量回测
 """
 
+import os
 import sys
+import warnings
 import argparse
 from pathlib import Path
 from datetime import datetime
@@ -15,6 +17,9 @@ from typing import Dict, List, Optional
 import math
 import numpy as np
 import pandas as pd
+
+# 禁用进度条输出（在导入backtesting之前设置）
+os.environ['BACKTESTING_DISABLE_PROGRESS'] = 'true'
 
 # 添加项目根目录到路径
 project_root = Path(__file__).parent
@@ -32,6 +37,10 @@ from utils.trading_cost import TradingCostConfig, TradingCostCalculator, get_cos
 from strategies.sma_cross import SmaCross, OPTIMIZE_PARAMS, CONSTRAINTS
 from utils.strategy_params_manager import StrategyParamsManager
 from common.mysql_manager import MySQLManager
+
+# 过滤掉关于未平仓交易的UserWarning
+warnings.filterwarnings('ignore', message='.*Some trades remain open.*')
+warnings.filterwarnings('ignore', category=UserWarning, module='backtesting')
 
 
 # 可用的策略映射
