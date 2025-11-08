@@ -127,6 +127,20 @@ def parse_arguments():
         help='组合优化最大相关系数阈值 (默认: 0.7)'
     )
 
+    # 去重参数
+    parser.add_argument(
+        '--enable-deduplication', action='store_true', default=True,
+        help='启用智能去重功能 (默认: 启用)'
+    )
+    parser.add_argument(
+        '--disable-deduplication', action='store_true', default=False,
+        help='禁用智能去重功能'
+    )
+    parser.add_argument(
+        '--dedup-min-ratio', type=float, default=0.8,
+        help='去重后最小保留比例 (默认: 0.8, 即保留80%目标数量)'
+    )
+
     # 技术参数
     parser.add_argument(
         '--ma-short', type=int, default=20,

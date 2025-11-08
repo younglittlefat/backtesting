@@ -125,6 +125,194 @@ class PortfolioOptimizer:
 
         return correlation_matrix
 
+    def adaptive_deduplication(
+        self,
+        etf_candidates: List[Dict],
+        target_size: int = 20,
+        min_ratio: float = 0.8,
+        start_date: Optional[str] = None,
+        end_date: Optional[str] = None,
+        verbose: bool = True
+    ) -> List[Dict]:
+        """智能去重：动态调整相关性阈值，确保目标数量
+
+        设计策略：
+        1. 从严格阈值(0.98)开始去重
+        2. 如果去重后数量不足，逐步放宽阈值
+        3. 优先保留不同行业和收益回撤比更高的ETF
+        4. 确保最终数量≥target_size * min_ratio
+
+        Args:
+            etf_candidates: ETF候选列表
+            target_size: 目标组合大小
+            min_ratio: 最小保留比例 (0.8表示至少保留80%目标数量)
+            start_date: 收益率计算开始日期
+            end_date: 收益率计算结束日期
+            verbose: 是否打印详细信息
+
+        Returns:
+            去重后的ETF列表
+        """
+        if len(etf_candidates) <= target_size * min_ratio:
+            if verbose:
+                print(f"  ⚠️ 候选数量({len(etf_candidates)})已少于最小要求，跳过去重")
+            return etf_candidates
+
+        min_required = max(int(target_size * min_ratio), 1)
+
+        if verbose:
+            print(f"🧹 智能去重开始")
+            print(f"  📊 原始候选数: {len(etf_candidates)}")
+            print(f"  🎯 目标数量: {target_size}, 最小保留: {min_required}")
+
+        # 获取ETF代码和计算收益率矩阵
+        etf_codes = [etf['ts_code'] for etf in etf_candidates]
+        returns_df = self.calculate_returns_matrix(
+            etf_codes, start_date=start_date, end_date=end_date
+        )
+
+        if returns_df.empty:
+            if verbose:
+                print("  ❌ 无法获取收益率数据，跳过去重")
+            return etf_candidates
+
+        correlation_matrix = self.calculate_correlation_matrix(returns_df)
+
+        if correlation_matrix.empty:
+            return etf_candidates
+
+        # 动态阈值去重
+        thresholds = [0.98, 0.95, 0.92, 0.90]  # 从严格到宽松
+
+        for i, threshold in enumerate(thresholds):
+            deduplicated = self._remove_duplicates_by_correlation(
+                etf_candidates, correlation_matrix, threshold, verbose=(verbose and i==0)
+            )
+
+            if len(deduplicated) >= min_required:
+                if verbose:
+                    print(f"  ✅ 阈值 {threshold} 去重成功: {len(deduplicated)} 只ETF")
+                    removed_count = len(etf_candidates) - len(deduplicated)
+                    if removed_count > 0:
+                        print(f"  🗑️ 移除重复ETF: {removed_count} 只")
+                return deduplicated
+            elif verbose:
+                print(f"  ⚠️ 阈值 {threshold} 去重后仅剩 {len(deduplicated)} 只，继续放宽...")
+
+        # 如果所有阈值都无法满足，返回原始候选（保底策略）
+        if verbose:
+            print(f"  ❌ 所有阈值都无法满足最小数量要求，返回原始候选")
+        return etf_candidates
+
+    def _remove_duplicates_by_correlation(
+        self,
+        etf_candidates: List[Dict],
+        correlation_matrix: pd.DataFrame,
+        threshold: float = 0.95,
+        verbose: bool = False
+    ) -> List[Dict]:
+        """基于相关系数去除重复ETF
+
+        算法逻辑：
+        1. 找出所有相关性>阈值的ETF对
+        2. 在高相关ETF中，优先保留：
+           - 不同行业的ETF（提升分散度）
+           - 收益回撤比更高的ETF（质量优先）
+        3. 返回去重后的ETF列表
+
+        Args:
+            etf_candidates: ETF候选列表
+            correlation_matrix: 相关系数矩阵
+            threshold: 相关性阈值
+            verbose: 是否打印详细信息
+
+        Returns:
+            去重后的ETF列表
+        """
+        if len(etf_candidates) <= 1:
+            return etf_candidates
+
+        # 创建ETF映射
+        etf_dict = {etf['ts_code']: etf for etf in etf_candidates}
+        to_remove = set()
+        duplicate_pairs = []
+
+        # 找出高相关ETF对
+        for i, etf_i in enumerate(etf_candidates):
+            if etf_i['ts_code'] in to_remove:
+                continue
+
+            for j, etf_j in enumerate(etf_candidates[i+1:], i+1):
+                if etf_j['ts_code'] in to_remove:
+                    continue
+
+                try:
+                    corr = correlation_matrix.loc[etf_i['ts_code'], etf_j['ts_code']]
+                    if corr > threshold:
+                        duplicate_pairs.append((etf_i, etf_j, corr))
+                except (KeyError, ValueError):
+                    continue
+
+        if verbose and duplicate_pairs:
+            print(f"    发现 {len(duplicate_pairs)} 对高相关ETF (相关性 > {threshold})")
+
+        # 处理每对重复ETF，决定保留哪一个
+        for etf_i, etf_j, corr in duplicate_pairs:
+            if etf_i['ts_code'] in to_remove or etf_j['ts_code'] in to_remove:
+                continue
+
+            # 决策逻辑：
+            # 1. 优先保留不同行业的（提升行业分散度）
+            # 2. 同行业则保留收益回撤比更高的
+
+            industry_i = etf_i.get('industry', '其他')
+            industry_j = etf_j.get('industry', '其他')
+            ret_dd_i = etf_i.get('return_dd_ratio', 0)
+            ret_dd_j = etf_j.get('return_dd_ratio', 0)
+
+            if industry_i != industry_j:
+                # 不同行业，检查已选行业分布，选择稀缺行业的ETF
+                selected_industries = [
+                    etf_dict[code].get('industry', '其他')
+                    for code in etf_dict.keys()
+                    if code not in to_remove
+                ]
+                count_i = selected_industries.count(industry_i)
+                count_j = selected_industries.count(industry_j)
+
+                if count_i > count_j:
+                    to_remove.add(etf_i['ts_code'])
+                    if verbose:
+                        print(f"    移除 {etf_i['ts_code']} ({industry_i}，已有{count_i}只) "
+                              f"保留 {etf_j['ts_code']} ({industry_j}，仅{count_j}只)")
+                elif count_j > count_i:
+                    to_remove.add(etf_j['ts_code'])
+                    if verbose:
+                        print(f"    移除 {etf_j['ts_code']} ({industry_j}，已有{count_j}只) "
+                              f"保留 {etf_i['ts_code']} ({industry_i}，仅{count_i}只)")
+                else:
+                    # 行业数量相同，按收益回撤比选择
+                    if ret_dd_i >= ret_dd_j:
+                        to_remove.add(etf_j['ts_code'])
+                    else:
+                        to_remove.add(etf_i['ts_code'])
+            else:
+                # 同行业，直接按收益回撤比选择
+                if ret_dd_i >= ret_dd_j:
+                    to_remove.add(etf_j['ts_code'])
+                    if verbose:
+                        print(f"    移除 {etf_j['ts_code']} (收益回撤比:{ret_dd_j:.3f}) "
+                              f"保留 {etf_i['ts_code']} (收益回撤比:{ret_dd_i:.3f})")
+                else:
+                    to_remove.add(etf_i['ts_code'])
+                    if verbose:
+                        print(f"    移除 {etf_i['ts_code']} (收益回撤比:{ret_dd_i:.3f}) "
+                              f"保留 {etf_j['ts_code']} (收益回撤比:{ret_dd_j:.3f})")
+
+        # 返回去重后的ETF列表
+        deduplicated = [etf for etf in etf_candidates if etf['ts_code'] not in to_remove]
+        return deduplicated
+
     def optimize_portfolio(
         self,
         etf_candidates: List[Dict],
@@ -133,6 +321,8 @@ class PortfolioOptimizer:
         start_date: Optional[str] = None,
         end_date: Optional[str] = None,
         balance_industries: bool = True,
+        enable_deduplication: bool = True,
+        dedup_min_ratio: float = 0.8,
         verbose: bool = True
     ) -> List[Dict]:
         """组合优化：构建低相关性、分散化组合
@@ -144,6 +334,8 @@ class PortfolioOptimizer:
             start_date: 收益率计算开始日期
             end_date: 收益率计算结束日期
             balance_industries: 是否平衡行业分布
+            enable_deduplication: 是否启用智能去重
+            dedup_min_ratio: 去重后最小保留比例
             verbose: 是否打印详细信息
 
         Returns:
@@ -157,11 +349,24 @@ class PortfolioOptimizer:
             print(f"  📊 候选ETF数量: {len(etf_candidates)}")
             print(f"  🎯 目标组合大小: {target_size}")
             print(f"  📈 相关性阈值: < {max_correlation}")
+            if enable_deduplication:
+                print(f"  🧹 智能去重: 启用 (最小保留比例: {dedup_min_ratio:.1%})")
 
-        # 提取ETF代码
-        etf_codes = [etf['ts_code'] for etf in etf_candidates]
+        # 第一步：智能去重（如果启用）
+        working_candidates = etf_candidates
+        if enable_deduplication:
+            working_candidates = self.adaptive_deduplication(
+                etf_candidates=etf_candidates,
+                target_size=target_size,
+                min_ratio=dedup_min_ratio,
+                start_date=start_date,
+                end_date=end_date,
+                verbose=verbose
+            )
 
-        # 计算收益率矩阵
+        # 第二步：计算收益率矩阵和相关性矩阵
+        etf_codes = [etf['ts_code'] for etf in working_candidates]
+
         if verbose:
             print(f"  📊 计算收益率矩阵...")
 
@@ -172,13 +377,13 @@ class PortfolioOptimizer:
         if returns_df.empty:
             if verbose:
                 print("  ❌ 无法获取足够的收益率数据")
-            return etf_candidates[:target_size]  # 降级到直接截取
+            return working_candidates[:target_size]  # 降级到直接截取
 
         # 计算相关系数矩阵
         correlation_matrix = self.calculate_correlation_matrix(returns_df)
 
         if correlation_matrix.empty:
-            return etf_candidates[:target_size]
+            return working_candidates[:target_size]
 
         if verbose:
             print(f"  ✅ 相关性矩阵计算完成 ({correlation_matrix.shape[0]}x{correlation_matrix.shape[1]})")

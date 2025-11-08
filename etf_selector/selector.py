@@ -112,25 +112,26 @@ class TrendETFSelector:
                 print("❌ 第二级筛选后无剩余标的")
             return []
 
-        # 第三级：组合优化
-        if len(stage2_etfs) > target_size:
-            try:
-                from .portfolio import PortfolioOptimizer
-                optimizer = PortfolioOptimizer(data_loader=self.data_loader)
-                final_etfs = optimizer.optimize_portfolio(
-                    stage2_etfs,
-                    max_correlation=0.7,
-                    target_size=target_size,
-                    start_date=start_date,
-                    end_date=end_date,
-                    verbose=verbose
-                )
-            except ImportError:
-                if verbose:
-                    print("  ⚠️ 组合优化模块不可用，直接使用前N个结果")
-                final_etfs = stage2_etfs[:target_size]
-        else:
-            final_etfs = stage2_etfs
+        # 第三级：组合优化（包括去重和相关性分析）
+        try:
+            from .portfolio import PortfolioOptimizer
+            optimizer = PortfolioOptimizer(data_loader=self.data_loader)
+
+            # 总是执行第三级筛选，包括去重和分散化
+            final_etfs = optimizer.optimize_portfolio(
+                stage2_etfs,
+                max_correlation=0.7,
+                target_size=target_size,
+                start_date=start_date,
+                end_date=end_date,
+                enable_deduplication=True,  # 启用智能去重
+                dedup_min_ratio=0.8,        # 最小保留比例80%
+                verbose=verbose
+            )
+        except ImportError:
+            if verbose:
+                print("  ⚠️ 组合优化模块不可用，直接使用前N个结果")
+            final_etfs = stage2_etfs[:target_size]
 
         self.stage_results['final'] = final_etfs
 
