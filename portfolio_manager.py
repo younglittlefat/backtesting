@@ -345,7 +345,9 @@ class PortfolioTrader:
                  portfolio: Portfolio,
                  commission: float = 0.0001,
                  spread: float = 0.0001,
-                 max_positions: int = 10):
+                 max_positions: int = 10,
+                 max_position_pct: float = 0.05,
+                 min_buy_signals: int = 1):
         """
         初始化交易引擎
 
@@ -354,11 +356,15 @@ class PortfolioTrader:
             commission: 佣金率
             spread: 滑点率
             max_positions: 最大持仓数
+            max_position_pct: 单仓位上限（默认0.05，即5%）
+            min_buy_signals: 最小买入信号数（默认1）
         """
         self.portfolio = portfolio
         self.commission = commission
         self.spread = spread
         self.max_positions = max_positions
+        self.max_position_pct = max_position_pct
+        self.min_buy_signals = min_buy_signals
 
     def generate_trade_plan(self,
                            signals: Dict[str, Dict]) -> Tuple[List[Trade], List[Trade]]:
@@ -428,6 +434,12 @@ class PortfolioTrader:
                     'message': signal_data.get('message', '金叉买入信号')
                 })
 
+        # 检查最小买入信号数
+        if len(buy_candidates) < self.min_buy_signals:
+            print(f"\n⚠️  买入信号数量（{len(buy_candidates)}）少于最小要求（{self.min_buy_signals}），本次不执行买入")
+            print(f"   等待更多买入信号出现...")
+            return sell_trades, []  # 返回空的买入交易列表
+
         # 按信号强度排序，取前N个
         buy_candidates = sorted(
             buy_candidates,
@@ -435,9 +447,12 @@ class PortfolioTrader:
             reverse=True
         )[:available_slots]
 
-        # 第五步：分配资金，生成买入交易
+        # 第五步：分配资金，生成买入交易（带单仓位上限）
         if buy_candidates and available_cash > 0:
-            cash_per_position = available_cash / len(buy_candidates)
+            # 计算总资产（现金 + 持仓成本）
+            total_capital = self.portfolio.cash + self.portfolio.get_total_cost()
+            max_cash_per_position = total_capital * self.max_position_pct  # 单仓位上限金额
+            cash_per_position = min(available_cash / len(buy_candidates), max_cash_per_position)
 
             for candidate in buy_candidates:
                 price = candidate['price']

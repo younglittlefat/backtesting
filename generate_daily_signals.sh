@@ -53,6 +53,8 @@ ${YELLOW}基本选项:${NC}
   --n1 <n>                     短期均线周期（覆盖策略默认值）
   --n2 <n>                     长期均线周期（覆盖策略默认值）
   --load-params <file>         从配置文件加载策略参数（覆盖--n1和--n2）
+  --max-position-pct <0.0-1.0> 单仓位上限，占总资金百分比（默认: 0.05，即5%）
+  --min-buy-signals <n>        最小买入信号数，少于此数不买入（默认: 1）
   -h, --help                   显示此帮助信息
 
 ${YELLOW}示例:${NC}
@@ -152,6 +154,8 @@ main() {
     N1=""
     N2=""
     LOAD_PARAMS=""
+    MAX_POSITION_PCT="0.05"
+    MIN_BUY_SIGNALS="1"
 
     # 解析命令行参数
     while [[ $# -gt 0 ]]; do
@@ -223,6 +227,14 @@ main() {
                 ;;
             --load-params)
                 LOAD_PARAMS="$2"
+                shift 2
+                ;;
+            --max-position-pct)
+                MAX_POSITION_PCT="$2"
+                shift 2
+                ;;
+            --min-buy-signals)
+                MIN_BUY_SIGNALS="$2"
                 shift 2
                 ;;
             -h|--help)
@@ -337,6 +349,10 @@ main() {
         if [ -n "$LOAD_PARAMS" ]; then
             CMD+=("--load-params" "$LOAD_PARAMS")
         fi
+
+        # 添加仓位管理参数
+        CMD+=("--max-position-pct" "$MAX_POSITION_PCT")
+        CMD+=("--min-buy-signals" "$MIN_BUY_SIGNALS")
     else
         # 无状态模式（原有逻辑）
         if [ -z "$STOCK_LIST" ]; then
@@ -373,6 +389,10 @@ main() {
         if [ -n "$LOAD_PARAMS" ]; then
             CMD+=("--load-params" "$LOAD_PARAMS")
         fi
+
+        # 添加仓位管理参数
+        CMD+=("--max-position-pct" "$MAX_POSITION_PCT")
+        CMD+=("--min-buy-signals" "$MIN_BUY_SIGNALS")
     fi
 
     # 执行

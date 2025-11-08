@@ -57,7 +57,9 @@ class SignalGenerator:
                  cost_model: str = 'cn_etf',
                  data_dir: str = 'data/csv/daily',
                  lookback_days: int = 250,
-                 use_dual_price: bool = True):
+                 use_dual_price: bool = True,
+                 max_position_pct: float = 0.05,
+                 min_buy_signals: int = 1):
         """
         初始化信号生成器
 
@@ -69,6 +71,8 @@ class SignalGenerator:
             data_dir: 数据目录
             lookback_days: 回看天数（用于计算指标）
             use_dual_price: 是否使用双价格模式
+            max_position_pct: 单仓位上限（默认0.05，即5%）
+            min_buy_signals: 最小买入信号数（默认1）
         """
         self.strategy_class = strategy_class
         self.strategy_params = strategy_params or {}
@@ -77,6 +81,8 @@ class SignalGenerator:
         self.data_dir = data_dir
         self.lookback_days = lookback_days
         self.use_dual_price = use_dual_price
+        self.max_position_pct = max_position_pct
+        self.min_buy_signals = min_buy_signals
 
         # 获取费用配置
         if cost_model not in COST_MODELS:
@@ -439,6 +445,17 @@ class SignalGenerator:
                 'message': '当前没有买入信号'
             }
 
+        # 检查最小买入信号数
+        if len(buy_signals) < self.min_buy_signals:
+            return {
+                'total_cash': self.cash,
+                'allocated_cash': 0,
+                'remaining_cash': self.cash,
+                'n_positions': 0,
+                'positions': [],
+                'message': f'买入信号数量不足（{len(buy_signals)} < {self.min_buy_signals}），本次不执行买入'
+            }
+
         # 按信号强度排序（取绝对值，因为可能是负数）
         buy_signals['abs_strength'] = buy_signals['signal_strength'].abs()
         buy_signals = buy_signals.sort_values('abs_strength', ascending=False)
@@ -446,9 +463,10 @@ class SignalGenerator:
         # 限制持仓数量
         buy_signals = buy_signals.head(target_positions)
 
-        # 计算每个标的的分配资金（等权重）
+        # 计算每个标的的分配资金（带单仓位上限）
         n_positions = len(buy_signals)
-        cash_per_position = self.cash / n_positions
+        max_cash_per_position = self.cash * self.max_position_pct  # 单仓位上限金额
+        cash_per_position = min(self.cash / n_positions, max_cash_per_position)
 
         # 计算每个标的的建议买入量
         positions = []
@@ -761,6 +779,12 @@ def main():
     parser.add_argument('--n2', type=int, help='长期均线周期')
     parser.add_argument('--load-params', type=str, help='从配置文件加载策略参数')
 
+    # 仓位管理参数（方案A）
+    parser.add_argument('--max-position-pct', type=float, default=0.05,
+                       help='单仓位上限，占总资金的百分比（默认: 0.05，即5%%）')
+    parser.add_argument('--min-buy-signals', type=int, default=1,
+                       help='最小买入信号数，少于此数不执行买入（默认: 1，有信号就买入）')
+
     # 价格模式
     parser.add_argument('--disable-dual-price', action='store_true',
                        help='禁用双价格模式（回退到旧的单价格模式，不推荐）')
@@ -887,7 +911,9 @@ def main():
             cost_model=args.cost_model,
             data_dir=args.data_dir,
             lookback_days=args.lookback_days,
-            use_dual_price=not args.disable_dual_price
+            use_dual_price=not args.disable_dual_price,
+            max_position_pct=args.max_position_pct,
+            min_buy_signals=args.min_buy_signals
         )
 
         # 读取股票列表
@@ -922,7 +948,9 @@ def main():
             portfolio=portfolio,
             commission=cost_config['commission'],
             spread=cost_config.get('spread', 0.0),
-            max_positions=args.positions
+            max_positions=args.positions,
+            max_position_pct=args.max_position_pct,
+            min_buy_signals=args.min_buy_signals
         )
 
         # 生成交易计划
@@ -1012,7 +1040,9 @@ def main():
         cost_model=args.cost_model,
         data_dir=args.data_dir,
         lookback_days=args.lookback_days,
-        use_dual_price=not args.disable_dual_price
+        use_dual_price=not args.disable_dual_price,
+        max_position_pct=args.max_position_pct,
+        min_buy_signals=args.min_buy_signals
     )
 
     # 生成信号
