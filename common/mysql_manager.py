@@ -795,7 +795,7 @@ class MySQLManager:
             ear_distr DECIMAL(15,2) DEFAULT NULL COMMENT '可分配收益(元)',
             ear_amount DECIMAL(15,2) DEFAULT NULL COMMENT '收益分配金额(元)',
             account_date VARCHAR(8) DEFAULT NULL COMMENT '红利再投资到账日',
-            base_year VARCHAR(4) DEFAULT NULL COMMENT '份额基准年度',
+            base_year VARCHAR(20) DEFAULT NULL COMMENT '份额基准年度',
             created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
             updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
             UNIQUE KEY uk_fund_dividend (ts_code, ex_date),

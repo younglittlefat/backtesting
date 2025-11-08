@@ -291,13 +291,16 @@ class FundFetcher(BaseFetcher):
             self.logger.error(f"按基金遍历获取净值数据失败: {e}")
             return 0
 
-    def fetch_dividend_data(self, start_date: str, end_date: str) -> int:
+    def fetch_dividend_data(self, start_date: str = None, end_date: str = None) -> int:
         """
-        获取基金分红数据（按基金代码循环获取）
+        获取基金分红数据（按基金代码循环获取，获取全生命周期数据）
+
+        注意：为了支持基金复权价格计算，本方法会获取每个基金的全部历史分红数据，
+        不受 start_date 和 end_date 参数限制。这两个参数保留仅为向后兼容。
 
         Args:
-            start_date: 开始日期
-            end_date: 结束日期
+            start_date: 开始日期（已弃用，保留仅为兼容）
+            end_date: 结束日期（已弃用，保留仅为兼容）
 
         Returns:
             int: 成功获取的记录数
@@ -368,13 +371,13 @@ class FundFetcher(BaseFetcher):
                     request_count = 0
                     start_time = time.time()
 
-                # 调用Tushare API获取该基金的分红数据
+                # 调用Tushare API获取该基金的分红数据（全生命周期）
                 df = self.pro.fund_div(ts_code=ts_code)
                 request_count += 1
 
                 if df is not None and not df.empty:
-                    # 按日期范围过滤数据
-                    df = df[(df['ex_date'] >= start_date) & (df['ex_date'] <= end_date)]
+                    # 注意：不再按日期范围过滤，获取全部分红记录用于复权计算
+                    # 原过滤逻辑已移除: df = df[(df['ex_date'] >= start_date) & (df['ex_date'] <= end_date)]
 
                     if not df.empty:
                         # 转换为记录列表
@@ -405,7 +408,7 @@ class FundFetcher(BaseFetcher):
                             "本次": 0,
                             "总计": total_count
                         })
-                        self.logger.debug(f"基金 {ts_code} ({fund_name}): 指定日期范围内无分红记录")
+                        self.logger.debug(f"基金 {ts_code} ({fund_name}): 无分红记录")
                 else:
                     # 更新进度条显示（无数据的情况）
                     progress_bar.set_postfix({

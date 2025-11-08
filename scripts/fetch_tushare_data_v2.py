@@ -189,11 +189,14 @@ class TushareDataFetcherV2:
 
     def fetch_fund_dividend(self, start_date: str, end_date: str) -> int:
         """
-        获取基金分红数据
+        获取基金分红数据（全生命周期）
+
+        注意：为了支持基金复权价格计算，本方法会获取每个基金的全部历史分红数据，
+        不受 start_date 和 end_date 参数限制。这两个参数保留仅为向后兼容。
 
         Args:
-            start_date: 开始日期
-            end_date: 结束日期
+            start_date: 开始日期（已弃用，保留仅为兼容）
+            end_date: 结束日期（已弃用，保留仅为兼容）
 
         Returns:
             int: 成功获取的记录数
@@ -202,7 +205,7 @@ class TushareDataFetcherV2:
             self.logger.info("跳过基金分红数据获取（数据类型过滤）")
             return 0
 
-        self.logger.info(f"开始获取基金分红数据: {start_date} - {end_date}")
+        self.logger.info("获取基金分红数据（全生命周期，忽略日期范围限制，用于复权计算）")
         count = self.fund_fetcher.fetch_dividend_data(start_date, end_date)
         self.logger.info(f"基金分红数据获取完成: {count}条")
         return count
