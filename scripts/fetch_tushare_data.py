@@ -747,9 +747,9 @@ class TushareDataFetcher:
             if df.empty:
                 self.logger.warning("未获取到最新交易日，使用当前日期")
                 return datetime.now().strftime('%Y%m%d')
-            
+
             # 返回最新的交易日
-            latest_date = df['cal_date'].iloc[-1]
+            latest_date = df['cal_date'].iloc[0]
             self.logger.info(f"获取到最新交易日: {latest_date}")
             return latest_date
             
