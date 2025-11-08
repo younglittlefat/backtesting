@@ -708,7 +708,7 @@ class MySQLManager:
             custodian VARCHAR(100) DEFAULT NULL COMMENT '托管人',
             fund_type VARCHAR(50) DEFAULT NULL COMMENT '基金类型',
             invest_type VARCHAR(50) DEFAULT NULL COMMENT '投资风格',
-            benchmark VARCHAR(200) DEFAULT NULL COMMENT '业绩基准',
+            benchmark VARCHAR(500) DEFAULT NULL COMMENT '业绩基准',
             m_fee DECIMAL(6,4) DEFAULT NULL COMMENT '管理费',
             c_fee DECIMAL(6,4) DEFAULT NULL COMMENT '托管费',
             min_amount DECIMAL(10,2) DEFAULT NULL COMMENT '起点金额(万元)',
@@ -1215,41 +1215,53 @@ class MySQLManager:
             self.logger.error(f"预筛选工具失败: {e}")
             return []
     
-    def get_instruments_basic_batch(self, ts_codes: List[str]) -> Dict[str, Dict]:
+    def get_instruments_basic_batch(self, ts_codes: List[str], data_type: str = None) -> Dict[str, Dict]:
         """
         批量获取基本信息
-        
+
         Args:
             ts_codes: 工具代码列表
-            
+            data_type: 数据类型过滤 ('fund', 'etf', 'index')，为None时不过滤
+
         Returns:
             Dict[str, Dict]: {ts_code: basic_info_dict}
         """
         try:
             if not ts_codes:
                 return {}
-            
+
             with self.get_connection() as conn:
                 cursor = conn.cursor()
                 # 构建IN查询
                 placeholders = ','.join(['%s'] * len(ts_codes))
                 sql = f"""
-                SELECT * FROM instrument_basic 
+                SELECT * FROM instrument_basic
                 WHERE ts_code IN ({placeholders})
-                ORDER BY ts_code
                 """
-                
-                cursor.execute(sql, ts_codes)
+
+                params = list(ts_codes)
+
+                # 添加data_type过滤
+                if data_type:
+                    sql += " AND data_type = %s"
+                    params.append(data_type)
+
+                sql += " ORDER BY ts_code"
+
+                cursor.execute(sql, params)
                 results = cursor.fetchall()
-                
+
                 # 转换为字典格式
                 basic_info_dict = {}
                 for row in results:
                     basic_info_dict[row['ts_code']] = row
-                
-                self.logger.info(f"批量获取基本信息：{len(results)}/{len(ts_codes)}个工具")
+
+                if data_type:
+                    self.logger.info(f"批量获取基本信息（{data_type}）：{len(results)}/{len(ts_codes)}个工具")
+                else:
+                    self.logger.info(f"批量获取基本信息：{len(results)}/{len(ts_codes)}个工具")
                 return basic_info_dict
-                
+
         except Exception as e:
             self.logger.error(f"批量获取基本信息失败: {e}")
             return {}
@@ -1706,16 +1718,162 @@ class MySQLManager:
                 # 执行批量插入
                 cursor.executemany(sql, batch_values)
                 conn.commit()
-                
-                # 获取实际插入的行数
-                success_count = cursor.rowcount if cursor.rowcount > 0 else 0
-                self.logger.debug(f"批量插入: 提交{len(batch_values)}条，实际插入/更新{success_count}条")
+
+                # 返回实际提交的数据条数
+                # 注意：cursor.rowcount 在 ON DUPLICATE KEY UPDATE 时会计算 插入+更新*2
+                # 因此我们直接返回提交的数据条数
+                success_count = len(batch_values)
+                self.logger.debug(f"批量插入: 提交{success_count}条，已处理")
                 
         except Exception as e:
             self.logger.error(f"插入批量数据失败: {e}")
             # 异常情况下success_count保持0
             success_count = 0
             
+        return success_count
+
+    def batch_insert_instrument_basic(self, data_list: List[Dict], batch_size: int = 1000) -> int:
+        """
+        批量插入instrument_basic表数据
+
+        Args:
+            data_list: 包含所有字段的数据列表，每个字典应包含:
+                     - data_type: 数据类型 ('etf', 'index', 'fund')
+                     - ts_code: 证券代码
+                     - name: 名称
+                     - 其他基本信息字段
+            batch_size: 批处理大小，默认1000条
+
+        Returns:
+            int: 成功插入的数据条数
+        """
+        if not data_list:
+            return 0
+
+        total_success = 0
+
+        try:
+            # 按批次处理数据
+            for i in range(0, len(data_list), batch_size):
+                batch_data = data_list[i:i + batch_size]
+                batch_success = self._insert_batch_basic_data(batch_data)
+                total_success += batch_success
+
+                self.logger.info(f"批次 {i//batch_size + 1}: 成功插入 {batch_success}/{len(batch_data)} 条基本信息")
+
+            self.logger.info(f"批量插入基本信息完成，总计成功 {total_success}/{len(data_list)} 条")
+            return total_success
+
+        except Exception as e:
+            self.logger.error(f"批量插入instrument_basic数据失败: {e}")
+            return total_success
+
+    def _insert_batch_basic_data(self, batch_data: List[Dict]) -> int:
+        """
+        插入一批基本信息数据
+
+        Args:
+            batch_data: 批量数据
+
+        Returns:
+            int: 成功插入的数据条数
+        """
+        success_count = 0
+
+        try:
+            with self.get_connection() as conn:
+                cursor = conn.cursor()
+
+                # 准备批量插入SQL
+                sql = """
+                INSERT INTO instrument_basic (
+                    data_type, ts_code, name, symbol, fullname, market, tracking_index,
+                    publisher, index_type, category, base_date, base_point, weight_rule,
+                    management, custodian, fund_type, invest_type, benchmark, m_fee, c_fee,
+                    min_amount, list_date, found_date, due_date, delist_date, status, description,
+                    created_at, updated_at
+                ) VALUES (
+                    %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s,
+                    %s, %s, %s, %s, %s, %s, %s, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP
+                )
+                ON DUPLICATE KEY UPDATE
+                    name = VALUES(name),
+                    symbol = VALUES(symbol),
+                    fullname = VALUES(fullname),
+                    market = VALUES(market),
+                    tracking_index = VALUES(tracking_index),
+                    publisher = VALUES(publisher),
+                    index_type = VALUES(index_type),
+                    category = VALUES(category),
+                    base_date = VALUES(base_date),
+                    base_point = VALUES(base_point),
+                    weight_rule = VALUES(weight_rule),
+                    management = VALUES(management),
+                    custodian = VALUES(custodian),
+                    fund_type = VALUES(fund_type),
+                    invest_type = VALUES(invest_type),
+                    benchmark = VALUES(benchmark),
+                    m_fee = VALUES(m_fee),
+                    c_fee = VALUES(c_fee),
+                    min_amount = VALUES(min_amount),
+                    list_date = VALUES(list_date),
+                    found_date = VALUES(found_date),
+                    due_date = VALUES(due_date),
+                    delist_date = VALUES(delist_date),
+                    status = VALUES(status),
+                    description = VALUES(description),
+                    updated_at = CURRENT_TIMESTAMP
+                """
+
+                # 准备批量数据
+                batch_values = []
+                for data in batch_data:
+                    values = (
+                        data.get('data_type'),
+                        data.get('ts_code'),
+                        data.get('name'),
+                        data.get('symbol'),
+                        data.get('fullname'),
+                        data.get('market'),
+                        data.get('tracking_index'),
+                        data.get('publisher'),
+                        data.get('index_type'),
+                        data.get('category'),
+                        data.get('base_date'),
+                        data.get('base_point'),
+                        data.get('weight_rule'),
+                        data.get('management'),
+                        data.get('custodian'),
+                        data.get('fund_type'),
+                        data.get('invest_type'),
+                        data.get('benchmark'),
+                        data.get('m_fee'),
+                        data.get('c_fee'),
+                        data.get('min_amount'),
+                        data.get('list_date'),
+                        data.get('found_date'),
+                        data.get('due_date'),
+                        data.get('delist_date'),
+                        data.get('status'),
+                        data.get('description')
+                    )
+                    batch_values.append(values)
+
+                # 执行批量插入
+                cursor.executemany(sql, batch_values)
+                conn.commit()
+
+                # 返回实际提交的数据条数
+                # 注意：cursor.rowcount 在 ON DUPLICATE KEY UPDATE 时会计算 插入+更新*2
+                # 因此我们直接返回提交的数据条数
+                success_count = len(batch_values)
+                self.logger.debug(f"批量插入基本信息: 提交{success_count}条，已处理")
+
+        except Exception as e:
+            self.logger.error(f"插入批量基本信息数据失败: {e}")
+            # 异常情况下success_count保持0
+            success_count = 0
+
         return success_count
 
     # ==================== 基金分红数据相关方法 ====================

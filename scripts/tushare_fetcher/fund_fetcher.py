@@ -33,7 +33,7 @@ class FundFetcher(BaseFetcher):
 
     def fetch_basic_info(self) -> int:
         """
-        获取公募基金基本信息（仅白名单内基金公司）
+        获取公募基金基本信息（仅白名单内基金公司，使用批量插入优化）
 
         Returns:
             int: 成功获取的基金数量
@@ -55,20 +55,23 @@ class FundFetcher(BaseFetcher):
             )]
             filtered_count = len(df)
 
-            self.logger.info(f"基金白名单过滤: 原始{original_count}只 -> 过滤后{filtered_count}只")
+            self.logger.info(f"基金白名单过滤（所有存续基金）: 原始{original_count}只 -> 过滤后{filtered_count}只")
 
             if df.empty:
                 self.logger.warning("白名单过滤后无公募基金数据")
                 return 0
 
-            success_count = 0
-            # 添加进度条显示
-            progress_bar = tqdm(df.iterrows(), total=len(df), desc="获取基金基本信息", unit="条")
+            # 准备批量插入数据
+            data_list = []
+            progress_bar = tqdm(df.iterrows(), total=len(df), desc="准备基金基本信息", unit="条")
 
             for _, row in progress_bar:
                 try:
                     # 映射字段
                     data = {
+                        'data_type': 'fund',
+                        'ts_code': row['ts_code'],
+                        'name': row['name'],
                         'symbol': row.get('ts_code', '').split('.')[0] if row.get('ts_code') else None,
                         'market': 'O',  # 场外
                         'fullname': row.get('name'),
@@ -87,27 +90,25 @@ class FundFetcher(BaseFetcher):
 
                     # 过滤None值和NaN值
                     data = self._clean_data(data)
-
-                    success = self.db_manager.add_instrument_basic(
-                        data_type='fund',
-                        ts_code=row['ts_code'],
-                        name=row['name'],
-                        **data
-                    )
-
-                    if success:
-                        success_count += 1
-
-                    # 更新进度条显示成功数量
-                    progress_bar.set_postfix({"成功": success_count})
+                    data_list.append(data)
 
                 except Exception as e:
-                    self.logger.error(f"添加基金基本信息失败 {row.get('ts_code', 'unknown')}: {e}")
+                    self.logger.error(f"准备基金基本信息失败 {row.get('ts_code', 'unknown')}: {e}")
                     continue
 
             progress_bar.close()
-            self.logger.info(f"公募基金基本信息获取完成，成功{success_count}条（白名单内）")
-            return success_count
+
+            # 批量插入数据
+            if data_list:
+                self.logger.info(f"开始批量插入{len(data_list)}条基金基本信息")
+                success_count = self.db_manager.batch_insert_instrument_basic(
+                    data_list, batch_size=1000
+                )
+                self.logger.info(f"公募基金基本信息获取完成，成功{success_count}条（白名单内）")
+                return success_count
+            else:
+                self.logger.warning("没有准备好的基金基本信息数据")
+                return 0
 
         except Exception as e:
             self.logger.error(f"获取公募基金基本信息失败: {e}")
@@ -115,7 +116,7 @@ class FundFetcher(BaseFetcher):
 
     def fetch_nav_by_date(self, nav_date: str, max_retries: int = 3) -> int:
         """
-        获取指定日期的基金净值数据（仅白名单内基金公司）
+        获取指定日期的基金净值数据（仅白名单内基金公司，使用批量插入和预过滤优化）
 
         Args:
             nav_date: 净值日期(YYYYMMDD)
@@ -126,7 +127,7 @@ class FundFetcher(BaseFetcher):
         """
         for retry in range(max_retries):
             try:
-                self.logger.info(f"获取基金净值数据: {nav_date} (第{retry+1}次尝试)")
+                self.logger.info(f"获取基金净值数据: {nav_date} (第{retry+1}次尝试) - 仅限当日有净值更新的基金")
 
                 df = self.pro.fund_nav(nav_date=nav_date)
 
@@ -134,57 +135,58 @@ class FundFetcher(BaseFetcher):
                     self.logger.warning(f"未获取到{nav_date}的基金净值数据")
                     return 0
 
-                success_count = 0
-                whitelisted_count = 0
-                # 添加进度条
-                progress_bar = tqdm(df.iterrows(), total=len(df),
-                                  desc=f"基金净值[{nav_date}]", unit="条", leave=False)
+                # 【优化】先获取数据中所有基金的管理信息，避免逐行查库
+                # 提取唯一的基金代码
+                unique_codes = df['ts_code'].unique().tolist()
+                self.logger.debug(f"从API获取了 {len(unique_codes)} 个唯一基金代码")
 
-                for _, row in progress_bar:
-                    try:
-                        # 检查基金是否在白名单内
-                        ts_code = row['ts_code']
-                        management = self._get_fund_management_from_db(ts_code)
+                # 【优化】批量获取基金管理信息（一次数据库查询）
+                basic_info_dict = self.db_manager.get_instruments_basic_batch(unique_codes, data_type='fund')
+                self.logger.debug(f"从数据库获取了 {len(basic_info_dict)} 个基金的基本信息")
 
-                        if not self._is_whitelisted_fund_company(management):
-                            continue  # 跳过非白名单基金
+                # 构建白名单映射表
+                whitelist_map = {}
+                for ts_code in unique_codes:
+                    if ts_code in basic_info_dict:
+                        management = basic_info_dict[ts_code].get('management')
+                        whitelist_map[ts_code] = self._is_whitelisted_fund_company(management)
+                    else:
+                        # 数据库中没有该基金的基本信息，默认不在白名单
+                        whitelist_map[ts_code] = False
 
-                        whitelisted_count += 1
+                # 【向量化过滤】使用白名单Map对整个DataFrame进行过滤
+                df_filtered = df[df['ts_code'].map(whitelist_map)]
+                whitelisted_count = len(df_filtered)
+                self.logger.info(f"白名单过滤（当日有净值更新）: {len(df)} -> {whitelisted_count}")
 
-                        # 映射字段
-                        data = {
-                            'unit_nav': row.get('unit_nav'),
-                            'accum_nav': row.get('accum_nav'),
-                            'adj_nav': row.get('adj_nav'),
-                            'accum_div': row.get('accum_div'),
-                            'net_asset': row.get('net_asset'),
-                            'total_netasset': row.get('total_netasset'),
-                            'ann_date': row.get('ann_date')
-                        }
+                if df_filtered.empty:
+                    self.logger.warning(f"白名单内无基金净值数据")
+                    return 0
 
-                        # 过滤None值和NaN值
-                        data = self._clean_data(data)
+                # 【向量化处理】转换为字典列表，避免 iterrows()
+                data_list = []
+                # 使用 .copy() 避免 SettingWithCopyWarning
+                df_filtered = df_filtered.copy()
+                df_filtered['data_type'] = 'fund'
+                df_filtered_renamed = df_filtered.rename(columns={'nav_date': 'trade_date'})
+                records = df_filtered_renamed.to_dict('records')
 
-                        success = self.db_manager.add_instrument_daily(
-                            data_type='fund',
-                            ts_code=ts_code,
-                            trade_date=row['nav_date'],
-                            **data
-                        )
+                # 清理数据
+                for record in records:
+                    data = self._clean_data(record)
+                    data_list.append(data)
 
-                        if success:
-                            success_count += 1
-
-                        # 更新进度条显示
-                        progress_bar.set_postfix({"白名单": whitelisted_count, "成功": success_count})
-
-                    except Exception as e:
-                        self.logger.error(f"添加基金净值数据失败 {row.get('ts_code', 'unknown')}: {e}")
-                        continue
-
-                progress_bar.close()
-                self.logger.info(f"基金净值数据获取完成 {nav_date}，白名单内{whitelisted_count}只，成功{success_count}条")
-                return success_count
+                # 批量插入数据
+                if data_list:
+                    self.logger.info(f"开始批量插入{len(data_list)}条基金净值数据")
+                    success_count = self.db_manager.batch_insert_instrument_daily(
+                        data_list, batch_size=1000
+                    )
+                    self.logger.info(f"基金净值数据获取完成 {nav_date}，白名单内{whitelisted_count}只，成功{success_count}条")
+                    return success_count
+                else:
+                    self.logger.warning(f"白名单内无基金净值数据")
+                    return 0
 
             except Exception as e:
                 self.logger.error(f"获取基金净值数据失败 {nav_date} (第{retry+1}次): {e}")
@@ -221,7 +223,7 @@ class FundFetcher(BaseFetcher):
             )]
             filtered_count = len(df_basic)
 
-            self.logger.info(f"按工具获取基金净值 - 白名单过滤: 原始{original_count}只 -> 过滤后{filtered_count}只")
+            self.logger.info(f"按工具获取基金净值 - 白名单过滤（所有存续基金）: 原始{original_count}只 -> 过滤后{filtered_count}只")
 
             if df_basic.empty:
                 self.logger.warning("白名单过滤后无基金数据")
@@ -245,22 +247,14 @@ class FundFetcher(BaseFetcher):
                         # 按日期范围过滤数据
                         df = df[(df['nav_date'] >= start_date) & (df['nav_date'] <= end_date)]
 
-                        # 批量处理数据
-                        for _, row in df.iterrows():
-                            data = {
-                                'data_type': 'fund',
-                                'ts_code': row['ts_code'],
-                                'trade_date': row['nav_date'],
-                                'unit_nav': row.get('unit_nav'),
-                                'accum_nav': row.get('accum_nav'),
-                                'adj_nav': row.get('adj_nav'),
-                                'accum_div': row.get('accum_div'),
-                                'net_asset': row.get('net_asset'),
-                                'total_netasset': row.get('total_netasset'),
-                                'ann_date': row.get('ann_date')
-                            }
-                            data = self._clean_data(data)
-                            all_data.append(data)
+                        # 向量化处理数据（优化性能）
+                        if not df.empty:
+                            df_renamed = df.rename(columns={'nav_date': 'trade_date'})
+                            df_renamed['data_type'] = 'fund'
+                            records = df_renamed.to_dict('records')
+                            for record in records:
+                                data = self._clean_data(record)
+                                all_data.append(data)
 
                     # 批量插入
                     if len(all_data) >= self.data_processor.batch_size:
@@ -328,7 +322,7 @@ class FundFetcher(BaseFetcher):
             )]
             filtered_count = len(df_funds)
 
-            self.logger.info(f"基金白名单过滤: 原始{original_count}只 -> 过滤后{filtered_count}只")
+            self.logger.info(f"基金白名单过滤（所有存续基金）: 原始{original_count}只 -> 过滤后{filtered_count}只")
 
             if df_funds.empty:
                 self.logger.warning("白名单过滤后无基金数据")
@@ -458,7 +452,7 @@ class FundFetcher(BaseFetcher):
             )]
             filtered_count = len(df_basic)
 
-            self.logger.info(f"按工具获取基金规模 - 白名单过滤: 原始{original_count}只 -> 过滤后{filtered_count}只")
+            self.logger.info(f"按工具获取基金规模 - 白名单过滤（所有存续基金）: 原始{original_count}只 -> 过滤后{filtered_count}只")
 
             if df_basic.empty:
                 self.logger.warning("白名单过滤后无基金数据")
@@ -560,15 +554,11 @@ class FundFetcher(BaseFetcher):
                         self.logger.debug(f"【分块】基金 {ts_code} 分块获取成功，数据量: {len(df)}")
 
                     if not df.empty:
-                        # 批量处理数据
-                        for _, row in df.iterrows():
-                            data = {
-                                'data_type': 'fund_share',
-                                'ts_code': row['ts_code'],
-                                'trade_date': row['trade_date'],
-                                'fd_share': row.get('fd_share')
-                            }
-                            data = self._clean_data(data)
+                        # 向量化处理数据（优化性能）
+                        df['data_type'] = 'fund_share'
+                        records = df.to_dict('records')
+                        for record in records:
+                            data = self._clean_data(record)
                             all_data.append(data)
 
                     # 批量插入
@@ -654,20 +644,30 @@ class FundFetcher(BaseFetcher):
             # 应用白名单过滤
             original_count = len(df)
 
-            # 获取基金管理公司信息用于过滤
-            filtered_data = []
-            for _, row in df.iterrows():
-                ts_code = row['ts_code']
-                management = self._get_fund_management_from_db(ts_code)
+            # 【优化】批量获取基金管理公司信息用于过滤
+            unique_codes = df['ts_code'].unique().tolist()
+            basic_info_dict = self.db_manager.get_instruments_basic_batch(unique_codes, data_type='fund')
 
-                if management and self._is_whitelisted_fund_company(management):
-                    data = {
-                        'data_type': 'fund_share',
-                        'ts_code': row['ts_code'],
-                        'trade_date': row['trade_date'],
-                        'fd_share': row.get('fd_share')
-                    }
-                    data = self._clean_data(data)
+            # 构建白名单映射表
+            whitelist_map = {}
+            for ts_code in unique_codes:
+                if ts_code in basic_info_dict:
+                    management = basic_info_dict[ts_code].get('management')
+                    whitelist_map[ts_code] = self._is_whitelisted_fund_company(management)
+                else:
+                    whitelist_map[ts_code] = False
+
+            # 【向量化过滤】过滤并处理数据
+            df_filtered = df[df['ts_code'].map(whitelist_map)]
+            filtered_data = []
+
+            if not df_filtered.empty:
+                df_filtered = df_filtered.copy()
+                df_filtered['data_type'] = 'fund_share'
+                records = df_filtered[['data_type', 'ts_code', 'trade_date', 'fd_share']].to_dict('records')
+
+                for record in records:
+                    data = self._clean_data(record)
                     filtered_data.append(data)
 
             if filtered_data:
