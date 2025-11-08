@@ -5,6 +5,13 @@ python scripts/fetch_tushare_data_v2.py --start_date 20251107 --end_date 2025110
 ## 获取基金全周期分红信息
 python scripts/fetch_tushare_data_v2.py --fetch_dividend --data_type fund
 
+## 获取基金规模信息
+python 
+
+## 输出最新etf日线到目录（最近两年）
+
+
+
 ## ETF标的预筛选
 python -m etf_selector.main --output results/trend_etf_pool.csv --target-size 10 --min-turnover 100000 --min-volatility 0.15 --max-volatility 0.80 --adx-percentile 70 --ret-dd-percentile 70 --momentum-min-positive
 

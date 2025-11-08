@@ -602,7 +602,7 @@ class FundFetcher(BaseFetcher):
 
     def fetch_share_by_date(self, start_date: str, end_date: str) -> int:
         """
-        按日期遍历获取基金规模数据
+        按日期遍历获取基金规模数据（优化版）
 
         Args:
             start_date: 开始日期
@@ -615,17 +615,124 @@ class FundFetcher(BaseFetcher):
         if not trading_dates:
             return 0
 
+        self.logger.info(f"开始按日期获取基金规模数据: {len(trading_dates)}个交易日")
+
+        # 【性能优化】预加载所有ETF基金的基本信息到内存中
+        self.logger.info("预加载ETF基金基本信息到内存...")
+        try:
+            with self.db_manager.get_connection() as conn:
+                cursor = conn.cursor()
+                cursor.execute("""
+                    SELECT ts_code, management, data_type
+                    FROM instrument_basic
+                    WHERE (ts_code LIKE '%.SZ' OR ts_code LIKE '%.SH')
+                    AND data_type IN ('etf', 'fund')
+                """)
+                all_fund_basic_info = cursor.fetchall()
+
+                # 构建快速查找字典
+                basic_info_cache = {}
+                for row in all_fund_basic_info:
+                    basic_info_cache[row['ts_code']] = row
+
+                self.logger.info(f"预加载完成，共{len(basic_info_cache)}个ETF基金基本信息")
+
+        except Exception as e:
+            self.logger.error(f"预加载基金基本信息失败: {e}")
+            return 0
+
         total_count = 0
+        failed_dates = 0
         date_progress = tqdm(trading_dates, desc="按日期获取基金规模", unit="天")
 
         for trade_date in date_progress:
-            share_count = self._fetch_share_single_date(trade_date)
-            total_count += share_count
-            date_progress.set_postfix({"总计": total_count})
-            time.sleep(0.2)
+            try:
+                share_count = self._fetch_share_single_date_optimized(trade_date, basic_info_cache)
+                total_count += share_count
+                if share_count == 0:
+                    failed_dates += 1
+
+                date_progress.set_postfix({
+                    "总计": total_count,
+                    "失败": failed_dates
+                })
+            except Exception as e:
+                self.logger.error(f"获取{trade_date}基金规模数据时发生异常: {e}")
+                failed_dates += 1
+                date_progress.set_postfix({
+                    "总计": total_count,
+                    "失败": failed_dates
+                })
 
         date_progress.close()
+
+        success_rate = (len(trading_dates) - failed_dates) / len(trading_dates) * 100 if trading_dates else 0
+        self.logger.info(f"按日期获取基金规模数据完成: 总计{total_count}条，成功率{success_rate:.1f}% ({len(trading_dates)-failed_dates}/{len(trading_dates)}天)")
+
         return total_count
+
+    def _fetch_share_single_date_optimized(self, trade_date: str, basic_info_cache: dict) -> int:
+        """
+        获取单个日期的基金规模数据（优化版，使用预加载的基本信息缓存）
+
+        Args:
+            trade_date: 交易日期(YYYYMMDD)
+            basic_info_cache: 预加载的基金基本信息缓存
+
+        Returns:
+            int: 成功获取的数据条数
+        """
+        try:
+            df = self.pro.fund_share(trade_date=trade_date)
+
+            if df.empty:
+                self.logger.debug(f"未获取到 {trade_date} 的基金规模数据")
+                return 0
+
+            original_count = len(df)
+            unique_codes = df['ts_code'].unique().tolist()
+
+            # 【性能优化】使用预加载的缓存构建白名单映射表
+            whitelist_map = {}
+            found_count = 0
+            for ts_code in unique_codes:
+                if ts_code in basic_info_cache:
+                    found_count += 1
+                    management = basic_info_cache[ts_code].get('management')
+                    whitelist_map[ts_code] = self._is_whitelisted_fund_company(management)
+                else:
+                    whitelist_map[ts_code] = False
+
+            # 【向量化过滤】过滤并处理数据
+            df_filtered = df[df['ts_code'].map(whitelist_map)]
+            filtered_data = []
+
+            if not df_filtered.empty:
+                df_filtered = df_filtered.copy()
+                df_filtered['data_type'] = 'fund_share'
+                records = df_filtered[['data_type', 'ts_code', 'trade_date', 'fd_share']].to_dict('records')
+
+                for record in records:
+                    data = self._clean_data(record)
+                    filtered_data.append(data)
+
+            if filtered_data:
+                success_count = self.db_manager.batch_insert_fund_share_data(
+                    filtered_data, batch_size=self.data_processor.batch_size
+                )
+                # 计算基本信息覆盖率
+                coverage_rate = found_count / len(unique_codes) * 100 if unique_codes else 0
+
+                self.logger.info(f"{trade_date}: API获取{original_count}条 -> 基本信息匹配{found_count}/{len(unique_codes)}({coverage_rate:.1f}%) -> 白名单过滤{len(filtered_data)}条 -> 入库{success_count}条")
+                return success_count
+            else:
+                coverage_rate = found_count / len(unique_codes) * 100 if unique_codes else 0
+                self.logger.warning(f"{trade_date}: API获取{original_count}条 -> 基本信息匹配{found_count}/{len(unique_codes)}({coverage_rate:.1f}%) -> 白名单过滤后无数据")
+                return 0
+
+        except Exception as e:
+            self.logger.error(f"获取{trade_date}基金规模数据失败: {e}")
+            return 0
 
     def _fetch_share_single_date(self, trade_date: str) -> int:
         """
@@ -648,8 +755,9 @@ class FundFetcher(BaseFetcher):
             original_count = len(df)
 
             # 【优化】批量获取基金管理公司信息用于过滤
+            # 注意：fund_share接口实际返回的是ETF基金，需要查询所有类型的基金基本信息
             unique_codes = df['ts_code'].unique().tolist()
-            basic_info_dict = self.db_manager.get_instruments_basic_batch(unique_codes, data_type='fund')
+            basic_info_dict = self.db_manager.get_instruments_basic_batch(unique_codes, data_type=None)
 
             # 构建白名单映射表
             whitelist_map = {}
@@ -677,10 +785,16 @@ class FundFetcher(BaseFetcher):
                 success_count = self.db_manager.batch_insert_fund_share_data(
                     filtered_data, batch_size=self.data_processor.batch_size
                 )
-                self.logger.debug(f"{trade_date}: 获取{original_count}条 -> 白名单过滤{len(filtered_data)}条 -> 成功{success_count}条")
+                # 计算基本信息覆盖率
+                found_count = len(basic_info_dict)
+                coverage_rate = found_count / len(unique_codes) * 100 if unique_codes else 0
+
+                self.logger.info(f"{trade_date}: API获取{original_count}条 -> 基本信息匹配{found_count}/{len(unique_codes)}({coverage_rate:.1f}%) -> 白名单过滤{len(filtered_data)}条 -> 入库{success_count}条")
                 return success_count
             else:
-                self.logger.debug(f"{trade_date}: 白名单过滤后无数据")
+                found_count = len(basic_info_dict)
+                coverage_rate = found_count / len(unique_codes) * 100 if unique_codes else 0
+                self.logger.warning(f"{trade_date}: API获取{original_count}条 -> 基本信息匹配{found_count}/{len(unique_codes)}({coverage_rate:.1f}%) -> 白名单过滤后无数据")
                 return 0
 
         except Exception as e:
