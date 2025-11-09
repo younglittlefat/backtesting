@@ -36,6 +36,26 @@ class FilterConfig:
     target_portfolio_size: int = 20  # 目标组合数量
     min_industries: int = 3  # 最少行业数量
 
+    # 新增：无偏指标配置（去偏差优化）
+    enable_unbiased_scoring: bool = True  # 是否启用无偏评分系统
+    trend_consistency_window: int = 63  # 趋势一致性计算窗口（3个月）
+    price_efficiency_window: int = 252  # 价格效率计算窗口（1年）
+    liquidity_score_window: int = 30  # 流动性评分计算窗口
+
+    # 评分权重配置
+    primary_weight: float = 0.80  # 主要指标（无偏）总权重
+    secondary_weight: float = 0.20  # 次要指标（动量）总权重
+
+    # 主要指标权重分配（相对于primary_weight）
+    adx_score_weight: float = 0.40  # ADX趋势强度
+    trend_consistency_weight: float = 0.30  # 趋势一致性
+    price_efficiency_weight: float = 0.20  # 价格效率
+    liquidity_score_weight: float = 0.10  # 流动性评分
+
+    # 次要指标权重分配（相对于secondary_weight）
+    momentum_3m_score_weight: float = 0.30  # 3个月动量
+    momentum_12m_score_weight: float = 0.70  # 12个月动量
+
     # 数据路径
     data_dir: str = 'data/csv'
 

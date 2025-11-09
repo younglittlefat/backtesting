@@ -96,11 +96,11 @@ def parse_arguments():
     )
     parser.add_argument(
         '--adx-percentile', type=float, default=80,
-        help='ADX筛选百分位数，保留前N%% (默认: 80%%)'
+        help='ADX筛选百分位数，保留前N%% (默认: 80，即保留前20%%)'
     )
     parser.add_argument(
         '--ret-dd-percentile', type=float, default=70,
-        help='收益回撤比筛选百分位数 (默认: 70%%)'
+        help='收益回撤比筛选百分位数 (默认: 70，即保留前30%%)'
     )
     parser.add_argument(
         '--disable-ma-filter', action='store_true',
@@ -125,6 +125,16 @@ def parse_arguments():
     parser.add_argument(
         '--max-correlation', type=float, default=0.7,
         help='组合优化最大相关系数阈值 (默认: 0.7)'
+    )
+
+    # 无偏评分参数
+    parser.add_argument(
+        '--enable-unbiased-scoring', action='store_true', default=True,
+        help='启用无偏评分系统 (默认: 启用)'
+    )
+    parser.add_argument(
+        '--disable-unbiased-scoring', action='store_true',
+        help='禁用无偏评分系统，回退到传统排序方式'
     )
 
     # 去重参数
@@ -230,6 +240,12 @@ def load_config(config_path: str = None, args: argparse.Namespace = None) -> Fil
         elif getattr(args, 'disable_ma_filter', False):
             config.enable_ma_backtest_filter = False
 
+        # 处理无偏评分参数
+        if getattr(args, 'disable_unbiased_scoring', False):
+            config.enable_unbiased_scoring = False
+        elif getattr(args, 'enable_unbiased_scoring', False):
+            config.enable_unbiased_scoring = True
+
     return config
 
 
@@ -256,6 +272,7 @@ def print_config_summary(config: FilterConfig, args: argparse.Namespace):
     print(f"  🌊 波动率范围: {config.min_volatility*100:.0f}% - {config.max_volatility*100:.0f}%")
     print(f"  🚀 动量要求: {'仅要求>0' if config.momentum_min_positive else '排名筛选'}")
     print(f"  📏 双均线过滤: {'启用' if config.enable_ma_backtest_filter else '禁用'}")
+    print(f"  🎯 无偏评分系统: {'启用 (动量权重20%)' if config.enable_unbiased_scoring else '禁用 (传统排序)'}")
     print(f"  🔗 最大相关性: {args.max_correlation}")
     print(f"  📈 双均线参数: MA({config.ma_short}, {config.ma_long})")
     print()

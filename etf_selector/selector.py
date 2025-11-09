@@ -18,6 +18,8 @@ from .config import FilterConfig, IndustryKeywords
 from .data_loader import ETFDataLoader
 from .indicators import calculate_rolling_adx_mean, calculate_volatility, calculate_momentum
 from .backtest_engine import calculate_backtest_metrics
+from .unbiased_indicators import calculate_all_unbiased_indicators
+from .scoring import UnbiasedScorer, ScoringWeights, calculate_etf_scores
 
 
 class TrendETFSelector:
@@ -290,6 +292,26 @@ class TrendETFSelector:
                 momentum_3m = momentum.get('63d', np.nan)
                 momentum_12m = momentum.get('252d', np.nan)
 
+                # 5. 新增：无偏指标计算
+                unbiased_indicators = {}
+                if self.config.enable_unbiased_scoring:
+                    try:
+                        unbiased_indicators = calculate_all_unbiased_indicators(
+                            close=data['adj_close'],
+                            volume=data['volume'],
+                            trend_window=self.config.trend_consistency_window,
+                            efficiency_window=self.config.price_efficiency_window,
+                            liquidity_window=self.config.liquidity_score_window
+                        )
+                    except Exception as e:
+                        if verbose:
+                            warnings.warn(f"计算 {ts_code} 无偏指标时出错: {e}")
+                        unbiased_indicators = {
+                            'trend_consistency': np.nan,
+                            'price_efficiency': np.nan,
+                            'liquidity_score': np.nan
+                        }
+
                 # 应用筛选条件
                 # 波动率范围检查
                 if volatility < self.config.min_volatility or volatility > self.config.max_volatility:
@@ -316,6 +338,10 @@ class TrendETFSelector:
                     'volatility': volatility,
                     'momentum_3m': momentum_3m,
                     'momentum_12m': momentum_12m,
+                    # 新增无偏指标
+                    'trend_consistency': unbiased_indicators.get('trend_consistency', np.nan),
+                    'price_efficiency': unbiased_indicators.get('price_efficiency', np.nan),
+                    'liquidity_score': unbiased_indicators.get('liquidity_score', np.nan),
                 })
 
             except Exception as e:
@@ -356,10 +382,39 @@ class TrendETFSelector:
         if use_ma_filter:
             df = df.sort_values('return_dd_ratio', ascending=False).reset_index(drop=True)
         else:
-            sort_columns = ['adx_mean', 'momentum_12m', 'momentum_3m']
-            df = df.sort_values(
-                by=sort_columns, ascending=[False, False, False], na_position='last'
-            ).reset_index(drop=True)
+            # 使用无偏评分系统排序
+            if self.config.enable_unbiased_scoring:
+                # 创建评分器
+                scoring_weights = ScoringWeights(
+                    primary_weight=self.config.primary_weight,
+                    adx_weight=self.config.adx_score_weight,
+                    trend_consistency_weight=self.config.trend_consistency_weight,
+                    price_efficiency_weight=self.config.price_efficiency_weight,
+                    liquidity_weight=self.config.liquidity_score_weight,
+                    secondary_weight=self.config.secondary_weight,
+                    momentum_3m_weight=self.config.momentum_3m_score_weight,
+                    momentum_12m_weight=self.config.momentum_12m_score_weight
+                )
+                scorer = UnbiasedScorer(scoring_weights)
+
+                # 计算综合评分并排序
+                df = calculate_etf_scores(
+                    df,
+                    scorer=scorer,
+                    normalize_method='percentile'  # 使用百分位标准化
+                )
+
+                if verbose:
+                    print(f"  🎯 启用无偏评分系统：主要指标{self.config.primary_weight:.0%} + 次要指标{self.config.secondary_weight:.0%}")
+            else:
+                # 回退到原有的动量排序（仅当禁用无偏评分时）
+                sort_columns = ['adx_mean', 'momentum_12m', 'momentum_3m']
+                df = df.sort_values(
+                    by=sort_columns, ascending=[False, False, False], na_position='last'
+                ).reset_index(drop=True)
+
+                if verbose:
+                    print("  ⚠️ 使用传统排序方式（存在选择性偏差风险）")
 
         # 添加排名信息
         df['stage2_rank'] = range(1, len(df) + 1)
@@ -369,12 +424,20 @@ class TrendETFSelector:
             if len(df) > 0:
                 print(f"  📊 ADX均值范围: {df['adx_mean'].min():.1f} ~ {df['adx_mean'].max():.1f}")
                 print(f"  📊 波动率范围: {df['volatility'].min():.1%} ~ {df['volatility'].max():.1%}")
+
+                # 显示无偏指标统计
+                if self.config.enable_unbiased_scoring and 'final_score' in df.columns:
+                    print(f"  📊 趋势一致性: {df['trend_consistency'].min():.2f} ~ {df['trend_consistency'].max():.2f}")
+                    print(f"  📊 价格效率: {df['price_efficiency'].min():.2f} ~ {df['price_efficiency'].max():.2f}")
+                    print(f"  📊 综合评分: {df['final_score'].min():.2f} ~ {df['final_score'].max():.2f}")
+                    print(f"  📊 已将动量指标权重降至{self.config.secondary_weight:.0%}，减少选择性偏差")
+
                 if use_ma_filter:
                     print(
                         f"  📊 收益回撤比范围: "
                         f"{df['return_dd_ratio'].min():.2f} ~ {df['return_dd_ratio'].max():.2f}"
                     )
-                else:
+                elif not self.config.enable_unbiased_scoring:
                     print("  📊 已禁用收益回撤比排名，结果按ADX+动量排序")
 
         return df.to_dict('records')
@@ -401,6 +464,11 @@ class TrendETFSelector:
         # 确保输出目录存在
         output_path = Path(output_path)
         output_path.parent.mkdir(parents=True, exist_ok=True)
+
+        # 格式化浮点数列为5位小数
+        float_columns = df.select_dtypes(include=['float64', 'float32']).columns
+        for col in float_columns:
+            df[col] = df[col].apply(lambda x: f'{x:.5f}' if pd.notna(x) else '')
 
         # 导出CSV（直接使用指定的路径，不添加时间戳）
         df.to_csv(output_path, index=False, encoding='utf-8-sig')

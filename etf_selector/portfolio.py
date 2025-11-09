@@ -217,8 +217,12 @@ class PortfolioOptimizer:
         1. 找出所有相关性>阈值的ETF对
         2. 在高相关ETF中，优先保留：
            - 不同行业的ETF（提升分散度）
-           - 收益回撤比更高的ETF（质量优先）
+           - 质量指标更高的ETF（优先使用return_dd_ratio，无偏模式下使用final_score）
         3. 返回去重后的ETF列表
+
+        **兼容性**:
+        - 启用双均线回测时：使用 return_dd_ratio 作为质量指标
+        - 无偏评分模式时：使用 final_score 作为质量指标
 
         Args:
             etf_candidates: ETF候选列表
@@ -263,12 +267,26 @@ class PortfolioOptimizer:
 
             # 决策逻辑：
             # 1. 优先保留不同行业的（提升行业分散度）
-            # 2. 同行业则保留收益回撤比更高的
+            # 2. 同行业则保留质量指标更高的（优先使用return_dd_ratio，无偏模式下使用final_score）
 
             industry_i = etf_i.get('industry', '其他')
             industry_j = etf_j.get('industry', '其他')
-            ret_dd_i = etf_i.get('return_dd_ratio', 0)
-            ret_dd_j = etf_j.get('return_dd_ratio', 0)
+            ret_dd_i = etf_i.get('return_dd_ratio', np.nan)
+            ret_dd_j = etf_j.get('return_dd_ratio', np.nan)
+
+            # 如果return_dd_ratio都是nan，使用final_score作为后备
+            if pd.isna(ret_dd_i) and pd.isna(ret_dd_j):
+                ret_dd_i = etf_i.get('final_score', 0)
+                ret_dd_j = etf_j.get('final_score', 0)
+                metric_name = "评分"  # 用于日志输出
+            elif pd.isna(ret_dd_i):
+                ret_dd_i = -999  # 无效值排后
+                metric_name = "收益回撤比"
+            elif pd.isna(ret_dd_j):
+                ret_dd_j = -999
+                metric_name = "收益回撤比"
+            else:
+                metric_name = "收益回撤比"
 
             if industry_i != industry_j:
                 # 不同行业，检查已选行业分布，选择稀缺行业的ETF
@@ -297,17 +315,17 @@ class PortfolioOptimizer:
                     else:
                         to_remove.add(etf_i['ts_code'])
             else:
-                # 同行业，直接按收益回撤比选择
+                # 同行业，直接按质量指标选择
                 if ret_dd_i >= ret_dd_j:
                     to_remove.add(etf_j['ts_code'])
                     if verbose:
-                        print(f"    移除 {etf_j['ts_code']} (收益回撤比:{ret_dd_j:.3f}) "
-                              f"保留 {etf_i['ts_code']} (收益回撤比:{ret_dd_i:.3f})")
+                        print(f"    移除 {etf_j['ts_code']} ({metric_name}:{ret_dd_j:.3f}) "
+                              f"保留 {etf_i['ts_code']} ({metric_name}:{ret_dd_i:.3f})")
                 else:
                     to_remove.add(etf_i['ts_code'])
                     if verbose:
-                        print(f"    移除 {etf_i['ts_code']} (收益回撤比:{ret_dd_i:.3f}) "
-                              f"保留 {etf_j['ts_code']} (收益回撤比:{ret_dd_j:.3f})")
+                        print(f"    移除 {etf_i['ts_code']} ({metric_name}:{ret_dd_i:.3f}) "
+                              f"保留 {etf_j['ts_code']} ({metric_name}:{ret_dd_j:.3f})")
 
         # 返回去重后的ETF列表
         deduplicated = [etf for etf in etf_candidates if etf['ts_code'] not in to_remove]
@@ -436,10 +454,14 @@ class PortfolioOptimizer:
         """贪心算法选择低相关性ETF组合
 
         算法逻辑：
-        1. 选择收益回撤比最高的ETF作为起点
+        1. 选择排名第一且在相关性矩阵中的ETF作为起点
         2. 依次选择与已选ETF相关性最低的候选ETF
         3. 如果相关性超过阈值，跳过该ETF
         4. 重复直到达到目标数量
+
+        **鲁棒性改进**:
+        - 确保初始ETF在相关性矩阵中（修复初始化失败bug）
+        - 提供降级策略：相关性矩阵不完整时直接截取前N个ETF
 
         Args:
             etf_candidates: ETF候选列表（已按收益回撤比排序）
@@ -452,16 +474,27 @@ class PortfolioOptimizer:
         """
         selected = []
 
-        # 第一步：选择排名第一的ETF作为起点
-        if etf_candidates[0]['ts_code'] in correlation_matrix.index:
-            selected.append(etf_candidates[0])
+        # 第一步：找到第一个在相关性矩阵中的ETF作为起点
+        for etf in etf_candidates:
+            if etf['ts_code'] in correlation_matrix.index:
+                selected.append(etf)
+                break
+
+        # 如果没有找到有效ETF，直接返回（降级策略）
+        if len(selected) == 0:
+            # 返回前target_size个ETF（相关性筛选失败时的降级方案）
+            return etf_candidates[:target_size]
 
         # 第二步：贪心选择剩余ETF
-        for etf in etf_candidates[1:]:
+        for etf in etf_candidates:
             if len(selected) >= target_size:
                 break
 
             ts_code = etf['ts_code']
+
+            # 跳过已选择的ETF
+            if any(s['ts_code'] == ts_code for s in selected):
+                continue
 
             # 检查该ETF是否在相关性矩阵中
             if ts_code not in correlation_matrix.index:

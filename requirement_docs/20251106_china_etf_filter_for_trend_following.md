@@ -1228,3 +1228,304 @@ python -m etf_selector.main \
 - 🔄 每季度重新分析流动性分布，根据市场变化动态调整参数
 
 ---
+
+## 12. 去偏差优化方案 🔧
+
+**发现日期**: 2025-11-08
+**问题类型**: 选择性偏差（Look-ahead Bias）
+**严重程度**: 🔴 高风险
+
+### 12.1 问题识别与分析
+
+#### 12.1.1 核心问题：先画靶再射箭
+
+当前筛选系统存在典型的**选择性偏差**问题，在排序和筛选中使用了直接暴露历史收益水平的指标：
+
+| 指标 | 偏差类型 | 严重程度 | 代码位置 |
+|------|---------|---------|---------|
+| **momentum_3m** | 🔴 直接暴露3个月收益率 | 极高 | `selector.py:289-291, 359` |
+| **momentum_12m** | 🔴 直接暴露12个月收益率 | 极高 | `selector.py:289-291, 359` |
+| **return_dd_ratio** | 🔴 基于策略回测结果排序 | 极高 | `selector.py:355-357` |
+| **volatility** | 🟡 间接暴露价格变动幅度 | 较低 | `selector.py:279-282` |
+
+#### 12.1.2 当前排序逻辑的问题
+
+**有偏差的排序方式**:
+```python
+# 情况1: 禁用双均线回测时 - 仍按动量排序
+sort_columns = ['adx_mean', 'momentum_12m', 'momentum_3m']  # ❌ 暴露历史收益
+
+# 情况2: 启用双均线回测时 - 按历史策略表现排序
+df.sort_values('return_dd_ratio', ascending=False)  # ❌ 基于回测结果
+```
+
+**偏差后果**:
+- 🎯 相当于挑选"过去表现好的ETF"，而非"未来适合趋势策略的ETF"
+- 📈 过度拟合历史数据，样本外表现可能大幅下降
+- ⚠️ 策略的实际有效性被夸大
+
+### 12.2 一期优化方案（立即实施）⭐⭐⭐
+
+#### 12.2.1 新增无偏指标
+
+**1. 趋势一致性评分 (Trend Consistency Score)**
+
+**定义**: 衡量价格趋势的稳定性和一致性，不依赖具体涨跌幅
+
+**计算方法**:
+```python
+def calculate_trend_consistency(close: pd.Series, window: int = 63) -> float:
+    """
+    计算趋势一致性评分
+
+    Args:
+        close: 收盘价序列
+        window: 计算窗口，默认63天（3个月）
+
+    Returns:
+        趋势一致性评分 (0-1)，值越高表示趋势越一致
+    """
+    # 方法1: 连续同向天数占比
+    returns = close.pct_change().dropna()
+    positive_days = (returns > 0).rolling(window).sum()
+    consistency_ratio = (positive_days / window - 0.5).abs() * 2
+
+    # 方法2: 价格单调性评分
+    price_ranks = close.rolling(window).apply(
+        lambda x: np.sum(x.iloc[-1] >= x.iloc[:-1]) / (len(x) - 1)
+    )
+
+    # 综合评分
+    trend_consistency = (consistency_ratio + price_ranks).mean() / 2
+    return float(trend_consistency.iloc[-1])
+```
+
+**2. 价格发现效率 (Price Efficiency Score)**
+
+**定义**: 基于价量关系评估ETF价格发现的有效性
+
+**计算方法**:
+```python
+def calculate_price_efficiency(close: pd.Series, volume: pd.Series, window: int = 252) -> float:
+    """
+    计算价格发现效率
+
+    Args:
+        close: 收盘价序列
+        volume: 成交量序列
+        window: 计算窗口，默认252天
+
+    Returns:
+        价格效率评分 (0-1)，值越高表示价格发现越有效
+    """
+    returns = close.pct_change().dropna()
+    volume_aligned = volume.iloc[1:]  # 对齐长度
+
+    # 1. 成交量与收益率相关性（绝对值）
+    volume_return_corr = abs(returns.rolling(window).corr(volume_aligned))
+
+    # 2. 价格跳跃频率（低跳跃 = 高效率）
+    price_jumps = (returns.abs() > returns.rolling(20).std() * 2)
+    jump_frequency = price_jumps.rolling(window).mean()
+    jump_efficiency = 1 - jump_frequency
+
+    # 3. 买卖价差代理（基于日内波动）
+    daily_range = (close.rolling(window).max() - close.rolling(window).min()) / close
+    spread_efficiency = 1 / (1 + daily_range)
+
+    # 综合评分
+    efficiency_score = (
+        volume_return_corr * 0.4 +
+        jump_efficiency * 0.3 +
+        spread_efficiency * 0.3
+    )
+
+    return float(efficiency_score.iloc[-1])
+```
+
+#### 12.2.2 修改排序权重
+
+**新的排序逻辑**:
+```python
+# 主要指标：纯技术指标，不暴露收益
+primary_score = (
+    adx_mean * 0.4 +                    # ADX趋势强度 40%
+    trend_consistency * 0.3 +           # 趋势一致性 30%
+    price_efficiency * 0.2 +            # 价格效率 20%
+    liquidity_score * 0.1               # 流动性评分 10%
+)
+
+# 次要指标：动量，权重大幅降低
+secondary_score = (
+    momentum_3m * 0.3 +                 # 3个月动量 30%
+    momentum_12m * 0.7                  # 12个月动量 70%
+)
+
+# 综合评分：主要指标占80%，次要指标占20%
+final_score = primary_score * 0.8 + secondary_score * 0.2
+```
+
+#### 12.2.3 实施文件清单
+
+**新增文件**:
+- `etf_selector/unbiased_indicators.py` - 无偏指标计算模块
+- `etf_selector/scoring.py` - 综合评分算法
+
+**修改文件**:
+- `etf_selector/selector.py` - 更新排序逻辑
+- `etf_selector/config.py` - 添加新指标配置参数
+
+### 12.3 二期优化方案（后续实施）⭐⭐
+
+#### 12.3.1 其他无偏指标
+
+**1. 成交量活跃度评分**
+```python
+def calculate_volume_activity_score(volume: pd.Series, sector_volumes: pd.DataFrame) -> float:
+    """基于同行业相对排名的成交量活跃度"""
+    pass
+```
+
+**2. 结构性强度指标**
+```python
+def calculate_structural_strength(ohlc_data: pd.DataFrame) -> float:
+    """基于支撑阻力位清晰度的结构评分"""
+    pass
+```
+
+**3. 行业内技术领导力**
+```python
+def calculate_sector_technical_leadership(etf_code: str, sector_etfs: List[str]) -> float:
+    """ETF在同行业内的技术指标排名"""
+    pass
+```
+
+#### 12.3.2 时间分段验证框架
+
+**核心思路**: 将筛选期和验证期彻底分离
+```python
+# 参数配置示例
+SELECTION_PERIOD = "2022-01-01" to "2023-12-31"  # 仅用于计算筛选指标
+VALIDATION_PERIOD = "2024-01-01" to "2024-12-31"  # 仅用于策略验证
+```
+
+### 12.4 实施计划和Todo
+
+#### 12.4.1 一期实施计划 ✅ **已完成 (2025-11-08)**
+
+**Week 1: 指标开发** ✅
+- [x] 开发 `trend_consistency` 指标算法
+- [x] 开发 `price_efficiency` 指标算法
+- [x] 创建 `etf_selector/unbiased_indicators.py` 模块
+- [x] 单元测试验证指标正确性
+
+**Week 2: 集成和测试** ✅
+- [x] 修改 `selector.py` 排序逻辑，降低动量权重至20%
+- [x] 集成新指标到主筛选流程
+- [x] 创建 `etf_selector/scoring.py` 综合评分模块
+- [x] 创建测试脚本 `test_unbiased_optimization.py`
+
+**一期成果**:
+- **新增文件**:
+  - `etf_selector/unbiased_indicators.py` - 实现3个无偏指标（趋势一致性、价格效率、流动性评分）
+  - `etf_selector/scoring.py` - 综合评分算法（主要指标80% + 次要指标20%）
+  - `test_unbiased_optimization.py` - 5项自动化测试，全部通过 ✅
+- **修改文件**:
+  - `etf_selector/config.py` - 新增12个配置参数
+  - `etf_selector/selector.py` - 集成无偏评分系统，支持新旧模式切换
+- **测试结果**: 5/5 通过（无偏指标计算、评分系统、批量评分、选择器集成、配置验证）
+
+**使用方式**:
+```bash
+# 启用无偏评分系统（默认已启用，无需额外参数）
+python -m etf_selector.main \
+  --target-size 20 \
+  --min-turnover 500000 \
+  --min-volatility 0.15 \
+  --max-volatility 0.80 \
+  --adx-percentile 70 \
+  --momentum-min-positive
+
+# 禁用无偏评分（回退到旧版，使用动量排序）
+python -m etf_selector.main \
+  --target-size 20 \
+  --min-turnover 500000 \
+  --disable-unbiased-scoring
+```
+
+**参数说明（无偏评分模式）**:
+
+| 参数 | 是否需要 | 说明 |
+|------|---------|------|
+| `--min-volatility` / `--max-volatility` | ✅ **需要** | 第二级筛选条件，过滤不合适波动率的标的 |
+| `--adx-percentile` | ✅ **需要** | ADX百分位筛选，保留趋势强度高的标的 |
+| `--momentum-min-positive` | ✅ **需要** | 动量筛选条件，要求3个月动量为正 |
+| `--ret-dd-percentile` | ❌ **不需要** | 仅在启用双均线回测时使用，无偏模式下无效 |
+| `--enable-ma-backtest-filter` | ❌ **不推荐** | 会引入收益偏差，与无偏评分理念冲突 |
+
+**核心变化**:
+- ✅ **保留**: 波动率、ADX、动量筛选 - 作为基础过滤条件
+- ❌ **移除**: 收益回撤比筛选 - 避免选择性偏差
+- 🆕 **新增**: 趋势一致性、价格效率等无偏指标用于排序
+
+**工作流程**:
+1. **第一级**: 流动性 + 上市时间筛选
+2. **第二级**: 波动率 + ADX百分位 + 动量 → 基础过滤
+3. **第二级**: 计算无偏指标（趋势一致性、价格效率、流动性评分）
+4. **第二级**: 综合评分排序（主要指标80% + 次要指标20%）
+5. **第三级**: 相关性优化 + 智能去重
+
+#### 12.4.2 二期规划（1个月内完成）
+
+**Phase 2A: 更多无偏指标**
+- [ ] 成交量活跃度评分
+- [ ] 结构性强度指标
+- [ ] 行业内技术领导力
+
+**Phase 2B: 验证框架优化**
+- [ ] 时间分段验证框架
+- [ ] 随机抽样验证方法
+- [ ] Out-of-sample测试工具
+
+#### 12.4.3 验证和部署（持续）
+
+**效果验证**:
+- [ ] A/B测试：新旧筛选方案对比
+- [ ] 样本外回测验证
+- [ ] 长期跟踪新方案有效性
+
+**参数调优**:
+- [ ] 各指标权重动态调整
+- [ ] 阈值参数实战优化
+- [ ] 季度评估和参数更新
+
+### 12.5 预期收益
+
+#### 12.5.1 风险控制
+- 🎯 **消除选择性偏差**: 避免"先画靶再射箭"的过拟合问题
+- 📊 **提升样本外表现**: 基于技术指标的筛选更具前瞻性
+- ⚖️ **增强稳健性**: 降低对历史特定时期表现的依赖
+
+#### 12.5.2 性能提升预期
+- **短期**: 筛选结果更加均衡，避免追涨杀跌
+- **中期**: 样本外回测表现更稳定，回撤控制更好
+- **长期**: 策略适应性增强，不易因市场风格切换失效
+
+#### 12.5.3 风险提示
+- ⚠️ **新指标验证期**: 需要至少3-6个月的跟踪验证
+- 📉 **短期性能可能下降**: 去偏差可能导致短期收益率略微下降
+- 🔄 **需要持续调优**: 新指标权重和阈值需要根据效果动态调整
+
+### 12.6 成功标准
+
+**定量指标**:
+- 筛选ETF的样本外回测收益 ≥ 样本内回测收益的80%
+- 动量指标在最终评分中的权重 ≤ 20%
+- 新增无偏指标数量 ≥ 2个
+
+**定性指标**:
+- 筛选逻辑更符合前瞻性原则
+- 减少对历史收益率的直接依赖
+- 提升策略的长期适应能力
+
+---

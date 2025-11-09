@@ -1,24 +1,24 @@
 {
   "sma_cross": {
     "optimized": true,
-    "optimization_date": "2025-11-08 11:18:36",
+    "optimization_date": "2025-11-09 10:08:01",
     "optimization_period": null,
-    "stock_pool": "全局稳健优化 (共10只标的)",
+    "stock_pool": "全局稳健优化 (共20只标的)",
     "params": {
       "n1": 10,
       "n2": 20
     },
     "performance": {
-      "sharpe_ratio": 2.137673847686184,
-      "annual_return": 64.00000638793904,
+      "sharpe_ratio": 2.1954253177198417,
+      "annual_return": 71.87107531828929,
       "max_drawdown": -6.523860798642933,
-      "return_pct": 38.79591628102105,
-      "median_sharpe": 1.2027531552347237,
-      "avg_sharpe": 1.4298829865146108,
+      "return_pct": 44.41153890992962,
+      "median_sharpe": 1.0520479706689896,
+      "avg_sharpe": 1.1489335613349885,
       "win_rate": 1.0,
-      "sharpe_std": 0.4042073954910363,
-      "robustness_score": 1.429652445099519
+      "sharpe_std": 0.4259343392989468,
+      "robustness_score": 1.3041857918261122
     },
-    "notes": "全局稳健参数优化 (综合评分=1.4297)\n中位数夏普=1.2028, 平均夏普=1.4299, 胜率=100.0%, 稳定性(标准差)=0.4042"
+    "notes": "全局稳健参数优化 (综合评分=1.3042)\n中位数夏普=1.0520, 平均夏普=1.1489, 胜率=100.0%, 稳定性(标准差)=0.4259"
   }
 }
