@@ -215,43 +215,87 @@ class SignalGenerator:
 
             # 获取策略实例
             strategy = stats._strategy
-
-            # 获取最新的指标值
-            sma_short = strategy.sma1[-1]
-            sma_long = strategy.sma2[-1]
             current_price = df['Close'].iloc[-1]
-
-            # 获取前一天的指标值（用于检测交叉）
-            sma_short_prev = strategy.sma1[-2] if len(strategy.sma1) > 1 else sma_short
-            sma_long_prev = strategy.sma2[-2] if len(strategy.sma2) > 1 else sma_long
-
             result['price'] = current_price
-            result['sma_short'] = sma_short
-            result['sma_long'] = sma_long
 
-            # 计算信号强度（均线差值的百分比）
-            signal_strength = ((sma_short - sma_long) / sma_long) * 100
-            result['signal_strength'] = signal_strength
+            # 检测策略类型并获取相应的指标
+            if hasattr(strategy, 'macd_line') and hasattr(strategy, 'signal_line'):
+                # MACD策略
+                macd_line = strategy.macd_line[-1]
+                signal_line = strategy.signal_line[-1]
+                macd_line_prev = strategy.macd_line[-2] if len(strategy.macd_line) > 1 else macd_line
+                signal_line_prev = strategy.signal_line[-2] if len(strategy.signal_line) > 1 else signal_line
 
-            # 判断信号
-            # 金叉：短期均线从下方穿过长期均线
-            if sma_short_prev <= sma_long_prev and sma_short > sma_long:
-                result['signal'] = 'BUY'
-                result['message'] = f'金叉买入信号！短期均线({strategy.n1}日)上穿长期均线({strategy.n2}日)'
-            # 死叉：短期均线从上方穿过长期均线
-            elif sma_short_prev >= sma_long_prev and sma_short < sma_long:
-                result['signal'] = 'SELL'
-                result['message'] = f'死叉卖出信号！短期均线({strategy.n1}日)下穿长期均线({strategy.n2}日)'
-            # 持有状态
-            elif sma_short > sma_long:
-                result['signal'] = 'HOLD_LONG'
-                result['message'] = f'持有多头。短期均线在长期均线上方（{signal_strength:.2f}%）'
+                result['sma_short'] = macd_line  # 兼容性：用macd_line代替
+                result['sma_long'] = signal_line  # 兼容性：用signal_line代替
+
+                # 计算信号强度
+                signal_strength = macd_line - signal_line  # MACD柱状图值
+                result['signal_strength'] = signal_strength
+
+                # 判断信号
+                # 金叉：MACD线从下方穿过信号线
+                if macd_line_prev <= signal_line_prev and macd_line > signal_line:
+                    result['signal'] = 'BUY'
+                    fast = getattr(strategy, 'fast_period', 12)
+                    slow = getattr(strategy, 'slow_period', 26)
+                    sig = getattr(strategy, 'signal_period', 9)
+                    result['message'] = f'MACD金叉买入信号！MACD({fast},{slow},{sig})线上穿信号线'
+                # 死叉：MACD线从上方穿过信号线
+                elif macd_line_prev >= signal_line_prev and macd_line < signal_line:
+                    result['signal'] = 'SELL'
+                    fast = getattr(strategy, 'fast_period', 12)
+                    slow = getattr(strategy, 'slow_period', 26)
+                    sig = getattr(strategy, 'signal_period', 9)
+                    result['message'] = f'MACD死叉卖出信号！MACD({fast},{slow},{sig})线下穿信号线'
+                # 持有状态
+                elif macd_line > signal_line:
+                    result['signal'] = 'HOLD_LONG'
+                    result['message'] = f'持有多头。MACD线在信号线上方（柱状图: {signal_strength:.4f}）'
+                else:
+                    result['signal'] = 'HOLD_SHORT'
+                    result['message'] = f'持有空头。MACD线在信号线下方（柱状图: {signal_strength:.4f}）'
+
+            elif hasattr(strategy, 'sma1') and hasattr(strategy, 'sma2'):
+                # SMA策略
+                sma_short = strategy.sma1[-1]
+                sma_long = strategy.sma2[-1]
+
+                # 获取前一天的指标值（用于检测交叉）
+                sma_short_prev = strategy.sma1[-2] if len(strategy.sma1) > 1 else sma_short
+                sma_long_prev = strategy.sma2[-2] if len(strategy.sma2) > 1 else sma_long
+
+                result['sma_short'] = sma_short
+                result['sma_long'] = sma_long
+
+                # 计算信号强度（均线差值的百分比）
+                signal_strength = ((sma_short - sma_long) / sma_long) * 100
+                result['signal_strength'] = signal_strength
+
+                # 判断信号
+                # 金叉：短期均线从下方穿过长期均线
+                if sma_short_prev <= sma_long_prev and sma_short > sma_long:
+                    result['signal'] = 'BUY'
+                    result['message'] = f'金叉买入信号！短期均线({strategy.n1}日)上穿长期均线({strategy.n2}日)'
+                # 死叉：短期均线从上方穿过长期均线
+                elif sma_short_prev >= sma_long_prev and sma_short < sma_long:
+                    result['signal'] = 'SELL'
+                    result['message'] = f'死叉卖出信号！短期均线({strategy.n1}日)下穿长期均线({strategy.n2}日)'
+                # 持有状态
+                elif sma_short > sma_long:
+                    result['signal'] = 'HOLD_LONG'
+                    result['message'] = f'持有多头。短期均线在长期均线上方（{signal_strength:.2f}%）'
+                else:
+                    result['signal'] = 'HOLD_SHORT'
+                    result['message'] = f'持有空头。短期均线在长期均线下方（{signal_strength:.2f}%）'
             else:
-                result['signal'] = 'HOLD_SHORT'
-                result['message'] = f'持有空头。短期均线在长期均线下方（{signal_strength:.2f}%）'
+                # 未知策略类型
+                result['message'] = f'不支持的策略类型: {self.strategy_class.__name__}'
 
         except Exception as e:
             result['message'] = f'策略运行失败: {e}'
+            import traceback
+            warnings.warn(f"详细错误信息:\n{traceback.format_exc()}")
 
         return result
 
@@ -331,9 +375,18 @@ class SignalGenerator:
                 else:
                     self.lookback_start_date = str(adj_df.index[0])
 
-            if len(adj_df) < max(self.strategy_params.get('n1', 10),
-                                self.strategy_params.get('n2', 20)) + 10:
-                result['message'] = '数据点不足，无法计算均线'
+            # 检查数据是否充足（根据策略类型判断）
+            min_data_points = 50  # 默认最小数据点
+            if hasattr(self.strategy_class, 'slow_period'):
+                # MACD策略
+                min_data_points = self.strategy_params.get('slow_period', 26) + 10
+            elif 'n2' in self.strategy_params:
+                # SMA策略
+                min_data_points = max(self.strategy_params.get('n1', 10),
+                                    self.strategy_params.get('n2', 20)) + 10
+
+            if len(adj_df) < min_data_points:
+                result['message'] = '数据点不足，无法计算指标'
                 return result
 
             # 使用复权价格运行回测以获取策略状态（信号计算）
@@ -354,42 +407,85 @@ class SignalGenerator:
             # 获取策略实例
             strategy = stats._strategy
 
-            # 获取最新的指标值（基于复权价格）
-            sma_short = strategy.sma1[-1]
-            sma_long = strategy.sma2[-1]
-
-            # 获取前一天的指标值（用于检测交叉）
-            sma_short_prev = strategy.sma1[-2] if len(strategy.sma1) > 1 else sma_short
-            sma_long_prev = strategy.sma2[-2] if len(strategy.sma2) > 1 else sma_long
-
             # 设置价格信息
             result['adj_price'] = price_mapping['latest_adj_price']     # 复权价格
             result['real_price'] = price_mapping['latest_real_price']   # 原始价格
             result['price'] = price_mapping['latest_real_price']        # 兼容性（等于原始价格）
             result['adj_factor'] = price_mapping['adj_factor']
-            result['sma_short'] = sma_short
-            result['sma_long'] = sma_long
 
-            # 计算信号强度（均线差值的百分比）
-            signal_strength = ((sma_short - sma_long) / sma_long) * 100
-            result['signal_strength'] = signal_strength
+            # 检测策略类型并获取相应的指标
+            if hasattr(strategy, 'macd_line') and hasattr(strategy, 'signal_line'):
+                # MACD策略
+                macd_line = strategy.macd_line[-1]
+                signal_line = strategy.signal_line[-1]
+                macd_line_prev = strategy.macd_line[-2] if len(strategy.macd_line) > 1 else macd_line
+                signal_line_prev = strategy.signal_line[-2] if len(strategy.signal_line) > 1 else signal_line
 
-            # 判断信号（基于复权价格的均线）
-            # 金叉：短期均线从下方穿过长期均线
-            if sma_short_prev <= sma_long_prev and sma_short > sma_long:
-                result['signal'] = 'BUY'
-                result['message'] = f'金叉买入信号！短期均线({strategy.n1}日)上穿长期均线({strategy.n2}日)'
-            # 死叉：短期均线从上方穿过长期均线
-            elif sma_short_prev >= sma_long_prev and sma_short < sma_long:
-                result['signal'] = 'SELL'
-                result['message'] = f'死叉卖出信号！短期均线({strategy.n1}日)下穿长期均线({strategy.n2}日)'
-            # 持有状态
-            elif sma_short > sma_long:
-                result['signal'] = 'HOLD_LONG'
-                result['message'] = f'持有多头。短期均线在长期均线上方（{signal_strength:.2f}%）'
+                result['sma_short'] = macd_line  # 兼容性：用macd_line代替
+                result['sma_long'] = signal_line  # 兼容性：用signal_line代替
+
+                # 计算信号强度
+                signal_strength = macd_line - signal_line  # MACD柱状图值
+                result['signal_strength'] = signal_strength
+
+                # 判断信号
+                # 金叉：MACD线从下方穿过信号线
+                if macd_line_prev <= signal_line_prev and macd_line > signal_line:
+                    result['signal'] = 'BUY'
+                    fast = getattr(strategy, 'fast_period', 12)
+                    slow = getattr(strategy, 'slow_period', 26)
+                    sig = getattr(strategy, 'signal_period', 9)
+                    result['message'] = f'MACD金叉买入信号！MACD({fast},{slow},{sig})线上穿信号线'
+                # 死叉：MACD线从上方穿过信号线
+                elif macd_line_prev >= signal_line_prev and macd_line < signal_line:
+                    result['signal'] = 'SELL'
+                    fast = getattr(strategy, 'fast_period', 12)
+                    slow = getattr(strategy, 'slow_period', 26)
+                    sig = getattr(strategy, 'signal_period', 9)
+                    result['message'] = f'MACD死叉卖出信号！MACD({fast},{slow},{sig})线下穿信号线'
+                # 持有状态
+                elif macd_line > signal_line:
+                    result['signal'] = 'HOLD_LONG'
+                    result['message'] = f'持有多头。MACD线在信号线上方（柱状图: {signal_strength:.4f}）'
+                else:
+                    result['signal'] = 'HOLD_SHORT'
+                    result['message'] = f'持有空头。MACD线在信号线下方（柱状图: {signal_strength:.4f}）'
+
+            elif hasattr(strategy, 'sma1') and hasattr(strategy, 'sma2'):
+                # SMA策略
+                sma_short = strategy.sma1[-1]
+                sma_long = strategy.sma2[-1]
+
+                # 获取前一天的指标值（用于检测交叉）
+                sma_short_prev = strategy.sma1[-2] if len(strategy.sma1) > 1 else sma_short
+                sma_long_prev = strategy.sma2[-2] if len(strategy.sma2) > 1 else sma_long
+
+                result['sma_short'] = sma_short
+                result['sma_long'] = sma_long
+
+                # 计算信号强度（均线差值的百分比）
+                signal_strength = ((sma_short - sma_long) / sma_long) * 100
+                result['signal_strength'] = signal_strength
+
+                # 判断信号（基于复权价格的均线）
+                # 金叉：短期均线从下方穿过长期均线
+                if sma_short_prev <= sma_long_prev and sma_short > sma_long:
+                    result['signal'] = 'BUY'
+                    result['message'] = f'金叉买入信号！短期均线({strategy.n1}日)上穿长期均线({strategy.n2}日)'
+                # 死叉：短期均线从上方穿过长期均线
+                elif sma_short_prev >= sma_long_prev and sma_short < sma_long:
+                    result['signal'] = 'SELL'
+                    result['message'] = f'死叉卖出信号！短期均线({strategy.n1}日)下穿长期均线({strategy.n2}日)'
+                # 持有状态
+                elif sma_short > sma_long:
+                    result['signal'] = 'HOLD_LONG'
+                    result['message'] = f'持有多头。短期均线在长期均线上方（{signal_strength:.2f}%）'
+                else:
+                    result['signal'] = 'HOLD_SHORT'
+                    result['message'] = f'持有空头。短期均线在长期均线下方（{signal_strength:.2f}%）'
             else:
-                result['signal'] = 'HOLD_SHORT'
-                result['message'] = f'持有空头。短期均线在长期均线下方（{signal_strength:.2f}%）'
+                # 未知策略类型
+                result['message'] = f'不支持的策略类型: {self.strategy_class.__name__}'
 
         except Exception as e:
             result['message'] = f'双价格策略运行失败: {e}'
