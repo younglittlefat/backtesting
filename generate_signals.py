@@ -898,6 +898,9 @@ def main():
             if args.strategy == 'sma_cross':
                 from strategies.sma_cross import SmaCross
                 strategy_class = SmaCross
+            elif args.strategy == 'macd_cross':
+                from strategies.macd_cross import MacdCross
+                strategy_class = MacdCross
             else:
                 print(f"错误: 未知策略 '{args.strategy}'")
                 sys.exit(1)
@@ -1061,6 +1064,9 @@ def main():
         if args.strategy == 'sma_cross':
             from strategies.sma_cross import SmaCross
             strategy_class = SmaCross
+        elif args.strategy == 'macd_cross':
+            from strategies.macd_cross import MacdCross
+            strategy_class = MacdCross
         else:
             print(f"错误: 未知策略 '{args.strategy}'")
             sys.exit(1)

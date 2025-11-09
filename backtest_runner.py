@@ -36,6 +36,7 @@ from utils.data_loader import (
 from utils.trading_cost import TradingCostConfig, TradingCostCalculator, get_cost_summary
 from strategies.sma_cross import SmaCross
 from strategies.sma_cross_enhanced import SmaCrossEnhanced
+from strategies.macd_cross import MacdCross
 from utils.strategy_params_manager import StrategyParamsManager
 from common.mysql_manager import MySQLManager
 
@@ -48,6 +49,7 @@ warnings.filterwarnings('ignore', category=UserWarning, module='backtesting')
 STRATEGIES = {
     'sma_cross': SmaCross,
     'sma_cross_enhanced': SmaCrossEnhanced,
+    'macd_cross': MacdCross,
 }
 
 
@@ -233,11 +235,16 @@ def find_robust_params(
     if not optimized_results:
         return None, None, None, None
 
+    # 检测参数名称（使用第一个结果的参数作为参考）
+    first_params = optimized_results[0]['optimized_params']  # type: ignore[index]
+    param_names = tuple(sorted(first_params.keys()))  # type: ignore[union-attr]
+
     # 按参数分组
     params_groups = defaultdict(list)
     for result in optimized_results:
         params = result['optimized_params']  # type: ignore[assignment]
-        params_key = (params['n1'], params['n2'])
+        # 创建参数元组作为key（按参数名排序后保证一致性）
+        params_key = tuple(params[name] for name in param_names)  # type: ignore[index]
         params_groups[params_key].append(result)
 
     # 计算每组参数的综合评分
@@ -286,11 +293,9 @@ def find_robust_params(
             0.20 * min(stability_score, 5.0)  # 限制稳定性得分上限避免极端值
         )
 
-        # 记录分析结果
+        # 记录分析结果（包含所有参数）
         analysis_entry = {
             'params': params_key,
-            'n1': params_key[0],
-            'n2': params_key[1],
             'median_sharpe': median_sharpe,
             'avg_sharpe': avg_sharpe,
             'win_rate': win_rate,
@@ -299,6 +304,10 @@ def find_robust_params(
             'score': score,
             'num_instruments': len(group_results)
         }
+        # 添加具体参数名称和值到analysis_entry
+        for i, name in enumerate(param_names):
+            analysis_entry[name] = params_key[i]
+
         params_analysis.append(analysis_entry)
 
         if score > best_score:
@@ -318,7 +327,9 @@ def find_robust_params(
         print(f"候选参数组合: {len(params_analysis)} 种\n")
 
         for i, analysis in enumerate(params_analysis[:5], 1):  # 只显示前5个
-            print(f"参数 (n1={analysis['n1']}, n2={analysis['n2']}):")
+            # 动态显示参数
+            params_str = ", ".join(f"{name}={analysis[name]}" for name in param_names)
+            print(f"参数 ({params_str}):")
             print(f"  中位数夏普: {analysis['median_sharpe']:.4f}")
             print(f"  平均夏普:   {analysis['avg_sharpe']:.4f}")
             print(f"  胜率:       {analysis['win_rate']*100:.1f}% ({int(analysis['win_rate']*analysis['num_instruments'])}/{analysis['num_instruments']}盈利)")
@@ -329,7 +340,8 @@ def find_robust_params(
     if best_params_key is None:
         return None, None, None, params_analysis
 
-    best_params = {'n1': best_params_key[0], 'n2': best_params_key[1]}
+    # 构建参数字典
+    best_params = {name: best_params_key[i] for i, name in enumerate(param_names)}
     return best_params, best_metrics, best_result, params_analysis
 
 
@@ -403,8 +415,13 @@ def save_best_params(
             stock_pool = f"{resolve_display_name(instrument)}"
 
         # 构建详细说明
+        # 动态构建参数说明字符串
+        param_names = sorted(best_params.keys())
+        params_str = ", ".join(f"{name}={best_params[name]}" for name in param_names)
+
         notes = (
             f"全局稳健参数优化 (综合评分={best_metrics['score']:.4f})\n"
+            f"参数: {params_str}\n"
             f"中位数夏普={best_metrics['median_sharpe']:.4f}, "
             f"平均夏普={best_metrics['avg_sharpe']:.4f}, "
             f"胜率={best_metrics['win_rate']*100:.1f}%, "
@@ -424,7 +441,7 @@ def save_best_params(
         # 输出摘要信息
         if verbose:
             print(f"\n✓ 全局稳健参数已保存到 {save_params_file}")
-            print(f"  参数: n1={best_params['n1']}, n2={best_params['n2']}")
+            print(f"  参数: {params_str}")
             print(f"  中位数夏普: {best_metrics['median_sharpe']:.4f}")
             print(f"  平均夏普: {best_metrics['avg_sharpe']:.4f}")
             print(f"  胜率: {best_metrics['win_rate']*100:.1f}%")
@@ -433,7 +450,7 @@ def save_best_params(
             print(f"  该参数在{int(best_metrics['win_rate']*num_instruments)}/{num_instruments}个标的上盈利")
         else:
             print(f"\n✓ 全局稳健参数已保存到 {save_params_file}")
-            print(f"  参数: n1={best_params['n1']}, n2={best_params['n2']}")
+            print(f"  参数: {params_str}")
             print(f"  胜率: {best_metrics['win_rate']*100:.1f}% ({int(best_metrics['win_rate']*num_instruments)}/{num_instruments}个标的盈利)")
             print(f"  平均夏普: {best_metrics['avg_sharpe']:.4f}, 中位数夏普: {best_metrics['median_sharpe']:.4f}")
 
@@ -530,11 +547,13 @@ def run_single_backtest(
 
     if optimize:
         # 从策略类获取优化参数和约束
-        optimize_params = getattr(strategy_class, 'OPTIMIZE_PARAMS', {
+        # 需要从模块级别访问，因为OPTIMIZE_PARAMS和CONSTRAINTS定义在模块而非类中
+        strategy_module = sys.modules[strategy_class.__module__]
+        optimize_params = getattr(strategy_module, 'OPTIMIZE_PARAMS', {
             'n1': range(5, 51, 5),
             'n2': range(20, 201, 20),
         })
-        constraints = getattr(strategy_class, 'CONSTRAINTS', lambda p: p.n1 < p.n2)
+        constraints = getattr(strategy_module, 'CONSTRAINTS', lambda p: p.n1 < p.n2)
 
         if verbose:
             print("\n开始参数优化...")
@@ -1168,11 +1187,18 @@ def main() -> int:
                 # 如果是优化模式，保存优化参数信息
                 if args.optimize and hasattr(bt_result, '_strategy'):
                     strategy_obj = bt_result._strategy
-                    if hasattr(strategy_obj, 'n1') and hasattr(strategy_obj, 'n2'):
-                        result_entry['optimized_params'] = {
-                            'n1': strategy_obj.n1,
-                            'n2': strategy_obj.n2
-                        }
+                    # 获取模块级别的OPTIMIZE_PARAMS配置，判断需要保存哪些参数
+                    strategy_module = sys.modules[strategy_class.__module__]
+                    optimize_params_config = getattr(strategy_module, 'OPTIMIZE_PARAMS', {})
+
+                    # 根据配置提取对应的优化参数
+                    optimized_params = {}
+                    for param_name in optimize_params_config.keys():
+                        if hasattr(strategy_obj, param_name):
+                            optimized_params[param_name] = getattr(strategy_obj, param_name)
+
+                    if optimized_params:
+                        result_entry['optimized_params'] = optimized_params
 
                 all_results.append(result_entry)
             except Exception as exc:
