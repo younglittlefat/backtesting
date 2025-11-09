@@ -989,6 +989,43 @@ def main() -> int:
         help='MACD确认所需K线数，默认2',
     )
 
+    # MACD止损保护参数（Phase 3）
+    macd_filter_group.add_argument(
+        '--enable-macd-loss-protection',
+        action='store_true',
+        help='启用MACD策略的连续止损保护（⭐⭐⭐强烈推荐）',
+    )
+    macd_filter_group.add_argument(
+        '--macd-max-consecutive-losses',
+        type=int,
+        default=3,
+        help='MACD策略连续亏损次数阈值，默认3',
+    )
+    macd_filter_group.add_argument(
+        '--macd-pause-bars',
+        type=int,
+        default=10,
+        help='MACD策略触发保护后暂停交易的K线数，默认10',
+    )
+    macd_filter_group.add_argument(
+        '--macd-debug-loss-protection',
+        action='store_true',
+        help='启用MACD策略止损保护调试日志',
+    )
+
+    # MACD跟踪止损参数（Phase 3b）
+    macd_filter_group.add_argument(
+        '--enable-macd-trailing-stop',
+        action='store_true',
+        help='启用MACD策略的跟踪止损',
+    )
+    macd_filter_group.add_argument(
+        '--macd-trailing-stop-pct',
+        type=float,
+        default=0.05,
+        help='MACD策略跟踪止损百分比，默认0.05（5%%）',
+    )
+
     args = parser.parse_args()
 
     if args.instrument_limit is not None and args.instrument_limit <= 0:
@@ -1232,6 +1269,19 @@ def main() -> int:
                 if args.enable_macd_confirm_filter:
                     filter_params['enable_confirm_filter'] = True
                     filter_params['confirm_bars'] = args.macd_confirm_bars
+
+                # MACD止损保护参数（Phase 3）
+                if args.enable_macd_loss_protection:
+                    filter_params['enable_loss_protection'] = True
+                    filter_params['max_consecutive_losses'] = args.macd_max_consecutive_losses
+                    filter_params['pause_bars'] = args.macd_pause_bars
+                if args.macd_debug_loss_protection:
+                    filter_params['debug_loss_protection'] = True
+
+                # MACD跟踪止损参数（Phase 3b）
+                if args.enable_macd_trailing_stop:
+                    filter_params['enable_trailing_stop'] = True
+                    filter_params['trailing_stop_pct'] = args.macd_trailing_stop_pct
 
             try:
                 if not verbose:

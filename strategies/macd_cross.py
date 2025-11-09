@@ -8,15 +8,16 @@ MACD (Moving Average Convergence Divergence) 是经典的动量趋势跟踪指�
 - MACD线上穿信号线 -> 买入信号（金叉）
 - MACD线下穿信号线 -> 卖出信号（死叉）
 
-Phase 1: 基础金叉死叉信号（当前版本）
-Phase 2: 信号质量过滤器（ADX、成交量、斜率、确认）
-Phase 3: 连续止损保护
+Phase 1: 基础金叉死叉信号 ✅
+Phase 2: 信号质量过滤器（ADX、成交量、斜率、确认）✅
+Phase 3: 连续止损保护 ✅
 Phase 4: 增强信号（零轴交叉、双重金叉、背离）
 """
 
 import sys
 from pathlib import Path
 import pandas as pd
+import random
 from backtesting import Strategy
 from backtesting.lib import crossover
 
@@ -185,8 +186,11 @@ class MacdCross(Strategy):
 
     支持:
     - Phase 1: 基础金叉死叉信号 ✅
-    - Phase 2: 信号质量过滤器（ADX、成交量、斜率、确认）🔲
-    - Phase 3: 连续止损保护 🔲
+    - Phase 2: 信号质量过滤器（ADX、成交量、斜率、确认）✅
+    - Phase 3: 止损保护 ✅
+      - 连续止损保护 ✅
+      - 跟踪止损 ✅
+      - 组合止损方案 ✅
     - Phase 4: 增强信号（零轴交叉、双重金叉、背离）🔲
 
     参数:
@@ -209,9 +213,12 @@ class MacdCross(Strategy):
         confirm_bars: 持续确认K线数 (默认2)
 
         # Phase 3: 止损保护
-        enable_loss_protection: 启用连续止损保护 (默认False)
+        enable_loss_protection: 启用连续止损保护 (默认False) ⭐⭐⭐强烈推荐
         max_consecutive_losses: 连续亏损次数阈值 (默认3)
         pause_bars: 暂停交易K线数 (默认10)
+        enable_trailing_stop: 启用跟踪止损 (默认False)
+        trailing_stop_pct: 跟踪止损百分比 (默认0.05，即5%)
+        debug_loss_protection: 启用止损保护调试日志 (默认False)
 
         # Phase 4: 增强信号
         enable_zero_cross: 启用零轴交叉信号 (默认False)
@@ -239,10 +246,17 @@ class MacdCross(Strategy):
     slope_lookback = 5
     confirm_bars = 2
 
-    # === Phase 3: 止损保护（后续实现） ===
+    # === Phase 3: 止损保护 ===
     enable_loss_protection = False
     max_consecutive_losses = 3
     pause_bars = 10
+
+    # 跟踪止损
+    enable_trailing_stop = False
+    trailing_stop_pct = 0.05  # 默认5%
+
+    # 调试开关
+    debug_loss_protection = False  # 启用止损保护调试日志
 
     # === Phase 4: 增强信号（后续实现） ===
     enable_zero_cross = False
@@ -289,7 +303,25 @@ class MacdCross(Strategy):
             confirm_bars=self.confirm_bars
         )
 
-        # Phase 3: 初始化止损追踪（后续实现）
+        # Phase 3: 初始化止损追踪
+        if self.enable_loss_protection:
+            self.entry_price = 0  # 入场价格
+            self.consecutive_losses = 0  # 连续亏损计数
+            self.paused_until_bar = -1  # 暂停到第几根K线
+            self.current_bar = 0  # 当前K线计数
+            self.debug_counter = 0  # 调试计数器，用于控制日志输出频率
+            self.total_trades = 0  # 交易总数
+            self.triggered_pauses = 0  # 触发暂停次数
+
+        # 跟踪止损初始化
+        if self.enable_trailing_stop:
+            self.highest_price = 0  # 持仓期间最高价（做多）或最低价（做空）
+            self.stop_loss_price = 0  # 动态止损价格
+            if not self.enable_loss_protection:
+                # 如果没有启用连续止损保护，仍需要这些变量
+                self.entry_price = 0
+                self.current_bar = 0
+                self.total_trades = 0
 
     def _apply_filters(self, signal_type):
         """
@@ -327,7 +359,56 @@ class MacdCross(Strategy):
 
         根据MACD金叉死叉信号和过滤器决定买入或卖出
         """
-        # Phase 3: 检查止损状态（后续实现）
+        # Phase 3: 检查止损状态
+        if self.enable_loss_protection or self.enable_trailing_stop:
+            self.current_bar += 1
+
+        # 连续止损保护：检查是否在暂停期
+        if self.enable_loss_protection:
+            # 检查是否在暂停期 - 添加随机采样日志（5%概率）
+            if self.current_bar < self.paused_until_bar:
+                # 调试模式下5%的概率输出日志
+                if self.debug_loss_protection and random.random() < 0.05:
+                    print(f"[止损保护] Bar {self.current_bar}: 暂停期内 (暂停至Bar {self.paused_until_bar})")
+                return  # 暂停期内不交易
+
+        # 跟踪止损：检查持仓的止损触发
+        if self.enable_trailing_stop and self.position:
+            current_price = self.data.Close[-1]
+
+            # 做多仓位的跟踪止损
+            if self.position.is_long:
+                # 更新最高价和止损价
+                if current_price > self.highest_price:
+                    self.highest_price = current_price
+                    self.stop_loss_price = current_price * (1 - self.trailing_stop_pct)
+                    if self.debug_loss_protection:
+                        print(f"[跟踪止损] Bar {self.current_bar}: 更新止损线 最高={self.highest_price:.2f} 止损={self.stop_loss_price:.2f}")
+
+                # 检查是否触发止损
+                if current_price <= self.stop_loss_price:
+                    if self.debug_loss_protection:
+                        pnl_pct = (current_price - self.entry_price) / self.entry_price * 100
+                        print(f"[跟踪止损] Bar {self.current_bar}: ⚠️ 触发止损 价格={current_price:.2f} <= 止损={self.stop_loss_price:.2f} (盈亏={pnl_pct:.2f}%)")
+                    self._close_position_with_loss_tracking()
+                    return
+
+            # 做空仓位的跟踪止损
+            else:
+                # 更新最低价和止损价
+                if current_price < self.highest_price or self.highest_price == 0:
+                    self.highest_price = current_price  # 对于做空，这是最低价
+                    self.stop_loss_price = current_price * (1 + self.trailing_stop_pct)
+                    if self.debug_loss_protection:
+                        print(f"[跟踪止损] Bar {self.current_bar}: 更新止损线 最低={self.highest_price:.2f} 止损={self.stop_loss_price:.2f}")
+
+                # 检查是否触发止损
+                if current_price >= self.stop_loss_price:
+                    if self.debug_loss_protection:
+                        pnl_pct = (self.entry_price - current_price) / self.entry_price * 100
+                        print(f"[跟踪止损] Bar {self.current_bar}: ⚠️ 触发止损 价格={current_price:.2f} >= 止损={self.stop_loss_price:.2f} (盈亏={pnl_pct:.2f}%)")
+                    self._close_position_with_loss_tracking()
+                    return
 
         # MACD金叉 - 买入信号
         if crossover(self.macd_line, self.signal_line):
@@ -339,10 +420,20 @@ class MacdCross(Strategy):
 
             # 如果有仓位，先平仓
             if self.position:
-                self.position.close()
+                self._close_position_with_loss_tracking()
 
             # 买入 - 使用90%的可用资金，避免保证金不足
             self.buy(size=0.90)
+
+            # 记录入场价格和初始化跟踪止损
+            if self.enable_loss_protection or self.enable_trailing_stop:
+                self.entry_price = self.data.Close[-1]
+
+            if self.enable_trailing_stop:
+                self.highest_price = self.data.Close[-1]
+                self.stop_loss_price = self.highest_price * (1 - self.trailing_stop_pct)
+                if self.debug_loss_protection:
+                    print(f"[跟踪止损] Bar {self.current_bar}: 开多仓 入场={self.entry_price:.2f} 初始止损={self.stop_loss_price:.2f}")
 
         # MACD死叉 - 卖出信号
         elif crossover(self.signal_line, self.macd_line):
@@ -354,10 +445,73 @@ class MacdCross(Strategy):
 
             # 如果有仓位，先平仓
             if self.position:
-                self.position.close()
+                self._close_position_with_loss_tracking()
 
             # 卖出（做空）- 使用90%的可用资金
             self.sell(size=0.90)
+
+            # 记录入场价格和初始化跟踪止损
+            if self.enable_loss_protection or self.enable_trailing_stop:
+                self.entry_price = self.data.Close[-1]
+
+            if self.enable_trailing_stop:
+                self.highest_price = self.data.Close[-1]
+                self.stop_loss_price = self.highest_price * (1 + self.trailing_stop_pct)
+                if self.debug_loss_protection:
+                    print(f"[跟踪止损] Bar {self.current_bar}: 开空仓 入场={self.entry_price:.2f} 初始止损={self.stop_loss_price:.2f}")
+
+    def _close_position_with_loss_tracking(self):
+        """
+        平仓并跟踪盈亏（用于止损保护）
+
+        如果启用了止损保护，会跟踪连续亏损次数，并在达到阈值后暂停交易
+        """
+        if not self.enable_loss_protection or not self.position:
+            self.position.close()
+            return
+
+        # 计算盈亏
+        exit_price = self.data.Close[-1]
+        is_loss = (self.position.is_long and exit_price < self.entry_price) or \
+                  (self.position.is_short and exit_price > self.entry_price)
+
+        # 平仓
+        self.position.close()
+        self.total_trades += 1
+
+        # 计算实际盈亏比例
+        pnl_pct = 0
+        if self.entry_price > 0:
+            if self.position.is_long:
+                pnl_pct = (exit_price - self.entry_price) / self.entry_price * 100
+            else:
+                pnl_pct = (self.entry_price - exit_price) / self.entry_price * 100
+
+        # 更新连续亏损计数
+        if is_loss:
+            self.consecutive_losses += 1
+            # 调试模式下输出亏损日志
+            if self.debug_loss_protection:
+                print(f"[止损保护] 交易#{self.total_trades}: 亏损 {pnl_pct:.2f}% (连续亏损: {self.consecutive_losses}/{self.max_consecutive_losses})")
+
+            if self.consecutive_losses >= self.max_consecutive_losses:
+                # 达到连续亏损阈值，启动暂停期
+                self.paused_until_bar = self.current_bar + self.pause_bars
+                self.consecutive_losses = 0  # 重置计数
+                self.triggered_pauses += 1
+                # 调试模式下输出触发暂停日志
+                if self.debug_loss_protection:
+                    print(f"[止损保护] ⚠️ 触发暂停 (第{self.triggered_pauses}次): Bar {self.current_bar} → {self.paused_until_bar} (暂停{self.pause_bars}根K线)")
+        else:
+            # 盈利则重置连续亏损计数
+            old_losses = self.consecutive_losses
+            self.consecutive_losses = 0
+            # 调试模式下输出盈利日志
+            if self.debug_loss_protection:
+                print(f"[止损保护] 交易#{self.total_trades}: 盈利 {pnl_pct:.2f}% (重置连续亏损: {old_losses} → 0)")
+
+        # 重置入场价格
+        self.entry_price = 0
 
 
 # 参数优化配置 - Phase 1基础参数
