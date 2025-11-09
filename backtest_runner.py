@@ -543,7 +543,20 @@ def run_single_backtest(
         # 合并过滤器参数
         run_kwargs = {**optimize_params}
         if filter_params:
-            run_kwargs.update(filter_params)
+            # 将单值参数转换为单元素列表，以便优化器能够识别和传递这些参数
+            # 如果不这样做，bt.optimize() 会忽略非可迭代的参数
+            normalized_filter_params = {}
+            for key, value in filter_params.items():
+                # 如果值不是可迭代对象（排除字符串），转换为单元素列表
+                if not hasattr(value, '__iter__') or isinstance(value, str):
+                    normalized_filter_params[key] = [value]
+                else:
+                    normalized_filter_params[key] = value
+            run_kwargs.update(normalized_filter_params)
+            if verbose:
+                print(f"\n调试: 过滤器参数转换")
+                print(f"  原始参数: {filter_params}")
+                print(f"  转换后参数: {normalized_filter_params}")
 
         stats = bt.optimize(
             **run_kwargs,

@@ -16,6 +16,7 @@
 """
 
 import sys
+import random
 from pathlib import Path
 import pandas as pd
 from backtesting import Strategy
@@ -101,6 +102,9 @@ class SmaCrossEnhanced(Strategy):
     max_consecutive_losses = 3  # 连续亏损次数阈值
     pause_bars = 10  # 暂停交易的K线数
 
+    # 调试开关
+    debug_loss_protection = False  # 启用止损保护调试日志
+
     def init(self):
         """
         初始化策略
@@ -138,6 +142,9 @@ class SmaCrossEnhanced(Strategy):
             self.consecutive_losses = 0  # 连续亏损计数
             self.paused_until_bar = -1  # 暂停到第几根K线
             self.current_bar = 0  # 当前K线计数
+            self.debug_counter = 0  # 调试计数器，用于控制日志输出频率
+            self.total_trades = 0  # 交易总数
+            self.triggered_pauses = 0  # 触发暂停次数
 
     def _apply_filters(self, signal_type):
         """
@@ -179,8 +186,11 @@ class SmaCrossEnhanced(Strategy):
         if self.enable_loss_protection:
             self.current_bar += 1
 
-            # 检查是否在暂停期
+            # 检查是否在暂停期 - 添加随机采样日志（5%概率）
             if self.current_bar < self.paused_until_bar:
+                # 调试模式下5%的概率输出日志
+                if self.debug_loss_protection and random.random() < 0.05:
+                    print(f"[止损保护] Bar {self.current_bar}: 暂停期内 (暂停至Bar {self.paused_until_bar})")
                 return  # 暂停期内不交易
 
         # 短期均线上穿长期均线 -> 买入信号（金叉）
@@ -226,17 +236,38 @@ class SmaCrossEnhanced(Strategy):
 
         # 平仓
         self.position.close()
+        self.total_trades += 1
+
+        # 计算实际盈亏比例
+        pnl_pct = 0
+        if self.entry_price > 0:
+            if self.position.is_long:
+                pnl_pct = (exit_price - self.entry_price) / self.entry_price * 100
+            else:
+                pnl_pct = (self.entry_price - exit_price) / self.entry_price * 100
 
         # 更新连续亏损计数
         if is_loss:
             self.consecutive_losses += 1
+            # 调试模式下输出亏损日志
+            if self.debug_loss_protection:
+                print(f"[止损保护] 交易#{self.total_trades}: 亏损 {pnl_pct:.2f}% (连续亏损: {self.consecutive_losses}/{self.max_consecutive_losses})")
+
             if self.consecutive_losses >= self.max_consecutive_losses:
                 # 达到连续亏损阈值，启动暂停期
                 self.paused_until_bar = self.current_bar + self.pause_bars
                 self.consecutive_losses = 0  # 重置计数
+                self.triggered_pauses += 1
+                # 调试模式下输出触发暂停日志
+                if self.debug_loss_protection:
+                    print(f"[止损保护] ⚠️ 触发暂停 (第{self.triggered_pauses}次): Bar {self.current_bar} → {self.paused_until_bar} (暂停{self.pause_bars}根K线)")
         else:
             # 盈利则重置连续亏损计数
+            old_losses = self.consecutive_losses
             self.consecutive_losses = 0
+            # 调试模式下输出盈利日志
+            if self.debug_loss_protection:
+                print(f"[止损保护] 交易#{self.total_trades}: 盈利 {pnl_pct:.2f}% (重置连续亏损: {old_losses} → 0)")
 
         # 重置入场价格
         self.entry_price = 0
