@@ -18,7 +18,7 @@
   },
   "macd_cross": {
     "optimized": true,
-    "optimization_date": "2025-11-09 15:51:23",
+    "optimization_date": "2025-11-09 20:11:26",
     "optimization_period": null,
     "stock_pool": "全局稳健优化 (共20只标的)",
     "params": {
