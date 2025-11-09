@@ -301,6 +301,37 @@ main() {
 
     VERBOSE_FLAG=0
 
+    # 过滤器参数初始化
+    ENABLE_ADX_FILTER_FLAG=0
+    ENABLE_VOLUME_FILTER_FLAG=0
+    ENABLE_SLOPE_FILTER_FLAG=0
+    ENABLE_CONFIRM_FILTER_FLAG=0
+    ENABLE_LOSS_PROTECTION_FLAG=0
+
+    ADX_THRESHOLD_VALUE="25"
+    ADX_THRESHOLD_ARGS=()
+
+    ADX_PERIOD_VALUE="14"
+    ADX_PERIOD_ARGS=()
+
+    VOLUME_RATIO_VALUE="1.2"
+    VOLUME_RATIO_ARGS=()
+
+    VOLUME_PERIOD_VALUE="20"
+    VOLUME_PERIOD_ARGS=()
+
+    SLOPE_LOOKBACK_VALUE="5"
+    SLOPE_LOOKBACK_ARGS=()
+
+    CONFIRM_BARS_VALUE="2"
+    CONFIRM_BARS_ARGS=()
+
+    MAX_LOSSES_VALUE="3"
+    MAX_LOSSES_ARGS=()
+
+    PAUSE_BARS_VALUE="10"
+    PAUSE_BARS_ARGS=()
+
     # 解析命令行参数
     while [[ $# -gt 0 ]]; do
         case $1 in
@@ -387,6 +418,66 @@ main() {
             --save-params)
                 SAVE_PARAMS_VALUE="$2"
                 SAVE_PARAMS_ARGS=("--save-params" "$2")
+                shift 2
+                ;;
+            --enable-adx-filter)
+                ENABLE_ADX_FILTER_FLAG=1
+                shift
+                ;;
+            --enable-volume-filter)
+                ENABLE_VOLUME_FILTER_FLAG=1
+                shift
+                ;;
+            --enable-slope-filter)
+                ENABLE_SLOPE_FILTER_FLAG=1
+                shift
+                ;;
+            --enable-confirm-filter)
+                ENABLE_CONFIRM_FILTER_FLAG=1
+                shift
+                ;;
+            --enable-loss-protection)
+                ENABLE_LOSS_PROTECTION_FLAG=1
+                shift
+                ;;
+            --adx-threshold)
+                ADX_THRESHOLD_VALUE="$2"
+                ADX_THRESHOLD_ARGS=("--adx-threshold" "$2")
+                shift 2
+                ;;
+            --adx-period)
+                ADX_PERIOD_VALUE="$2"
+                ADX_PERIOD_ARGS=("--adx-period" "$2")
+                shift 2
+                ;;
+            --volume-ratio)
+                VOLUME_RATIO_VALUE="$2"
+                VOLUME_RATIO_ARGS=("--volume-ratio" "$2")
+                shift 2
+                ;;
+            --volume-period)
+                VOLUME_PERIOD_VALUE="$2"
+                VOLUME_PERIOD_ARGS=("--volume-period" "$2")
+                shift 2
+                ;;
+            --slope-lookback)
+                SLOPE_LOOKBACK_VALUE="$2"
+                SLOPE_LOOKBACK_ARGS=("--slope-lookback" "$2")
+                shift 2
+                ;;
+            --confirm-bars)
+                CONFIRM_BARS_VALUE="$2"
+                CONFIRM_BARS_ARGS=("--confirm-bars" "$2")
+                shift 2
+                ;;
+            --max-losses)
+                MAX_LOSSES_VALUE="$2"
+                MAX_LOSSES_ARGS=("--max-losses" "$2")
+                shift 2
+                ;;
+            --pause-bars)
+                PAUSE_BARS_VALUE="$2"
+                PAUSE_BARS_ARGS=("--pause-bars" "$2")
                 shift 2
                 ;;
             -h|--help)
@@ -480,6 +571,24 @@ main() {
     if [ -n "$SAVE_PARAMS_VALUE" ]; then
         echo -e "${YELLOW}参数保存:${NC} $SAVE_PARAMS_VALUE"
     fi
+    if [ $ENABLE_ADX_FILTER_FLAG -eq 1 ] || [ $ENABLE_VOLUME_FILTER_FLAG -eq 1 ] || [ $ENABLE_SLOPE_FILTER_FLAG -eq 1 ] || [ $ENABLE_CONFIRM_FILTER_FLAG -eq 1 ] || [ $ENABLE_LOSS_PROTECTION_FLAG -eq 1 ]; then
+        echo -e "${YELLOW}过滤器配置:${NC}"
+        if [ $ENABLE_ADX_FILTER_FLAG -eq 1 ]; then
+            echo -e "  ADX过滤器: 启用 (阈值=$ADX_THRESHOLD_VALUE, 周期=$ADX_PERIOD_VALUE)"
+        fi
+        if [ $ENABLE_VOLUME_FILTER_FLAG -eq 1 ]; then
+            echo -e "  成交量过滤器: 启用 (放大倍数=$VOLUME_RATIO_VALUE, 周期=$VOLUME_PERIOD_VALUE)"
+        fi
+        if [ $ENABLE_SLOPE_FILTER_FLAG -eq 1 ]; then
+            echo -e "  斜率过滤器: 启用 (回溯周期=$SLOPE_LOOKBACK_VALUE)"
+        fi
+        if [ $ENABLE_CONFIRM_FILTER_FLAG -eq 1 ]; then
+            echo -e "  持续确认过滤器: 启用 (K线数=$CONFIRM_BARS_VALUE)"
+        fi
+        if [ $ENABLE_LOSS_PROTECTION_FLAG -eq 1 ]; then
+            echo -e "  连续止损保护: 启用 (连续亏损次数=$MAX_LOSSES_VALUE, 暂停K线数=$PAUSE_BARS_VALUE)"
+        fi
+    fi
     echo -e "${BLUE}======================================================================${NC}"
     echo ""
 
@@ -537,6 +646,49 @@ main() {
     fi
     if [ -n "$SAVE_PARAMS_VALUE" ]; then
         CMD+=("${SAVE_PARAMS_ARGS[@]}")
+    fi
+
+    # 添加过滤器开关参数
+    if [ $ENABLE_ADX_FILTER_FLAG -eq 1 ]; then
+        CMD+=("--enable-adx-filter")
+    fi
+    if [ $ENABLE_VOLUME_FILTER_FLAG -eq 1 ]; then
+        CMD+=("--enable-volume-filter")
+    fi
+    if [ $ENABLE_SLOPE_FILTER_FLAG -eq 1 ]; then
+        CMD+=("--enable-slope-filter")
+    fi
+    if [ $ENABLE_CONFIRM_FILTER_FLAG -eq 1 ]; then
+        CMD+=("--enable-confirm-filter")
+    fi
+    if [ $ENABLE_LOSS_PROTECTION_FLAG -eq 1 ]; then
+        CMD+=("--enable-loss-protection")
+    fi
+
+    # 添加过滤器配置参数
+    if [ ${#ADX_THRESHOLD_ARGS[@]} -gt 0 ]; then
+        CMD+=("${ADX_THRESHOLD_ARGS[@]}")
+    fi
+    if [ ${#ADX_PERIOD_ARGS[@]} -gt 0 ]; then
+        CMD+=("${ADX_PERIOD_ARGS[@]}")
+    fi
+    if [ ${#VOLUME_RATIO_ARGS[@]} -gt 0 ]; then
+        CMD+=("${VOLUME_RATIO_ARGS[@]}")
+    fi
+    if [ ${#VOLUME_PERIOD_ARGS[@]} -gt 0 ]; then
+        CMD+=("${VOLUME_PERIOD_ARGS[@]}")
+    fi
+    if [ ${#SLOPE_LOOKBACK_ARGS[@]} -gt 0 ]; then
+        CMD+=("${SLOPE_LOOKBACK_ARGS[@]}")
+    fi
+    if [ ${#CONFIRM_BARS_ARGS[@]} -gt 0 ]; then
+        CMD+=("${CONFIRM_BARS_ARGS[@]}")
+    fi
+    if [ ${#MAX_LOSSES_ARGS[@]} -gt 0 ]; then
+        CMD+=("${MAX_LOSSES_ARGS[@]}")
+    fi
+    if [ ${#PAUSE_BARS_ARGS[@]} -gt 0 ]; then
+        CMD+=("${PAUSE_BARS_ARGS[@]}")
     fi
 
     echo -e "${YELLOW}执行命令:${NC} ${CMD[*]}"

@@ -14,6 +14,9 @@ python -m etf_selector.main --data-dir data/chinese_etf --output results/trend_e
 ## 根据筛选标的回测得出最佳超参
 ./run_backtest.sh  --stock-list results/trend_etf_pool.csv --strategy sma_cross --optimize --data-dir data/chinese_etf/daily --save-params config/strategy_params.json
 
+### 其他策略：双均线强化
+./run_backtest.sh  --stock-list results/trend_etf_pool.csv --strategy sma_cross_enhanced --optimize --data-dir data/chinese_etf/daily --save-params config/strategy_params.json --output-dir results/exp_use_adx_filter --enable-adx-filter
+
 ## # Day 0: 初始化持仓
 ./generate_daily_signals.sh --init 100000 --portfolio-file positions/etf_portfolio.json
 
