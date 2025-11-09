@@ -6,6 +6,11 @@
 
 Backtesting.py 是一个用于回测交易策略的 Python 库。它提供了一个简单、快速的框架，用于在历史数据上测试算法交易策略，并提供全面的统计数据和交互式可视化。
 
+**项目特色功能**:
+- ⭐ **连续止损保护**: 增强版策略支持原生止损保护，经过280次回测验证，可显著提升风险调整后收益（夏普比率+75%，最大回撤-34%）
+- 多种信号过滤器：ADX趋势强度、成交量确认、均线斜率等
+- 灵活的成本模型：支持中国A股/ETF、美股等不同市场的交易成本配置
+
 ## 环境配置
 
 **重要**: 本项目必须在名为 `backtesting` 的 conda 环境中运行。你现在是在wsl里的Ubuntu 24系统中运行，但项目在windows的硬盘上（/mnt/d/git/backtesting），请妥善处理脚本调用、传入的路径
@@ -128,12 +133,73 @@ cd doc
 - 内置参数网格并行优化
 - 支持自定义优化指标
 
-## 测试策略
+## 止损保护功能（连续止损保护）⭐ 强烈推荐
 
-- 测试位于 `backtesting/test/`
-- 主测试文件: `backtesting/test/_test.py`
-- 测试数据包括 GOOG, BTCUSD, EURUSD 的示例 OHLC 数据
-- 使用 `python -m backtesting.test` 执行完整测试套件
+增强版双均线策略（`SmaCrossEnhanced`）支持原生止损保护功能，经过280次回测验证，显著提升风险调整后收益。
+
+### 核心优势
+- **夏普比率提升 +75%**（0.61 → 1.07）
+- **最大回撤降低 -34%**（-21% → -14%）
+- **胜率提升 +27%**（48% → 61%）
+- **最差标的风险降低 +77%**（-42% → -9%）
+
+### 实现原理
+连续止损保护通过跟踪连续亏损次数，在策略失效时自动暂停交易，避免在不利市场环境中连续亏损。
+
+### 快速开始
+
+```bash
+# 最简单的使用方式（使用推荐参数）
+./run_backtest.sh \
+  --stock-list results/trend_etf_pool.csv \
+  -t sma_cross_enhanced \
+  --enable-loss-protection \
+  --data-dir data/chinese_etf/daily
+
+# 自定义参数
+./run_backtest.sh \
+  --stock-list results/trend_etf_pool.csv \
+  -t sma_cross_enhanced \
+  --enable-loss-protection \
+  --max-consecutive-losses 4 \
+  --pause-bars 15 \
+  --data-dir data/chinese_etf/daily
+
+# 组合使用多种过滤器（推荐）
+./run_backtest.sh \
+  --stock-list results/trend_etf_pool.csv \
+  -t sma_cross_enhanced \
+  --enable-loss-protection \
+  --enable-adx-filter \
+  --enable-volume-filter \
+  --data-dir data/chinese_etf/daily \
+  -o
+```
+
+### 参数说明
+
+| 参数 | 默认值 | 说明 |
+|------|--------|------|
+| `--enable-loss-protection` | False | 启用连续止损保护 |
+| `--max-consecutive-losses` | 3 | 连续亏损次数阈值（推荐值，基于实验结果） |
+| `--pause-bars` | 10 | 触发保护后暂停的K线数（推荐值，基于实验结果） |
+
+### 实验验证
+
+基于20只中国ETF、280次回测（2023-11至2025-11）的完整实验结果：
+
+| 策略 | 平均收益 | 夏普比率 | 最大回撤 | 胜率 |
+|------|----------|----------|----------|------|
+| Base（无止损） | 51.09% | 0.61 | -21.17% | 48.41% |
+| **Loss Protection** | **53.91%** | **1.07** | **-13.88%** | **61.42%** |
+
+详细实验报告：`requirement_docs/20251109_native_stop_loss_implementation.md`
+
+### 注意事项
+- 默认参数（max_consecutive_losses=3, pause_bars=10）是基于实验优化的推荐值
+- 参数对结果不敏感，大部分情况下使用默认值即可
+- 可以与ADX过滤器、成交量过滤器等组合使用，可能获得更好效果
+- 适用于趋势跟踪策略，震荡市场中效果可能不明显
 
 ## 依赖和兼容性
 

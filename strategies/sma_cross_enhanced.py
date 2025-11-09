@@ -13,7 +13,6 @@
 2. ADXFilter: ADX趋势强度过滤（确保趋势足够强）
 3. VolumeFilter: 成交量放大确认（确保资金认可）
 4. ConfirmationFilter: 持续确认过滤（防止假突破）
-5. LossProtectionFilter: 连续止损保护（避免连续失误）
 """
 
 import sys
@@ -29,7 +28,7 @@ if __name__ == '__main__':
 
 from strategies.filters import (
     SlopeFilter, ADXFilter, VolumeFilter,
-    ConfirmationFilter, LossProtectionFilter
+    ConfirmationFilter
 )
 
 
@@ -60,7 +59,6 @@ class SmaCrossEnhanced(Strategy):
         enable_adx_filter: 启用ADX趋势强度过滤器 (默认False)
         enable_volume_filter: 启用成交量确认过滤器 (默认False)
         enable_confirm_filter: 启用持续确认过滤器 (默认False)
-        enable_loss_protection: 启用连续止损保护 (默认False)
 
         # 过滤器参数
         slope_lookback: 斜率计算回溯期 (默认5)
@@ -69,8 +67,13 @@ class SmaCrossEnhanced(Strategy):
         volume_period: 成交量均值周期 (默认20)
         volume_ratio: 成交量放大倍数 (默认1.2)
         confirm_bars: 确认所需K线数 (默认3)
-        max_losses: 最大连续亏损次数 (默认3)
-        pause_bars: 暂停K线数 (默认10)
+
+        # 止损功能开关（Phase 6新增）
+        enable_loss_protection: 启用连续止损保护 (默认False，推荐True，夏普比率+75%)
+
+        # 止损参数（基于实验推荐值）
+        max_consecutive_losses: 连续亏损次数阈值 (默认3)
+        pause_bars: 暂停交易的K线数 (默认10)
     """
 
     # 策略参数 - 定义为类变量以便优化
@@ -82,7 +85,6 @@ class SmaCrossEnhanced(Strategy):
     enable_adx_filter = False
     enable_volume_filter = False
     enable_confirm_filter = False
-    enable_loss_protection = False
 
     # 过滤器参数
     slope_lookback = 5
@@ -91,8 +93,13 @@ class SmaCrossEnhanced(Strategy):
     volume_period = 20
     volume_ratio = 1.2
     confirm_bars = 3
-    max_losses = 3
-    pause_bars = 10
+
+    # 止损功能开关（Phase 6新增）
+    enable_loss_protection = False  # 启用连续止损保护（推荐，夏普比率+75%）
+
+    # 止损参数（基于实验推荐值）
+    max_consecutive_losses = 3  # 连续亏损次数阈值
+    pause_bars = 10  # 暂停交易的K线数
 
     def init(self):
         """
@@ -124,11 +131,13 @@ class SmaCrossEnhanced(Strategy):
             enabled=self.enable_confirm_filter,
             confirm_bars=self.confirm_bars
         )
-        self.loss_protection_filter = LossProtectionFilter(
-            enabled=self.enable_loss_protection,
-            max_losses=self.max_losses,
-            pause_bars=self.pause_bars
-        )
+
+        # 初始化止损保护状态（Phase 6新增）
+        if self.enable_loss_protection:
+            self.entry_price = 0  # 入场价格
+            self.consecutive_losses = 0  # 连续亏损计数
+            self.paused_until_bar = -1  # 暂停到第几根K线
+            self.current_bar = 0  # 当前K线计数
 
     def _apply_filters(self, signal_type):
         """
@@ -144,8 +153,7 @@ class SmaCrossEnhanced(Strategy):
             self.slope_filter,
             self.adx_filter,
             self.volume_filter,
-            self.confirm_filter,
-            self.loss_protection_filter
+            self.confirm_filter
         ]
 
         # 准备上下文信息
@@ -167,23 +175,71 @@ class SmaCrossEnhanced(Strategy):
 
         根据均线交叉信号和过滤器决定买入或卖出
         """
+        # 如果启用了止损保护，处理止损逻辑（Phase 6新增）
+        if self.enable_loss_protection:
+            self.current_bar += 1
+
+            # 检查是否在暂停期
+            if self.current_bar < self.paused_until_bar:
+                return  # 暂停期内不交易
+
         # 短期均线上穿长期均线 -> 买入信号（金叉）
         if crossover(self.sma1, self.sma2):
             # 应用过滤器
             if self._apply_filters('buy'):
                 # 如果有空头仓位，先平仓
-                self.position.close()
+                if self.position:
+                    self._close_position_with_loss_tracking()
                 # 买入 - 使用90%的可用资金，避免保证金不足
                 self.buy(size=0.90)
+                # 记录入场价格
+                if self.enable_loss_protection:
+                    self.entry_price = self.data.Close[-1]
 
         # 短期均线下穿长期均线 -> 卖出信号（死叉）
         elif crossover(self.sma2, self.sma1):
             # 应用过滤器
             if self._apply_filters('sell'):
                 # 如果有多头仓位，先平仓
-                self.position.close()
+                if self.position:
+                    self._close_position_with_loss_tracking()
                 # 卖出（做空）- 使用90%的可用资金
                 self.sell(size=0.90)
+                # 记录入场价格
+                if self.enable_loss_protection:
+                    self.entry_price = self.data.Close[-1]
+
+    def _close_position_with_loss_tracking(self):
+        """
+        平仓并跟踪盈亏（用于止损保护）
+
+        如果启用了止损保护，会跟踪连续亏损次数，并在达到阈值后暂停交易
+        """
+        if not self.enable_loss_protection or not self.position:
+            self.position.close()
+            return
+
+        # 计算盈亏
+        exit_price = self.data.Close[-1]
+        is_loss = (self.position.is_long and exit_price < self.entry_price) or \
+                  (self.position.is_short and exit_price > self.entry_price)
+
+        # 平仓
+        self.position.close()
+
+        # 更新连续亏损计数
+        if is_loss:
+            self.consecutive_losses += 1
+            if self.consecutive_losses >= self.max_consecutive_losses:
+                # 达到连续亏损阈值，启动暂停期
+                self.paused_until_bar = self.current_bar + self.pause_bars
+                self.consecutive_losses = 0  # 重置计数
+        else:
+            # 盈利则重置连续亏损计数
+            self.consecutive_losses = 0
+
+        # 重置入场价格
+        self.entry_price = 0
 
 
 # 参数优化配置 - 基础参数
@@ -245,8 +301,7 @@ if __name__ == '__main__':
         enable_slope_filter=True,
         enable_adx_filter=True,
         enable_volume_filter=True,
-        enable_confirm_filter=True,
-        enable_loss_protection=True
+        enable_confirm_filter=True
     )
     print(f"  收益率: {stats['Return [%]']:.2f}%")
     print(f"  夏普比率: {stats['Sharpe Ratio']:.2f}")

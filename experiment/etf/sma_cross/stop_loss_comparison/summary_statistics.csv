@@ -1,0 +1,7 @@
+﻿,return_pct,return_pct,return_pct,return_pct,sharpe_ratio,sharpe_ratio,max_drawdown_pct,max_drawdown_pct,win_rate_pct,win_rate_pct,num_trades,num_trades
+,mean,std,min,max,mean,std,mean,std,mean,std,mean,std
+strategy,,,,,,,,,,,,
+base,51.09,115.84,-41.87,518.31,0.61,0.72,-21.17,13.78,48.41,16.31,13.6,6.56
+combined,44.93,90.07,-0.25,417.75,1.01,0.69,-12.87,6.23,55.89,20.96,6.7,3.51
+loss_protection,53.91,89.82,-9.38,430.21,1.07,0.63,-13.88,6.73,61.42,18.15,6.56,3.3
+trailing_stop,40.2,88.68,-14.0,419.6,0.91,0.78,-12.77,6.1,57.57,22.2,6.8,3.53

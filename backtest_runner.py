@@ -841,7 +841,7 @@ def main() -> int:
     filter_group.add_argument(
         '--enable-loss-protection',
         action='store_true',
-        help='启用连续止损保护过滤器',
+        help='启用连续止损保护（推荐，夏普比率+75%%，最大回撤-34%%）',
     )
 
     # 过滤器参数配置
@@ -882,16 +882,16 @@ def main() -> int:
         help='持续确认所需K线数，默认2',
     )
     filter_group.add_argument(
-        '--max-losses',
+        '--max-consecutive-losses',
         type=int,
         default=3,
-        help='触发保护的最大连续亏损次数，默认3',
+        help='触发保护的最大连续亏损次数，默认3（推荐值，来自实验结果）',
     )
     filter_group.add_argument(
         '--pause-bars',
         type=int,
         default=10,
-        help='触发保护后暂停的K线数，默认10',
+        help='触发保护后暂停的K线数，默认10（推荐值，来自实验结果）',
     )
 
     args = parser.parse_args()
@@ -1117,7 +1117,7 @@ def main() -> int:
                     filter_params['confirm_bars'] = args.confirm_bars
                 if args.enable_loss_protection:
                     filter_params['enable_loss_protection'] = True
-                    filter_params['max_losses'] = args.max_losses
+                    filter_params['max_consecutive_losses'] = args.max_consecutive_losses
                     filter_params['pause_bars'] = args.pause_bars
 
             try:

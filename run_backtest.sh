@@ -58,15 +58,15 @@ ${YELLOW}过滤器选项（仅sma_cross_enhanced策略可用）:${NC}
   --enable-volume-filter       启用成交量确认过滤器 ⭐推荐
   --enable-slope-filter        启用均线斜率过滤器
   --enable-confirm-filter      启用持续确认过滤器
-  --enable-loss-protection     启用连续止损保护过滤器
+  --enable-loss-protection     启用连续止损保护 ⭐⭐⭐强烈推荐（夏普比率+75%, 最大回撤-34%）
   --adx-threshold <value>      ADX阈值 (默认: 25)
   --adx-period <value>         ADX计算周期 (默认: 14)
   --volume-ratio <value>       成交量放大倍数 (默认: 1.2)
   --volume-period <value>      成交量均值周期 (默认: 20)
   --slope-lookback <value>     斜率回溯周期 (默认: 5)
   --confirm-bars <value>       持续确认K线数 (默认: 2)
-  --max-losses <value>         触发保护的连续亏损次数 (默认: 3)
-  --pause-bars <value>         触发保护后暂停的K线数 (默认: 10)
+  --max-consecutive-losses <value>  连续亏损次数阈值 (默认: 3，推荐值)
+  --pause-bars <value>         暂停交易K线数 (默认: 10，推荐值)
 
   -h, --help                   显示此帮助信息
 
@@ -74,18 +74,23 @@ ${YELLOW}示例:${NC}
   ${GREEN}# 使用筛选器生成的ETF池进行回测（需指定data-dir）${NC}
   $0 --stock-list results/trend_etf_pool_20251107.csv -t sma_cross -o --data-dir data/csv/daily
 
-  ${GREEN}# 使用增强版策略 + ADX和成交量过滤器（推荐配置）${NC}
+  ${GREEN}# 使用增强版策略 + 止损保护（强烈推荐，夏普比率+75%）${NC}
   $0 --stock-list results/trend_etf_pool.csv -t sma_cross_enhanced -o \
-     --enable-adx-filter --enable-volume-filter --data-dir data/chinese_etf/daily
+     --enable-loss-protection --data-dir data/chinese_etf/daily
 
-  ${GREEN}# 测试不同的ADX阈值${NC}
-  $0 -s 561160.SH -t sma_cross_enhanced -o --enable-adx-filter \
-     --adx-threshold 30 --data-dir data/chinese_etf/daily
+  ${GREEN}# 使用增强版策略 + ADX和成交量过滤器 + 止损保护${NC}
+  $0 --stock-list results/trend_etf_pool.csv -t sma_cross_enhanced -o \
+     --enable-adx-filter --enable-volume-filter --enable-loss-protection \
+     --data-dir data/chinese_etf/daily
 
-  ${GREEN}# 启用所有过滤器${NC}
+  ${GREEN}# 测试不同的止损参数${NC}
+  $0 -s 561160.SH -t sma_cross_enhanced -o --enable-loss-protection \
+     --max-consecutive-losses 4 --pause-bars 15 --data-dir data/chinese_etf/daily
+
+  ${GREEN}# 启用所有过滤器 + 止损保护${NC}
   $0 --stock-list results/trend_etf_pool.csv -t sma_cross_enhanced -o \
      --enable-adx-filter --enable-volume-filter --enable-slope-filter \
-     --data-dir data/chinese_etf/daily
+     --enable-loss-protection --data-dir data/chinese_etf/daily
 
   ${GREEN}# 回测并保存优化参数到配置文件${NC}
   $0 --stock-list results/trend_etf_pool_20251107.csv -t sma_cross -o --save-params config/strategy_params.json
@@ -326,8 +331,8 @@ main() {
     CONFIRM_BARS_VALUE="2"
     CONFIRM_BARS_ARGS=()
 
-    MAX_LOSSES_VALUE="3"
-    MAX_LOSSES_ARGS=()
+    MAX_CONSECUTIVE_LOSSES_VALUE="3"
+    MAX_CONSECUTIVE_LOSSES_ARGS=()
 
     PAUSE_BARS_VALUE="10"
     PAUSE_BARS_ARGS=()
@@ -470,9 +475,9 @@ main() {
                 CONFIRM_BARS_ARGS=("--confirm-bars" "$2")
                 shift 2
                 ;;
-            --max-losses)
-                MAX_LOSSES_VALUE="$2"
-                MAX_LOSSES_ARGS=("--max-losses" "$2")
+            --max-consecutive-losses)
+                MAX_CONSECUTIVE_LOSSES_VALUE="$2"
+                MAX_CONSECUTIVE_LOSSES_ARGS=("--max-consecutive-losses" "$2")
                 shift 2
                 ;;
             --pause-bars)
@@ -586,7 +591,7 @@ main() {
             echo -e "  持续确认过滤器: 启用 (K线数=$CONFIRM_BARS_VALUE)"
         fi
         if [ $ENABLE_LOSS_PROTECTION_FLAG -eq 1 ]; then
-            echo -e "  连续止损保护: 启用 (连续亏损次数=$MAX_LOSSES_VALUE, 暂停K线数=$PAUSE_BARS_VALUE)"
+            echo -e "  ${GREEN}止损保护: 启用 (连续亏损=$MAX_CONSECUTIVE_LOSSES_VALUE次, 暂停=$PAUSE_BARS_VALUE根K线)${NC}"
         fi
     fi
     echo -e "${BLUE}======================================================================${NC}"
@@ -684,8 +689,8 @@ main() {
     if [ ${#CONFIRM_BARS_ARGS[@]} -gt 0 ]; then
         CMD+=("${CONFIRM_BARS_ARGS[@]}")
     fi
-    if [ ${#MAX_LOSSES_ARGS[@]} -gt 0 ]; then
-        CMD+=("${MAX_LOSSES_ARGS[@]}")
+    if [ ${#MAX_CONSECUTIVE_LOSSES_ARGS[@]} -gt 0 ]; then
+        CMD+=("${MAX_CONSECUTIVE_LOSSES_ARGS[@]}")
     fi
     if [ ${#PAUSE_BARS_ARGS[@]} -gt 0 ]; then
         CMD+=("${PAUSE_BARS_ARGS[@]}")

@@ -9,19 +9,16 @@
 - volatility_filters: 波动率控制过滤器
 - confirmation_filters: 信号确认过滤器
 - momentum_filters: 动量指标过滤器
-- defensive_filters: 防御性过滤器
 """
 
 from .base import BaseFilter
 from .trend_filters import SlopeFilter, ADXFilter
 from .volume_filters import VolumeFilter
 from .confirmation_filters import ConfirmationFilter
-from .defensive_filters import LossProtectionFilter
 
 __all__ = [
     'BaseFilter',
     'SlopeFilter', 'ADXFilter',
     'VolumeFilter',
-    'ConfirmationFilter',
-    'LossProtectionFilter'
+    'ConfirmationFilter'
 ]
