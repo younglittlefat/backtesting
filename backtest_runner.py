@@ -1256,8 +1256,8 @@ def main() -> int:
             })
 
         summary_df = pd.DataFrame(summary_rows)
-        # 按收益率降序排序
-        summary_df = summary_df.sort_values(by='收益率(%)', ascending=False)
+        # 按代码排序
+        summary_df = summary_df.sort_values(by='代码')
         aggregate_path.parent.mkdir(parents=True, exist_ok=True)
         summary_df.to_csv(aggregate_path, index=False, encoding='utf-8-sig')
         print(f"汇总结果已保存: {aggregate_path}")
