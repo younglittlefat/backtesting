@@ -142,12 +142,14 @@ def save_best_params(
     all_results: List[Dict[str, object]],
     save_params_file: str,
     strategy_name: str,
+    strategy_class,  # 新增：策略类，用于获取运行时配置
+    filter_params: Dict[str, object] = None,  # 新增：运行时过滤器参数
     start_date: Optional[str] = None,
     end_date: Optional[str] = None,
     verbose: bool = False
 ) -> None:
     """
-    保存表现最佳的全局稳健参数
+    保存表现最佳的全局稳健参数（支持运行时配置）
 
     使用综合评分法找出在所有标的上表现最稳健的参数，
     而非单纯选择某个标的的历史最优参数。
@@ -156,12 +158,26 @@ def save_best_params(
         all_results: 所有回测结果列表
         save_params_file: 参数配置文件路径
         strategy_name: 策略名称
+        strategy_class: 策略类（用于获取运行时配置）
+        filter_params: 运行时过滤器参数（命令行传入的参数）
         start_date: 回测开始日期
         end_date: 回测结束日期
         verbose: 是否输出详细信息
     """
     try:
         from utils.strategy_params_manager import StrategyParamsManager
+        from strategies.base_strategy import get_strategy_runtime_config
+
+        # 验证策略契约（如果策略支持RuntimeConfigurable）
+        try:
+            from strategies.base_strategy import validate_strategy_contract
+            validate_strategy_contract(strategy_class)
+            if verbose:
+                print(f"✓ 策略 {strategy_class.__name__} 通过契约验证")
+        except (TypeError, NotImplementedError) as e:
+            # 旧策略，不强制要求契约
+            if verbose:
+                print(f"⚠️ 策略 {strategy_class.__name__} 未实现 RuntimeConfigurable 接口，将使用默认配置")
 
         # 使用全局稳健参数查找方法
         best_params, best_metrics, best_result, params_analysis = find_robust_params(
@@ -223,14 +239,66 @@ def save_best_params(
             f"稳定性(标准差)={best_metrics['sharpe_std']:.4f}"
         )
 
-        # 保存优化结果
+        # 获取运行时配置（新增）
+        runtime_config = None
+        try:
+            # 不实例化策略，直接从类属性构建运行时配置
+            # 合并filter_params和best_params
+            all_params = {}
+            if filter_params:
+                all_params.update(filter_params)
+            all_params.update(best_params)
+
+            # 构建运行时配置字典
+            runtime_config = {
+                "filters": {},
+                "loss_protection": {}
+            }
+
+            # 过滤器参数列表
+            filter_param_names = [
+                'enable_slope_filter', 'enable_adx_filter', 'enable_volume_filter', 'enable_confirm_filter',
+                'slope_lookback', 'adx_period', 'adx_threshold',
+                'volume_period', 'volume_ratio', 'confirm_bars'
+            ]
+
+            # 止损保护参数列表
+            loss_protection_param_names = [
+                'enable_loss_protection', 'max_consecutive_losses', 'pause_bars'
+            ]
+
+            # 从all_params或类属性中获取值
+            for param_name in filter_param_names:
+                if param_name in all_params:
+                    runtime_config['filters'][param_name] = all_params[param_name]
+                elif hasattr(strategy_class, param_name):
+                    runtime_config['filters'][param_name] = getattr(strategy_class, param_name)
+
+            for param_name in loss_protection_param_names:
+                if param_name in all_params:
+                    runtime_config['loss_protection'][param_name] = all_params[param_name]
+                elif hasattr(strategy_class, param_name):
+                    runtime_config['loss_protection'][param_name] = getattr(strategy_class, param_name)
+
+            if verbose and runtime_config:
+                print(f"✓ 已提取运行时配置")
+                if runtime_config['loss_protection'].get('enable_loss_protection'):
+                    print(f"  止损保护: ON (连续亏损={runtime_config['loss_protection']['max_consecutive_losses']}, 暂停={runtime_config['loss_protection']['pause_bars']})")
+        except Exception as e:
+            print(f"⚠️ 获取运行时配置失败: {e}")
+            if verbose:
+                import traceback
+                print(traceback.format_exc())
+
+        # 保存优化结果（包含运行时配置）
         params_manager.save_optimization_results(
             strategy_name=strategy_name,
             optimized_params=best_params,
             performance_stats=performance_stats,
             optimization_period=optimization_period,
             stock_pool=stock_pool,
-            notes=notes
+            notes=notes,
+            runtime_config=runtime_config  # 新增：保存运行时配置
         )
 
         # 输出摘要信息
@@ -243,6 +311,8 @@ def save_best_params(
             print(f"  稳定性: 标准差={best_metrics['sharpe_std']:.4f}")
             print(f"  综合评分: {best_metrics['score']:.4f}")
             print(f"  该参数在{int(best_metrics['win_rate']*num_instruments)}/{num_instruments}个标的上盈利")
+            if runtime_config:
+                print(f"  ✓ 运行时配置已保存")
         else:
             print(f"\n✓ 全局稳健参数已保存到 {save_params_file}")
             print(f"  参数: {params_str}")

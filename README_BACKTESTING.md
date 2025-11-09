@@ -16,13 +16,13 @@ python -m etf_selector.main --data-dir data/chinese_etf --output results/trend_e
 ./run_backtest.sh  --stock-list results/trend_etf_pool.csv --strategy sma_cross_enhanced --optimize --data-dir data/chinese_etf/daily --save-params config/sma_strategy_params.json --output-dir results/exp_sma_enable_loss_protect --enable-loss-protection
 
 ### 策略2：MACD交叉策略 + 止损
-./run_backtest.sh --stock-list results/trend_etf_pool.csv --strategy macd_cross --data-dir data/chinese_etf/daily --save-params config/macd_strategy_params.json
+./run_backtest.sh --stock-list results/trend_etf_pool.csv --strategy macd_cross --optimize --data-dir data/chinese_etf/daily --save-params config/macd_strategy_params.json --enable-loss-protection --output-dir results/exp_macd_enable_loss_protect
 
 ## # Day 0: 初始化持仓
 ./generate_daily_signals.sh --init 100000 --portfolio-file positions/etf_sma_cross_portfolio.json
 ./generate_daily_signals.sh --init 100000 --portfolio-file positions/etf_macd_cross_portfolio.json
 
 ## 根据超参获取今天信号
-./generate_daily_signals.sh --analyze --strategy sma_cross --stock-list results/trend_etf_pool.csv --portfolio-file positions/etf_macd_portfolio.json --load-params config/sma_strategy_params.json --data-dir data/chinese_etf/daily
+./generate_daily_signals.sh --analyze --strategy sma_cross_enhanced --stock-list results/trend_etf_pool.csv --portfolio-file positions/etf_sma_cross_portfolio.json --load-params config/sma_strategy_params.json --data-dir data/chinese_etf/daily
 ./generate_daily_signals.sh --analyze --strategy macd_cross --stock-list results/trend_etf_pool.csv --portfolio-file positions/etf_macd_cross_portfolio.json --load-params config/macd_strategy_params.json --data-dir data/chinese_etf/daily
 

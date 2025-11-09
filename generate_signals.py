@@ -994,6 +994,9 @@ def main():
             if args.strategy == 'sma_cross':
                 from strategies.sma_cross import SmaCross
                 strategy_class = SmaCross
+            elif args.strategy == 'sma_cross_enhanced':
+                from strategies.sma_cross_enhanced import SmaCrossEnhanced
+                strategy_class = SmaCrossEnhanced
             elif args.strategy == 'macd_cross':
                 from strategies.macd_cross import MacdCross
                 strategy_class = MacdCross
@@ -1014,6 +1017,31 @@ def main():
                 loaded_params = params_manager.get_strategy_params(args.strategy)
                 strategy_params.update(loaded_params)
                 print(f"✓ 从配置文件加载参数: {loaded_params}")
+
+                # 新增：加载运行时配置（过滤器、止损保护等）
+                runtime_config = params_manager.get_runtime_config(args.strategy)
+                if runtime_config:
+                    print(f"✓ 从配置文件加载运行时配置")
+                    # 合并过滤器配置
+                    if 'filters' in runtime_config:
+                        strategy_params.update(runtime_config['filters'])
+                        filters_info = ', '.join([
+                            f"{k.replace('enable_', '')}={'ON' if v else 'OFF'}"
+                            for k, v in runtime_config['filters'].items()
+                            if k.startswith('enable_')
+                        ])
+                        print(f"  过滤器: {filters_info}")
+
+                    # 合并止损保护配置
+                    if 'loss_protection' in runtime_config:
+                        strategy_params.update(runtime_config['loss_protection'])
+                        if runtime_config['loss_protection'].get('enable_loss_protection'):
+                            print(f"  止损保护: ON (连续亏损={runtime_config['loss_protection'].get('max_consecutive_losses')}, 暂停={runtime_config['loss_protection'].get('pause_bars')})")
+                        else:
+                            print(f"  止损保护: OFF")
+                else:
+                    print("  ⚠️ 配置文件中没有运行时配置，使用默认值")
+
             except Exception as e:
                 print(f"⚠️ 加载配置文件失败: {e}")
                 print("使用命令行参数或默认参数")
@@ -1160,6 +1188,9 @@ def main():
         if args.strategy == 'sma_cross':
             from strategies.sma_cross import SmaCross
             strategy_class = SmaCross
+        elif args.strategy == 'sma_cross_enhanced':
+            from strategies.sma_cross_enhanced import SmaCrossEnhanced
+            strategy_class = SmaCrossEnhanced
         elif args.strategy == 'macd_cross':
             from strategies.macd_cross import MacdCross
             strategy_class = MacdCross

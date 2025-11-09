@@ -139,9 +139,10 @@ class StrategyParamsManager:
                                 performance_stats: Dict[str, float],
                                 optimization_period: str = None,
                                 stock_pool: str = None,
-                                notes: str = None):
+                                notes: str = None,
+                                runtime_config: Dict[str, Any] = None):
         """
-        保存优化结果
+        保存优化结果（支持运行时配置）
 
         Args:
             strategy_name: 策略名称
@@ -150,6 +151,7 @@ class StrategyParamsManager:
             optimization_period: 优化数据期间
             stock_pool: 股票池文件
             notes: 备注信息
+            runtime_config: 运行时配置（过滤器、止损保护等）
         """
         config = self.load_config()
 
@@ -176,8 +178,78 @@ class StrategyParamsManager:
             "notes": notes or f"参数优化于 {datetime.now().strftime('%Y-%m-%d')}"
         })
 
+        # 保存运行时配置（如果提供）
+        if runtime_config:
+            config[strategy_name]["runtime_config"] = runtime_config
+
         self.save_config(config)
         print(f"✓ 已保存策略 {strategy_name} 的优化参数到 {self.config_file}")
+
+    def get_runtime_config(self, strategy_name: str) -> Optional[Dict[str, Any]]:
+        """
+        获取策略运行时配置
+
+        Args:
+            strategy_name: 策略名称
+
+        Returns:
+            运行时配置字典，如果不存在则返回 None
+        """
+        try:
+            strategy_info = self.get_strategy_info(strategy_name)
+            return strategy_info.get('runtime_config', None)
+        except ValueError:
+            return None
+
+    def validate_runtime_config(self, config: Dict[str, Any], schema: Dict[str, Any]) -> None:
+        """
+        验证运行时配置的完整性和参数范围
+
+        Args:
+            config: 运行时配置
+            schema: 配置结构定义
+
+        Raises:
+            ValueError: 配置验证失败
+        """
+        errors = []
+
+        for section, params in schema.items():
+            if section not in config:
+                errors.append(f"缺少配置节: {section}")
+                continue
+
+            for param_name, param_spec in params.items():
+                if param_name not in config[section]:
+                    errors.append(
+                        f"缺少参数: {section}.{param_name} "
+                        f"(默认值: {param_spec.get('default')})"
+                    )
+                    continue
+
+                value = config[section][param_name]
+                param_type = param_spec.get('type')
+                param_range = param_spec.get('range')
+
+                # 类型检查
+                if param_type == 'int' and not isinstance(value, int):
+                    errors.append(f"{section}.{param_name} 应该是整数，实际: {type(value).__name__}")
+                elif param_type == 'float' and not isinstance(value, (int, float)):
+                    errors.append(f"{section}.{param_name} 应该是浮点数，实际: {type(value).__name__}")
+                elif param_type == 'bool' and not isinstance(value, bool):
+                    errors.append(f"{section}.{param_name} 应该是布尔值，实际: {type(value).__name__}")
+
+                # 范围检查
+                if param_range and isinstance(value, (int, float)):
+                    if value < param_range[0] or value > param_range[1]:
+                        errors.append(
+                            f"{section}.{param_name} 超出范围 {param_range}，实际: {value}"
+                        )
+
+        if errors:
+            raise ValueError(
+                "运行时配置验证失败:\n" + "\n".join(f"  - {e}" for e in errors)
+            )
 
     def is_strategy_optimized(self, strategy_name: str) -> bool:
         """

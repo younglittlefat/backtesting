@@ -44,11 +44,8 @@ def create_argument_parser() -> argparse.ArgumentParser:
     # === 低波动过滤参数 ===
     _add_volatility_filter_arguments(parser)
 
-    # === 过滤器参数（sma_cross_enhanced 策略专用）===
-    _add_sma_filter_arguments(parser)
-
-    # === MACD策略过滤器参数 ===
-    _add_macd_filter_arguments(parser)
+    # === 策略过滤器参数（通用，适用于所有策略）===
+    _add_strategy_filter_arguments(parser)
 
     return parser
 
@@ -193,9 +190,9 @@ def _add_volatility_filter_arguments(parser: argparse.ArgumentParser) -> None:
     )
 
 
-def _add_sma_filter_arguments(parser: argparse.ArgumentParser) -> None:
-    """添加双均线增强策略过滤器参数"""
-    filter_group = parser.add_argument_group('过滤器参数（仅sma_cross_enhanced策略可用）')
+def _add_strategy_filter_arguments(parser: argparse.ArgumentParser) -> None:
+    """添加策略过滤器参数（通用，适用于所有策略）"""
+    filter_group = parser.add_argument_group('策略过滤器参数（通用，适用于所有策略）')
 
     # 过滤器开关
     filter_group.add_argument(
@@ -221,7 +218,12 @@ def _add_sma_filter_arguments(parser: argparse.ArgumentParser) -> None:
     filter_group.add_argument(
         '--enable-loss-protection',
         action='store_true',
-        help='启用连续止损保护（推荐，夏普比率+75%%，最大回撤-34%%）',
+        help='启用连续止损保护（⭐⭐⭐强烈推荐，夏普比率+75%%，最大回撤-34%%）',
+    )
+    filter_group.add_argument(
+        '--enable-trailing-stop',
+        action='store_true',
+        help='启用跟踪止损',
     )
 
     # 过滤器参数配置
@@ -273,105 +275,19 @@ def _add_sma_filter_arguments(parser: argparse.ArgumentParser) -> None:
         default=10,
         help='触发保护后暂停的K线数，默认10（推荐值，来自实验结果）',
     )
-
-
-def _add_macd_filter_arguments(parser: argparse.ArgumentParser) -> None:
-    """添加MACD策略过滤器参数"""
-    macd_filter_group = parser.add_argument_group('MACD策略过滤器参数（仅macd_cross策略可用）')
-
-    # MACD过滤器开关
-    macd_filter_group.add_argument(
-        '--enable-macd-adx-filter',
-        action='store_true',
-        help='启用MACD策略的ADX过滤器',
-    )
-    macd_filter_group.add_argument(
-        '--enable-macd-volume-filter',
-        action='store_true',
-        help='启用MACD策略的成交量过滤器',
-    )
-    macd_filter_group.add_argument(
-        '--enable-macd-slope-filter',
-        action='store_true',
-        help='启用MACD策略的MACD斜率过滤器',
-    )
-    macd_filter_group.add_argument(
-        '--enable-macd-confirm-filter',
-        action='store_true',
-        help='启用MACD策略的持续确认过滤器',
-    )
-
-    # MACD过滤器参数配置
-    macd_filter_group.add_argument(
-        '--macd-adx-period',
-        type=int,
-        default=14,
-        help='MACD策略ADX计算周期，默认14',
-    )
-    macd_filter_group.add_argument(
-        '--macd-adx-threshold',
-        type=float,
-        default=25.0,
-        help='MACD策略ADX阈值，默认25',
-    )
-    macd_filter_group.add_argument(
-        '--macd-volume-period',
-        type=int,
-        default=20,
-        help='MACD策略成交量均值周期，默认20',
-    )
-    macd_filter_group.add_argument(
-        '--macd-volume-ratio',
-        type=float,
-        default=1.2,
-        help='MACD策略成交量放大倍数，默认1.2',
-    )
-    macd_filter_group.add_argument(
-        '--macd-slope-lookback',
-        type=int,
-        default=5,
-        help='MACD斜率回溯周期，默认5',
-    )
-    macd_filter_group.add_argument(
-        '--macd-confirm-bars',
-        type=int,
-        default=2,
-        help='MACD确认所需K线数，默认2',
-    )
-
-    # MACD止损保护参数（Phase 3）
-    macd_filter_group.add_argument(
-        '--enable-macd-loss-protection',
-        action='store_true',
-        help='启用MACD策略的连续止损保护（⭐⭐⭐强烈推荐）',
-    )
-    macd_filter_group.add_argument(
-        '--macd-max-consecutive-losses',
-        type=int,
-        default=3,
-        help='MACD策略连续亏损次数阈值，默认3',
-    )
-    macd_filter_group.add_argument(
-        '--macd-pause-bars',
-        type=int,
-        default=10,
-        help='MACD策略触发保护后暂停交易的K线数，默认10',
-    )
-    macd_filter_group.add_argument(
-        '--macd-debug-loss-protection',
-        action='store_true',
-        help='启用MACD策略止损保护调试日志',
-    )
-
-    # MACD跟踪止损参数（Phase 3b）
-    macd_filter_group.add_argument(
-        '--enable-macd-trailing-stop',
-        action='store_true',
-        help='启用MACD策略的跟踪止损',
-    )
-    macd_filter_group.add_argument(
-        '--macd-trailing-stop-pct',
+    filter_group.add_argument(
+        '--trailing-stop-pct',
         type=float,
         default=0.05,
-        help='MACD策略跟踪止损百分比，默认0.05（5%%）',
+        help='跟踪止损百分比，默认0.05（5%%）',
     )
+    filter_group.add_argument(
+        '--debug-loss-protection',
+        action='store_true',
+        help='启用止损保护调试日志',
+    )
+
+
+# Note: MACD特定参数已移除，所有策略现在使用统一的过滤器参数
+# 参见 _add_strategy_filter_arguments() 函数
+

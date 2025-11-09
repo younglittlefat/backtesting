@@ -53,12 +53,13 @@ ${YELLOW}选项:${NC}
   --verbose                    输出详细日志（默认仅显示汇总）
   --save-params <file>         保存优化参数到配置文件（仅在--optimize时有效）
 
-${YELLOW}过滤器选项（仅sma_cross_enhanced策略可用）:${NC}
+${YELLOW}过滤器选项（适用于所有策略）:${NC}
   --enable-adx-filter          启用ADX趋势强度过滤器 ⭐推荐
   --enable-volume-filter       启用成交量确认过滤器 ⭐推荐
   --enable-slope-filter        启用均线斜率过滤器
   --enable-confirm-filter      启用持续确认过滤器
   --enable-loss-protection     启用连续止损保护 ⭐⭐⭐强烈推荐（夏普比率+75%, 最大回撤-34%）
+  --enable-trailing-stop       启用跟踪止损
   --adx-threshold <value>      ADX阈值 (默认: 25)
   --adx-period <value>         ADX计算周期 (默认: 14)
   --volume-ratio <value>       成交量放大倍数 (默认: 1.2)
@@ -67,24 +68,8 @@ ${YELLOW}过滤器选项（仅sma_cross_enhanced策略可用）:${NC}
   --confirm-bars <value>       持续确认K线数 (默认: 2)
   --max-consecutive-losses <value>  连续亏损次数阈值 (默认: 3，推荐值)
   --pause-bars <value>         暂停交易K线数 (默认: 10，推荐值)
-
-${YELLOW}MACD策略过滤器选项（仅macd_cross策略可用）:${NC}
-  --enable-macd-adx-filter     启用MACD策略的ADX过滤器 ⭐推荐
-  --enable-macd-volume-filter  启用MACD策略的成交量过滤器 ⭐推荐
-  --enable-macd-slope-filter   启用MACD策略的MACD斜率过滤器
-  --enable-macd-confirm-filter 启用MACD策略的持续确认过滤器
-  --enable-macd-loss-protection 启用MACD策略的连续止损保护 ⭐⭐⭐强烈推荐
-  --enable-macd-trailing-stop  启用MACD策略的跟踪止损
-  --macd-adx-threshold <value> MACD策略ADX阈值 (默认: 25)
-  --macd-adx-period <value>    MACD策略ADX周期 (默认: 14)
-  --macd-volume-ratio <value>  MACD策略成交量倍数 (默认: 1.2)
-  --macd-volume-period <value> MACD策略成交量周期 (默认: 20)
-  --macd-slope-lookback <value> MACD斜率回溯周期 (默认: 5)
-  --macd-confirm-bars <value>  MACD确认K线数 (默认: 2)
-  --macd-max-consecutive-losses <value> MACD连续亏损次数阈值 (默认: 3，推荐值)
-  --macd-pause-bars <value>    MACD暂停交易K线数 (默认: 10，推荐值)
-  --macd-trailing-stop-pct <value> MACD跟踪止损百分比 (默认: 0.05，即5%)
-  --macd-debug-loss-protection 启用MACD止损保护调试日志
+  --trailing-stop-pct <value>  跟踪止损百分比 (默认: 0.05，即5%)
+  --debug-loss-protection      启用止损保护调试日志
 
   -h, --help                   显示此帮助信息
 
@@ -114,14 +99,15 @@ ${YELLOW}示例:${NC}
   $0 --stock-list results/trend_etf_pool.csv -t macd_cross \
      --data-dir data/chinese_etf/daily
 
-  ${GREEN}# MACD策略：启用ADX过滤器${NC}
-  $0 -s 510300.SH -t macd_cross --enable-macd-adx-filter \
+  ${GREEN}# MACD策略：启用ADX过滤器（使用统一参数）${NC}
+  $0 -s 510300.SH -t macd_cross --enable-adx-filter \
      --data-dir data/chinese_etf/daily
 
-  ${GREEN}# MACD策略：启用所有过滤器${NC}
+  ${GREEN}# MACD策略：启用所有过滤器（使用统一参数）${NC}
   $0 --stock-list results/trend_etf_pool.csv -t macd_cross -o \
-     --enable-macd-adx-filter --enable-macd-volume-filter \
-     --enable-macd-slope-filter --enable-macd-confirm-filter \
+     --enable-adx-filter --enable-volume-filter \
+     --enable-slope-filter --enable-confirm-filter \
+     --enable-loss-protection --enable-trailing-stop \
      --data-dir data/chinese_etf/daily
 
   ${GREEN}# 回测并保存优化参数到配置文件${NC}
@@ -369,42 +355,12 @@ main() {
     PAUSE_BARS_VALUE="10"
     PAUSE_BARS_ARGS=()
 
-    # MACD过滤器参数初始化
-    ENABLE_MACD_ADX_FILTER_FLAG=0
-    ENABLE_MACD_VOLUME_FILTER_FLAG=0
-    ENABLE_MACD_SLOPE_FILTER_FLAG=0
-    ENABLE_MACD_CONFIRM_FILTER_FLAG=0
-    ENABLE_MACD_LOSS_PROTECTION_FLAG=0
-    ENABLE_MACD_TRAILING_STOP_FLAG=0
+    ENABLE_TRAILING_STOP_FLAG=0
 
-    MACD_ADX_THRESHOLD_VALUE="25"
-    MACD_ADX_THRESHOLD_ARGS=()
+    TRAILING_STOP_PCT_VALUE="0.05"
+    TRAILING_STOP_PCT_ARGS=()
 
-    MACD_ADX_PERIOD_VALUE="14"
-    MACD_ADX_PERIOD_ARGS=()
-
-    MACD_VOLUME_RATIO_VALUE="1.2"
-    MACD_VOLUME_RATIO_ARGS=()
-
-    MACD_VOLUME_PERIOD_VALUE="20"
-    MACD_VOLUME_PERIOD_ARGS=()
-
-    MACD_SLOPE_LOOKBACK_VALUE="5"
-    MACD_SLOPE_LOOKBACK_ARGS=()
-
-    MACD_CONFIRM_BARS_VALUE="2"
-    MACD_CONFIRM_BARS_ARGS=()
-
-    MACD_MAX_CONSECUTIVE_LOSSES_VALUE="3"
-    MACD_MAX_CONSECUTIVE_LOSSES_ARGS=()
-
-    MACD_PAUSE_BARS_VALUE="10"
-    MACD_PAUSE_BARS_ARGS=()
-
-    MACD_TRAILING_STOP_PCT_VALUE="0.05"
-    MACD_TRAILING_STOP_PCT_ARGS=()
-
-    MACD_DEBUG_LOSS_PROTECTION_FLAG=0
+    DEBUG_LOSS_PROTECTION_FLAG=0
 
     # 解析命令行参数
     while [[ $# -gt 0 ]]; do
@@ -554,77 +510,17 @@ main() {
                 PAUSE_BARS_ARGS=("--pause-bars" "$2")
                 shift 2
                 ;;
-            --enable-macd-adx-filter)
-                ENABLE_MACD_ADX_FILTER_FLAG=1
+            --enable-trailing-stop)
+                ENABLE_TRAILING_STOP_FLAG=1
                 shift
                 ;;
-            --enable-macd-volume-filter)
-                ENABLE_MACD_VOLUME_FILTER_FLAG=1
-                shift
-                ;;
-            --enable-macd-slope-filter)
-                ENABLE_MACD_SLOPE_FILTER_FLAG=1
-                shift
-                ;;
-            --enable-macd-confirm-filter)
-                ENABLE_MACD_CONFIRM_FILTER_FLAG=1
-                shift
-                ;;
-            --enable-macd-loss-protection)
-                ENABLE_MACD_LOSS_PROTECTION_FLAG=1
-                shift
-                ;;
-            --enable-macd-trailing-stop)
-                ENABLE_MACD_TRAILING_STOP_FLAG=1
-                shift
-                ;;
-            --macd-adx-threshold)
-                MACD_ADX_THRESHOLD_VALUE="$2"
-                MACD_ADX_THRESHOLD_ARGS=("--macd-adx-threshold" "$2")
+            --trailing-stop-pct)
+                TRAILING_STOP_PCT_VALUE="$2"
+                TRAILING_STOP_PCT_ARGS=("--trailing-stop-pct" "$2")
                 shift 2
                 ;;
-            --macd-adx-period)
-                MACD_ADX_PERIOD_VALUE="$2"
-                MACD_ADX_PERIOD_ARGS=("--macd-adx-period" "$2")
-                shift 2
-                ;;
-            --macd-volume-ratio)
-                MACD_VOLUME_RATIO_VALUE="$2"
-                MACD_VOLUME_RATIO_ARGS=("--macd-volume-ratio" "$2")
-                shift 2
-                ;;
-            --macd-volume-period)
-                MACD_VOLUME_PERIOD_VALUE="$2"
-                MACD_VOLUME_PERIOD_ARGS=("--macd-volume-period" "$2")
-                shift 2
-                ;;
-            --macd-slope-lookback)
-                MACD_SLOPE_LOOKBACK_VALUE="$2"
-                MACD_SLOPE_LOOKBACK_ARGS=("--macd-slope-lookback" "$2")
-                shift 2
-                ;;
-            --macd-confirm-bars)
-                MACD_CONFIRM_BARS_VALUE="$2"
-                MACD_CONFIRM_BARS_ARGS=("--macd-confirm-bars" "$2")
-                shift 2
-                ;;
-            --macd-max-consecutive-losses)
-                MACD_MAX_CONSECUTIVE_LOSSES_VALUE="$2"
-                MACD_MAX_CONSECUTIVE_LOSSES_ARGS=("--macd-max-consecutive-losses" "$2")
-                shift 2
-                ;;
-            --macd-pause-bars)
-                MACD_PAUSE_BARS_VALUE="$2"
-                MACD_PAUSE_BARS_ARGS=("--macd-pause-bars" "$2")
-                shift 2
-                ;;
-            --macd-trailing-stop-pct)
-                MACD_TRAILING_STOP_PCT_VALUE="$2"
-                MACD_TRAILING_STOP_PCT_ARGS=("--macd-trailing-stop-pct" "$2")
-                shift 2
-                ;;
-            --macd-debug-loss-protection)
-                MACD_DEBUG_LOSS_PROTECTION_FLAG=1
+            --debug-loss-protection)
+                DEBUG_LOSS_PROTECTION_FLAG=1
                 shift
                 ;;
             -h|--help)
@@ -838,56 +734,17 @@ main() {
         CMD+=("${PAUSE_BARS_ARGS[@]}")
     fi
 
-    # 添加MACD过滤器开关参数
-    if [ $ENABLE_MACD_ADX_FILTER_FLAG -eq 1 ]; then
-        CMD+=("--enable-macd-adx-filter")
+    # 添加跟踪止损参数（通用）
+    if [ $ENABLE_TRAILING_STOP_FLAG -eq 1 ]; then
+        CMD+=("--enable-trailing-stop")
     fi
-    if [ $ENABLE_MACD_VOLUME_FILTER_FLAG -eq 1 ]; then
-        CMD+=("--enable-macd-volume-filter")
-    fi
-    if [ $ENABLE_MACD_SLOPE_FILTER_FLAG -eq 1 ]; then
-        CMD+=("--enable-macd-slope-filter")
-    fi
-    if [ $ENABLE_MACD_CONFIRM_FILTER_FLAG -eq 1 ]; then
-        CMD+=("--enable-macd-confirm-filter")
-    fi
-    if [ $ENABLE_MACD_LOSS_PROTECTION_FLAG -eq 1 ]; then
-        CMD+=("--enable-macd-loss-protection")
-    fi
-    if [ $ENABLE_MACD_TRAILING_STOP_FLAG -eq 1 ]; then
-        CMD+=("--enable-macd-trailing-stop")
+    if [ ${#TRAILING_STOP_PCT_ARGS[@]} -gt 0 ]; then
+        CMD+=("${TRAILING_STOP_PCT_ARGS[@]}")
     fi
 
-    # 添加MACD过滤器配置参数
-    if [ ${#MACD_ADX_THRESHOLD_ARGS[@]} -gt 0 ]; then
-        CMD+=("${MACD_ADX_THRESHOLD_ARGS[@]}")
-    fi
-    if [ ${#MACD_ADX_PERIOD_ARGS[@]} -gt 0 ]; then
-        CMD+=("${MACD_ADX_PERIOD_ARGS[@]}")
-    fi
-    if [ ${#MACD_VOLUME_RATIO_ARGS[@]} -gt 0 ]; then
-        CMD+=("${MACD_VOLUME_RATIO_ARGS[@]}")
-    fi
-    if [ ${#MACD_VOLUME_PERIOD_ARGS[@]} -gt 0 ]; then
-        CMD+=("${MACD_VOLUME_PERIOD_ARGS[@]}")
-    fi
-    if [ ${#MACD_SLOPE_LOOKBACK_ARGS[@]} -gt 0 ]; then
-        CMD+=("${MACD_SLOPE_LOOKBACK_ARGS[@]}")
-    fi
-    if [ ${#MACD_CONFIRM_BARS_ARGS[@]} -gt 0 ]; then
-        CMD+=("${MACD_CONFIRM_BARS_ARGS[@]}")
-    fi
-    if [ ${#MACD_MAX_CONSECUTIVE_LOSSES_ARGS[@]} -gt 0 ]; then
-        CMD+=("${MACD_MAX_CONSECUTIVE_LOSSES_ARGS[@]}")
-    fi
-    if [ ${#MACD_PAUSE_BARS_ARGS[@]} -gt 0 ]; then
-        CMD+=("${MACD_PAUSE_BARS_ARGS[@]}")
-    fi
-    if [ ${#MACD_TRAILING_STOP_PCT_ARGS[@]} -gt 0 ]; then
-        CMD+=("${MACD_TRAILING_STOP_PCT_ARGS[@]}")
-    fi
-    if [ $MACD_DEBUG_LOSS_PROTECTION_FLAG -eq 1 ]; then
-        CMD+=("--macd-debug-loss-protection")
+    # 添加调试参数
+    if [ $DEBUG_LOSS_PROTECTION_FLAG -eq 1 ]; then
+        CMD+=("--debug-loss-protection")
     fi
 
     echo -e "${YELLOW}执行命令:${NC} ${CMD[*]}"

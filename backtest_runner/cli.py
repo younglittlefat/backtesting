@@ -419,10 +419,20 @@ def _process_results(all_results: List[Dict], args, verbose: bool) -> None:
 
     # 保存最优参数到配置文件（如果指定了save_params且在优化模式）
     if args.save_params and args.optimize:
+        # 获取策略名称
+        strategy_name = args.strategy if args.strategy != 'all' else 'sma_cross'
+        # 获取策略类
+        strategy_class = STRATEGIES[strategy_name]
+        # 构建过滤器参数
+        from backtest_runner.processing import build_filter_params
+        filter_params = build_filter_params(strategy_name, args)
+
         save_best_params(
             all_results=all_results,
             save_params_file=args.save_params,
-            strategy_name=args.strategy if args.strategy != 'all' else 'sma_cross',
+            strategy_name=strategy_name,
+            strategy_class=strategy_class,  # 新增：策略类
+            filter_params=filter_params,  # 新增：过滤器参数
             start_date=args.start_date,
             end_date=args.end_date,
             verbose=verbose

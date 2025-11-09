@@ -19,7 +19,6 @@ import sys
 import random
 from pathlib import Path
 import pandas as pd
-from backtesting import Strategy
 from backtesting.lib import crossover
 
 # 添加项目根目录到路径（用于直接运行）
@@ -27,6 +26,7 @@ if __name__ == '__main__':
     project_root = Path(__file__).parent.parent
     sys.path.insert(0, str(project_root))
 
+from strategies.base_strategy import BaseEnhancedStrategy
 from strategies.filters import (
     SlopeFilter, ADXFilter, VolumeFilter,
     ConfirmationFilter
@@ -47,7 +47,7 @@ def SMA(values, n):
     return pd.Series(values).rolling(n).mean()
 
 
-class SmaCrossEnhanced(Strategy):
+class SmaCrossEnhanced(BaseEnhancedStrategy):
     """
     增强版双均线交叉策略
 
@@ -75,19 +75,21 @@ class SmaCrossEnhanced(Strategy):
         # 止损参数（基于实验推荐值）
         max_consecutive_losses: 连续亏损次数阈值 (默认3)
         pause_bars: 暂停交易的K线数 (默认10)
+
+    注意: 此策略继承自 BaseEnhancedStrategy，自动获得运行时参数导出能力
     """
 
     # 策略参数 - 定义为类变量以便优化
     n1 = 10  # 短期均线周期
     n2 = 20  # 长期均线周期
 
-    # 过滤器开关
+    # 过滤器开关（继承自 BaseEnhancedStrategy，可覆盖）
     enable_slope_filter = False
     enable_adx_filter = False
     enable_volume_filter = False
     enable_confirm_filter = False
 
-    # 过滤器参数
+    # 过滤器参数（继承自 BaseEnhancedStrategy，可覆盖）
     slope_lookback = 5
     adx_period = 14
     adx_threshold = 25
@@ -95,10 +97,10 @@ class SmaCrossEnhanced(Strategy):
     volume_ratio = 1.2
     confirm_bars = 3
 
-    # 止损功能开关（Phase 6新增）
+    # 止损功能开关（Phase 6新增，继承自 BaseEnhancedStrategy）
     enable_loss_protection = False  # 启用连续止损保护（推荐，夏普比率+75%）
 
-    # 止损参数（基于实验推荐值）
+    # 止损参数（基于实验推荐值，继承自 BaseEnhancedStrategy）
     max_consecutive_losses = 3  # 连续亏损次数阈值
     pause_bars = 10  # 暂停交易的K线数
 
