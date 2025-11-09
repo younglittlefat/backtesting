@@ -34,7 +34,8 @@ from utils.data_loader import (
     load_instrument_data,
 )
 from utils.trading_cost import TradingCostConfig, TradingCostCalculator, get_cost_summary
-from strategies.sma_cross import SmaCross, OPTIMIZE_PARAMS, CONSTRAINTS
+from strategies.sma_cross import SmaCross
+from strategies.sma_cross_enhanced import SmaCrossEnhanced
 from utils.strategy_params_manager import StrategyParamsManager
 from common.mysql_manager import MySQLManager
 
@@ -46,6 +47,7 @@ warnings.filterwarnings('ignore', category=UserWarning, module='backtesting')
 # 可用的策略映射
 STRATEGIES = {
     'sma_cross': SmaCross,
+    'sma_cross_enhanced': SmaCrossEnhanced,
 }
 
 
@@ -479,6 +481,7 @@ def run_single_backtest(
     end_date: Optional[str] = None,
     verbose: bool = False,
     save_params_file: Optional[str] = None,  # 保留参数但不在函数内使用
+    filter_params: Optional[Dict] = None,  # 新增：过滤器参数
 ) -> pd.Series:
     """
     运行单次回测。
@@ -486,6 +489,7 @@ def run_single_backtest(
     Args:
         cost_config: 交易成本配置对象（优先使用）
         commission: 旧版本兼容参数，当 cost_config 为 None 时使用
+        filter_params: 过滤器参数字典（仅对sma_cross_enhanced策略有效）
     """
     display_name = resolve_display_name(instrument)
 
@@ -525,12 +529,25 @@ def run_single_backtest(
     )
 
     if optimize:
+        # 从策略类获取优化参数和约束
+        optimize_params = getattr(strategy_class, 'OPTIMIZE_PARAMS', {
+            'n1': range(5, 51, 5),
+            'n2': range(20, 201, 20),
+        })
+        constraints = getattr(strategy_class, 'CONSTRAINTS', lambda p: p.n1 < p.n2)
+
         if verbose:
             print("\n开始参数优化...")
-            print(f"参数空间: {OPTIMIZE_PARAMS}")
+            print(f"参数空间: {optimize_params}")
+
+        # 合并过滤器参数
+        run_kwargs = {**optimize_params}
+        if filter_params:
+            run_kwargs.update(filter_params)
+
         stats = bt.optimize(
-            **OPTIMIZE_PARAMS,
-            constraint=CONSTRAINTS,
+            **run_kwargs,
+            constraint=constraints,
             maximize='Sharpe Ratio',
             max_tries=200,
             random_state=42,
@@ -546,7 +563,10 @@ def run_single_backtest(
     else:
         if verbose:
             print("\n运行回测...")
-        stats = bt.run()
+
+        # 传入过滤器参数
+        run_kwargs = filter_params if filter_params else {}
+        stats = bt.run(**run_kwargs)
 
     if verbose:
         print("\n" + "-" * 70)
@@ -794,6 +814,86 @@ def main() -> int:
         help='保存优化参数到指定配置文件（仅在optimize模式下有效）。',
     )
 
+    # === 过滤器参数（sma_cross_enhanced 策略专用）===
+    filter_group = parser.add_argument_group('过滤器参数（仅sma_cross_enhanced策略可用）')
+
+    # 过滤器开关
+    filter_group.add_argument(
+        '--enable-slope-filter',
+        action='store_true',
+        help='启用均线斜率过滤器',
+    )
+    filter_group.add_argument(
+        '--enable-adx-filter',
+        action='store_true',
+        help='启用ADX趋势强度过滤器',
+    )
+    filter_group.add_argument(
+        '--enable-volume-filter',
+        action='store_true',
+        help='启用成交量确认过滤器',
+    )
+    filter_group.add_argument(
+        '--enable-confirm-filter',
+        action='store_true',
+        help='启用持续确认过滤器',
+    )
+    filter_group.add_argument(
+        '--enable-loss-protection',
+        action='store_true',
+        help='启用连续止损保护过滤器',
+    )
+
+    # 过滤器参数配置
+    filter_group.add_argument(
+        '--slope-lookback',
+        type=int,
+        default=5,
+        help='斜率过滤器回溯周期，默认5',
+    )
+    filter_group.add_argument(
+        '--adx-period',
+        type=int,
+        default=14,
+        help='ADX计算周期，默认14',
+    )
+    filter_group.add_argument(
+        '--adx-threshold',
+        type=float,
+        default=25.0,
+        help='ADX阈值，默认25',
+    )
+    filter_group.add_argument(
+        '--volume-period',
+        type=int,
+        default=20,
+        help='成交量均值周期，默认20',
+    )
+    filter_group.add_argument(
+        '--volume-ratio',
+        type=float,
+        default=1.2,
+        help='成交量放大倍数，默认1.2',
+    )
+    filter_group.add_argument(
+        '--confirm-bars',
+        type=int,
+        default=2,
+        help='持续确认所需K线数，默认2',
+    )
+    filter_group.add_argument(
+        '--max-losses',
+        type=int,
+        default=3,
+        help='触发保护的最大连续亏损次数，默认3',
+    )
+    filter_group.add_argument(
+        '--pause-bars',
+        type=int,
+        default=10,
+        help='触发保护后暂停的K线数，默认10',
+    )
+
     args = parser.parse_args()
 
     if args.instrument_limit is not None and args.instrument_limit <= 0:
@@ -996,6 +1096,30 @@ def main() -> int:
 
         for strategy_name in strategies_to_process:
             strategy_class = STRATEGIES[strategy_name]
+
+            # 构建过滤器参数（仅对 sma_cross_enhanced 有效）
+            filter_params = {}
+            if strategy_name == 'sma_cross_enhanced':
+                # 过滤器开关
+                if args.enable_slope_filter:
+                    filter_params['enable_slope_filter'] = True
+                    filter_params['slope_lookback'] = args.slope_lookback
+                if args.enable_adx_filter:
+                    filter_params['enable_adx_filter'] = True
+                    filter_params['adx_period'] = args.adx_period
+                    filter_params['adx_threshold'] = args.adx_threshold
+                if args.enable_volume_filter:
+                    filter_params['enable_volume_filter'] = True
+                    filter_params['volume_period'] = args.volume_period
+                    filter_params['volume_ratio'] = args.volume_ratio
+                if args.enable_confirm_filter:
+                    filter_params['enable_confirm_filter'] = True
+                    filter_params['confirm_bars'] = args.confirm_bars
+                if args.enable_loss_protection:
+                    filter_params['enable_loss_protection'] = True
+                    filter_params['max_losses'] = args.max_losses
+                    filter_params['pause_bars'] = args.pause_bars
+
             try:
                 if not verbose:
                     # 在非详细模式下提供进度反馈
@@ -1017,6 +1141,7 @@ def main() -> int:
                     end_date=args.end_date,
                     verbose=verbose,
                     save_params_file=args.save_params,
+                    filter_params=filter_params if filter_params else None,
                 )
 
                 # 保存结果和优化参数信息

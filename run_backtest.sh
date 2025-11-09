@@ -37,7 +37,7 @@ ${YELLOW}选项:${NC}
   -s, --stock <codes>          标的代码（逗号分隔），支持 category:etf 语法，默认 all
   --stock-list <csv_file>      从CSV文件读取标的列表（需包含ts_code列），优先级高于-s参数
   --category <names>           可选类别筛选（例如: etf,fund）
-  -t, --strategy <name>        策略名称: sma_cross, all (默认: sma_cross)
+  -t, --strategy <name>        策略名称: sma_cross, sma_cross_enhanced, all (默认: sma_cross)
   -o, --optimize               启用参数优化
   --cost-model <model>         费用模型: default, cn_etf, cn_stock, us_stock, custom (默认: cn_etf)
   -c, --commission <rate>      自定义佣金率（覆盖cost-model配置）
@@ -52,11 +52,40 @@ ${YELLOW}选项:${NC}
   --keep-negative              保留收益率为负的标的结果文件（默认会删除）
   --verbose                    输出详细日志（默认仅显示汇总）
   --save-params <file>         保存优化参数到配置文件（仅在--optimize时有效）
+
+${YELLOW}过滤器选项（仅sma_cross_enhanced策略可用）:${NC}
+  --enable-adx-filter          启用ADX趋势强度过滤器 ⭐推荐
+  --enable-volume-filter       启用成交量确认过滤器 ⭐推荐
+  --enable-slope-filter        启用均线斜率过滤器
+  --enable-confirm-filter      启用持续确认过滤器
+  --enable-loss-protection     启用连续止损保护过滤器
+  --adx-threshold <value>      ADX阈值 (默认: 25)
+  --adx-period <value>         ADX计算周期 (默认: 14)
+  --volume-ratio <value>       成交量放大倍数 (默认: 1.2)
+  --volume-period <value>      成交量均值周期 (默认: 20)
+  --slope-lookback <value>     斜率回溯周期 (默认: 5)
+  --confirm-bars <value>       持续确认K线数 (默认: 2)
+  --max-losses <value>         触发保护的连续亏损次数 (默认: 3)
+  --pause-bars <value>         触发保护后暂停的K线数 (默认: 10)
+
   -h, --help                   显示此帮助信息
 
 ${YELLOW}示例:${NC}
   ${GREEN}# 使用筛选器生成的ETF池进行回测（需指定data-dir）${NC}
   $0 --stock-list results/trend_etf_pool_20251107.csv -t sma_cross -o --data-dir data/csv/daily
+
+  ${GREEN}# 使用增强版策略 + ADX和成交量过滤器（推荐配置）${NC}
+  $0 --stock-list results/trend_etf_pool.csv -t sma_cross_enhanced -o \
+     --enable-adx-filter --enable-volume-filter --data-dir data/chinese_etf/daily
+
+  ${GREEN}# 测试不同的ADX阈值${NC}
+  $0 -s 561160.SH -t sma_cross_enhanced -o --enable-adx-filter \
+     --adx-threshold 30 --data-dir data/chinese_etf/daily
+
+  ${GREEN}# 启用所有过滤器${NC}
+  $0 --stock-list results/trend_etf_pool.csv -t sma_cross_enhanced -o \
+     --enable-adx-filter --enable-volume-filter --enable-slope-filter \
+     --data-dir data/chinese_etf/daily
 
   ${GREEN}# 回测并保存优化参数到配置文件${NC}
   $0 --stock-list results/trend_etf_pool_20251107.csv -t sma_cross -o --save-params config/strategy_params.json
