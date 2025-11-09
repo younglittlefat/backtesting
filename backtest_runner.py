@@ -926,6 +926,69 @@ def main() -> int:
         help='触发保护后暂停的K线数，默认10（推荐值，来自实验结果）',
     )
 
+    # MACD策略过滤器参数组
+    macd_filter_group = parser.add_argument_group('MACD策略过滤器参数（仅macd_cross策略可用）')
+
+    # MACD过滤器开关
+    macd_filter_group.add_argument(
+        '--enable-macd-adx-filter',
+        action='store_true',
+        help='启用MACD策略的ADX过滤器',
+    )
+    macd_filter_group.add_argument(
+        '--enable-macd-volume-filter',
+        action='store_true',
+        help='启用MACD策略的成交量过滤器',
+    )
+    macd_filter_group.add_argument(
+        '--enable-macd-slope-filter',
+        action='store_true',
+        help='启用MACD策略的MACD斜率过滤器',
+    )
+    macd_filter_group.add_argument(
+        '--enable-macd-confirm-filter',
+        action='store_true',
+        help='启用MACD策略的持续确认过滤器',
+    )
+
+    # MACD过滤器参数配置
+    macd_filter_group.add_argument(
+        '--macd-adx-period',
+        type=int,
+        default=14,
+        help='MACD策略ADX计算周期，默认14',
+    )
+    macd_filter_group.add_argument(
+        '--macd-adx-threshold',
+        type=float,
+        default=25.0,
+        help='MACD策略ADX阈值，默认25',
+    )
+    macd_filter_group.add_argument(
+        '--macd-volume-period',
+        type=int,
+        default=20,
+        help='MACD策略成交量均值周期，默认20',
+    )
+    macd_filter_group.add_argument(
+        '--macd-volume-ratio',
+        type=float,
+        default=1.2,
+        help='MACD策略成交量放大倍数，默认1.2',
+    )
+    macd_filter_group.add_argument(
+        '--macd-slope-lookback',
+        type=int,
+        default=5,
+        help='MACD斜率回溯周期，默认5',
+    )
+    macd_filter_group.add_argument(
+        '--macd-confirm-bars',
+        type=int,
+        default=2,
+        help='MACD确认所需K线数，默认2',
+    )
+
     args = parser.parse_args()
 
     if args.instrument_limit is not None and args.instrument_limit <= 0:
@@ -1151,6 +1214,24 @@ def main() -> int:
                     filter_params['enable_loss_protection'] = True
                     filter_params['max_consecutive_losses'] = args.max_consecutive_losses
                     filter_params['pause_bars'] = args.pause_bars
+
+            # 构建MACD过滤器参数（仅对 macd_cross 有效）
+            if strategy_name == 'macd_cross':
+                # MACD过滤器开关
+                if args.enable_macd_adx_filter:
+                    filter_params['enable_adx_filter'] = True
+                    filter_params['adx_period'] = args.macd_adx_period
+                    filter_params['adx_threshold'] = args.macd_adx_threshold
+                if args.enable_macd_volume_filter:
+                    filter_params['enable_volume_filter'] = True
+                    filter_params['volume_period'] = args.macd_volume_period
+                    filter_params['volume_ratio'] = args.macd_volume_ratio
+                if args.enable_macd_slope_filter:
+                    filter_params['enable_slope_filter'] = True
+                    filter_params['slope_lookback'] = args.macd_slope_lookback
+                if args.enable_macd_confirm_filter:
+                    filter_params['enable_confirm_filter'] = True
+                    filter_params['confirm_bars'] = args.macd_confirm_bars
 
             try:
                 if not verbose:

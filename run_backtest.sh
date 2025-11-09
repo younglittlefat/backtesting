@@ -68,6 +68,18 @@ ${YELLOW}过滤器选项（仅sma_cross_enhanced策略可用）:${NC}
   --max-consecutive-losses <value>  连续亏损次数阈值 (默认: 3，推荐值)
   --pause-bars <value>         暂停交易K线数 (默认: 10，推荐值)
 
+${YELLOW}MACD策略过滤器选项（仅macd_cross策略可用）:${NC}
+  --enable-macd-adx-filter     启用MACD策略的ADX过滤器 ⭐推荐
+  --enable-macd-volume-filter  启用MACD策略的成交量过滤器 ⭐推荐
+  --enable-macd-slope-filter   启用MACD策略的MACD斜率过滤器
+  --enable-macd-confirm-filter 启用MACD策略的持续确认过滤器
+  --macd-adx-threshold <value> MACD策略ADX阈值 (默认: 25)
+  --macd-adx-period <value>    MACD策略ADX周期 (默认: 14)
+  --macd-volume-ratio <value>  MACD策略成交量倍数 (默认: 1.2)
+  --macd-volume-period <value> MACD策略成交量周期 (默认: 20)
+  --macd-slope-lookback <value> MACD斜率回溯周期 (默认: 5)
+  --macd-confirm-bars <value>  MACD确认K线数 (默认: 2)
+
   -h, --help                   显示此帮助信息
 
 ${YELLOW}示例:${NC}
@@ -91,6 +103,20 @@ ${YELLOW}示例:${NC}
   $0 --stock-list results/trend_etf_pool.csv -t sma_cross_enhanced -o \
      --enable-adx-filter --enable-volume-filter --enable-slope-filter \
      --enable-loss-protection --data-dir data/chinese_etf/daily
+
+  ${GREEN}# MACD策略：基础回测${NC}
+  $0 --stock-list results/trend_etf_pool.csv -t macd_cross \
+     --data-dir data/chinese_etf/daily
+
+  ${GREEN}# MACD策略：启用ADX过滤器${NC}
+  $0 -s 510300.SH -t macd_cross --enable-macd-adx-filter \
+     --data-dir data/chinese_etf/daily
+
+  ${GREEN}# MACD策略：启用所有过滤器${NC}
+  $0 --stock-list results/trend_etf_pool.csv -t macd_cross -o \
+     --enable-macd-adx-filter --enable-macd-volume-filter \
+     --enable-macd-slope-filter --enable-macd-confirm-filter \
+     --data-dir data/chinese_etf/daily
 
   ${GREEN}# 回测并保存优化参数到配置文件${NC}
   $0 --stock-list results/trend_etf_pool_20251107.csv -t sma_cross -o --save-params config/strategy_params.json
@@ -337,6 +363,30 @@ main() {
     PAUSE_BARS_VALUE="10"
     PAUSE_BARS_ARGS=()
 
+    # MACD过滤器参数初始化
+    ENABLE_MACD_ADX_FILTER_FLAG=0
+    ENABLE_MACD_VOLUME_FILTER_FLAG=0
+    ENABLE_MACD_SLOPE_FILTER_FLAG=0
+    ENABLE_MACD_CONFIRM_FILTER_FLAG=0
+
+    MACD_ADX_THRESHOLD_VALUE="25"
+    MACD_ADX_THRESHOLD_ARGS=()
+
+    MACD_ADX_PERIOD_VALUE="14"
+    MACD_ADX_PERIOD_ARGS=()
+
+    MACD_VOLUME_RATIO_VALUE="1.2"
+    MACD_VOLUME_RATIO_ARGS=()
+
+    MACD_VOLUME_PERIOD_VALUE="20"
+    MACD_VOLUME_PERIOD_ARGS=()
+
+    MACD_SLOPE_LOOKBACK_VALUE="5"
+    MACD_SLOPE_LOOKBACK_ARGS=()
+
+    MACD_CONFIRM_BARS_VALUE="2"
+    MACD_CONFIRM_BARS_ARGS=()
+
     # 解析命令行参数
     while [[ $# -gt 0 ]]; do
         case $1 in
@@ -483,6 +533,52 @@ main() {
             --pause-bars)
                 PAUSE_BARS_VALUE="$2"
                 PAUSE_BARS_ARGS=("--pause-bars" "$2")
+                shift 2
+                ;;
+            --enable-macd-adx-filter)
+                ENABLE_MACD_ADX_FILTER_FLAG=1
+                shift
+                ;;
+            --enable-macd-volume-filter)
+                ENABLE_MACD_VOLUME_FILTER_FLAG=1
+                shift
+                ;;
+            --enable-macd-slope-filter)
+                ENABLE_MACD_SLOPE_FILTER_FLAG=1
+                shift
+                ;;
+            --enable-macd-confirm-filter)
+                ENABLE_MACD_CONFIRM_FILTER_FLAG=1
+                shift
+                ;;
+            --macd-adx-threshold)
+                MACD_ADX_THRESHOLD_VALUE="$2"
+                MACD_ADX_THRESHOLD_ARGS=("--macd-adx-threshold" "$2")
+                shift 2
+                ;;
+            --macd-adx-period)
+                MACD_ADX_PERIOD_VALUE="$2"
+                MACD_ADX_PERIOD_ARGS=("--macd-adx-period" "$2")
+                shift 2
+                ;;
+            --macd-volume-ratio)
+                MACD_VOLUME_RATIO_VALUE="$2"
+                MACD_VOLUME_RATIO_ARGS=("--macd-volume-ratio" "$2")
+                shift 2
+                ;;
+            --macd-volume-period)
+                MACD_VOLUME_PERIOD_VALUE="$2"
+                MACD_VOLUME_PERIOD_ARGS=("--macd-volume-period" "$2")
+                shift 2
+                ;;
+            --macd-slope-lookback)
+                MACD_SLOPE_LOOKBACK_VALUE="$2"
+                MACD_SLOPE_LOOKBACK_ARGS=("--macd-slope-lookback" "$2")
+                shift 2
+                ;;
+            --macd-confirm-bars)
+                MACD_CONFIRM_BARS_VALUE="$2"
+                MACD_CONFIRM_BARS_ARGS=("--macd-confirm-bars" "$2")
                 shift 2
                 ;;
             -h|--help)
@@ -694,6 +790,40 @@ main() {
     fi
     if [ ${#PAUSE_BARS_ARGS[@]} -gt 0 ]; then
         CMD+=("${PAUSE_BARS_ARGS[@]}")
+    fi
+
+    # 添加MACD过滤器开关参数
+    if [ $ENABLE_MACD_ADX_FILTER_FLAG -eq 1 ]; then
+        CMD+=("--enable-macd-adx-filter")
+    fi
+    if [ $ENABLE_MACD_VOLUME_FILTER_FLAG -eq 1 ]; then
+        CMD+=("--enable-macd-volume-filter")
+    fi
+    if [ $ENABLE_MACD_SLOPE_FILTER_FLAG -eq 1 ]; then
+        CMD+=("--enable-macd-slope-filter")
+    fi
+    if [ $ENABLE_MACD_CONFIRM_FILTER_FLAG -eq 1 ]; then
+        CMD+=("--enable-macd-confirm-filter")
+    fi
+
+    # 添加MACD过滤器配置参数
+    if [ ${#MACD_ADX_THRESHOLD_ARGS[@]} -gt 0 ]; then
+        CMD+=("${MACD_ADX_THRESHOLD_ARGS[@]}")
+    fi
+    if [ ${#MACD_ADX_PERIOD_ARGS[@]} -gt 0 ]; then
+        CMD+=("${MACD_ADX_PERIOD_ARGS[@]}")
+    fi
+    if [ ${#MACD_VOLUME_RATIO_ARGS[@]} -gt 0 ]; then
+        CMD+=("${MACD_VOLUME_RATIO_ARGS[@]}")
+    fi
+    if [ ${#MACD_VOLUME_PERIOD_ARGS[@]} -gt 0 ]; then
+        CMD+=("${MACD_VOLUME_PERIOD_ARGS[@]}")
+    fi
+    if [ ${#MACD_SLOPE_LOOKBACK_ARGS[@]} -gt 0 ]; then
+        CMD+=("${MACD_SLOPE_LOOKBACK_ARGS[@]}")
+    fi
+    if [ ${#MACD_CONFIRM_BARS_ARGS[@]} -gt 0 ]; then
+        CMD+=("${MACD_CONFIRM_BARS_ARGS[@]}")
     fi
 
     echo -e "${YELLOW}执行命令:${NC} ${CMD[*]}"

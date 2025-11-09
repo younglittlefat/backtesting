@@ -18,7 +18,7 @@
   },
   "macd_cross": {
     "optimized": true,
-    "optimization_date": "2025-11-09 15:09:54",
+    "optimization_date": "2025-11-09 15:31:41",
     "optimization_period": null,
     "stock_pool": "全局稳健优化 (共20只标的)",
     "params": {
@@ -27,16 +27,16 @@
       "slow_period": 26
     },
     "performance": {
-      "sharpe_ratio": 1.1723619910061105,
-      "annual_return": 145.3029637472361,
-      "max_drawdown": -21.75382985342654,
-      "return_pct": 64.62718531999133,
-      "median_sharpe": 0.7566786099728731,
-      "avg_sharpe": 0.6956554644596559,
-      "win_rate": 0.95,
-      "sharpe_std": 0.30482517657909974,
-      "robustness_score": 1.2864078842504374
+      "sharpe_ratio": 1.0896301519884122,
+      "annual_return": 156.48399238001275,
+      "max_drawdown": -21.8571729804968,
+      "return_pct": 101.91656242659172,
+      "median_sharpe": 0.0022071841541814086,
+      "avg_sharpe": 0.07778562762572769,
+      "win_rate": 0.5,
+      "sharpe_std": 0.5770479063473491,
+      "robustness_score": 0.5069069790623508
     },
-    "notes": "全局稳健参数优化 (综合评分=1.2864)\n参数: fast_period=12, signal_period=9, slow_period=26\n中位数夏普=0.7567, 平均夏普=0.6957, 胜率=95.0%, 稳定性(标准差)=0.3048"
+    "notes": "全局稳健参数优化 (综合评分=0.5069)\n参数: fast_period=12, signal_period=9, slow_period=26\n中位数夏普=0.0022, 平均夏普=0.0778, 胜率=50.0%, 稳定性(标准差)=0.5770"
   }
 }

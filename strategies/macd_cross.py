@@ -25,6 +25,8 @@ if __name__ == '__main__':
     project_root = Path(__file__).parent.parent
     sys.path.insert(0, str(project_root))
 
+from strategies.filters import ADXFilter, VolumeFilter
+
 
 def MACD(close, fast_period=12, slow_period=26, signal_period=9):
     """
@@ -60,6 +62,121 @@ def MACD(close, fast_period=12, slow_period=26, signal_period=9):
     histogram = macd_line - signal_line
 
     return macd_line.values, signal_line.values, histogram.values
+
+
+class MACDSlopeFilter:
+    """
+    MACD斜率过滤器
+
+    过滤逻辑：买入信号时MACD线必须向上（斜率为正）
+
+    参数:
+        enabled: 是否启用过滤器
+        lookback: 斜率计算的回溯周期，默认5
+    """
+
+    def __init__(self, enabled=True, lookback=5):
+        self.enabled = enabled
+        self.lookback = lookback
+
+    def __call__(self, strategy, signal_type, **kwargs):
+        """
+        过滤交易信号
+
+        Args:
+            strategy: 策略实例
+            signal_type: 'buy' 或 'sell'
+            **kwargs: 额外参数，应包含 'macd_line'
+
+        Returns:
+            bool: True表示信号通过过滤
+        """
+        if not self.enabled:
+            return True
+
+        # 只过滤买入信号（金叉）
+        if signal_type != 'buy':
+            return True
+
+        macd_line = kwargs.get('macd_line')
+
+        if macd_line is None:
+            # 尝试从策略实例获取
+            if hasattr(strategy, 'macd_line'):
+                macd_line = strategy.macd_line
+            else:
+                return True  # 无法获取数据，放行
+
+        # 检查数据长度
+        if len(macd_line) < self.lookback + 1:
+            return False  # 数据不足，不交易
+
+        # 计算MACD线斜率
+        macd_slope = (macd_line[-1] - macd_line[-self.lookback - 1]) / self.lookback
+
+        # 判断斜率是否向上
+        return macd_slope > 0
+
+
+class MACDConfirmationFilter:
+    """
+    MACD持续确认过滤器（防假突破）
+
+    过滤逻辑：金叉后需持续N根K线MACD线持续在信号线上方才确认
+
+    参数:
+        enabled: 是否启用过滤器
+        confirm_bars: 确认所需的K线数量，默认2
+    """
+
+    def __init__(self, enabled=True, confirm_bars=2):
+        self.enabled = enabled
+        self.confirm_bars = confirm_bars
+
+    def __call__(self, strategy, signal_type, **kwargs):
+        """
+        过滤交易信号
+
+        Args:
+            strategy: 策略实例
+            signal_type: 'buy' 或 'sell'
+            **kwargs: 额外参数，应包含 'macd_line' 和 'signal_line'
+
+        Returns:
+            bool: True表示信号通过过滤
+        """
+        if not self.enabled:
+            return True
+
+        # 只过滤买入信号（金叉）
+        if signal_type != 'buy':
+            return True
+
+        macd_line = kwargs.get('macd_line')
+        signal_line = kwargs.get('signal_line')
+
+        if macd_line is None or signal_line is None:
+            # 尝试从策略实例获取
+            if hasattr(strategy, 'macd_line') and hasattr(strategy, 'signal_line'):
+                macd_line = strategy.macd_line
+                signal_line = strategy.signal_line
+            else:
+                return True  # 无法获取数据，放行
+
+        # 检查数据长度
+        if len(macd_line) < self.confirm_bars or len(signal_line) < self.confirm_bars:
+            return False  # 数据不足，不交易
+
+        # 检查过去N根K线，MACD线是否持续在信号线上方
+        cross_bars = 0
+        for i in range(1, self.confirm_bars + 1):
+            if macd_line[-i] > signal_line[-i]:
+                cross_bars += 1
+            else:
+                break  # 如果有一根不满足，立即中断
+
+        # 只有连续N根K线都满足条件才通过
+        return cross_bars >= self.confirm_bars
 
 
 class MacdCross(Strategy):
@@ -137,7 +254,7 @@ class MacdCross(Strategy):
         """
         初始化策略
 
-        计算MACD指标
+        计算MACD指标并初始化过滤器
         """
         # 计算MACD指标
         macd_line, signal_line, histogram = self.I(
@@ -152,20 +269,72 @@ class MacdCross(Strategy):
         self.signal_line = signal_line
         self.histogram = histogram
 
-        # Phase 2: 初始化过滤器（后续实现）
+        # Phase 2: 初始化过滤器
+        self.adx_filter = ADXFilter(
+            enabled=self.enable_adx_filter,
+            period=self.adx_period,
+            threshold=self.adx_threshold
+        )
+        self.volume_filter = VolumeFilter(
+            enabled=self.enable_volume_filter,
+            period=self.volume_period,
+            ratio=self.volume_ratio
+        )
+        self.slope_filter = MACDSlopeFilter(
+            enabled=self.enable_slope_filter,
+            lookback=self.slope_lookback
+        )
+        self.confirm_filter = MACDConfirmationFilter(
+            enabled=self.enable_confirm_filter,
+            confirm_bars=self.confirm_bars
+        )
+
         # Phase 3: 初始化止损追踪（后续实现）
+
+    def _apply_filters(self, signal_type):
+        """
+        应用所有启用的过滤器
+
+        Args:
+            signal_type: 'buy' 或 'sell'
+
+        Returns:
+            bool: True表示信号通过所有过滤器
+        """
+        filters = [
+            self.adx_filter,
+            self.volume_filter,
+            self.slope_filter,
+            self.confirm_filter
+        ]
+
+        # 准备上下文信息
+        kwargs = {
+            'macd_line': self.macd_line,
+            'signal_line': self.signal_line
+        }
+
+        # 检查所有过滤器
+        for f in filters:
+            if not f(self, signal_type, **kwargs):
+                return False
+
+        return True
 
     def next(self):
         """
         每个交易日调用一次
 
-        根据MACD金叉死叉信号决定买入或卖出
+        根据MACD金叉死叉信号和过滤器决定买入或卖出
         """
         # Phase 3: 检查止损状态（后续实现）
 
         # MACD金叉 - 买入信号
         if crossover(self.macd_line, self.signal_line):
-            # Phase 2: 应用过滤器（后续实现）
+            # Phase 2: 应用过滤器
+            if not self._apply_filters('buy'):
+                return  # 信号被过滤，不交易
+
             # Phase 4: 检查增强信号（后续实现）
 
             # 如果有仓位，先平仓
@@ -177,7 +346,10 @@ class MacdCross(Strategy):
 
         # MACD死叉 - 卖出信号
         elif crossover(self.signal_line, self.macd_line):
-            # Phase 2: 应用过滤器（后续实现）
+            # Phase 2: 应用过滤器
+            if not self._apply_filters('sell'):
+                return  # 信号被过滤，不交易
+
             # Phase 4: 检查增强信号（后续实现）
 
             # 如果有仓位，先平仓
