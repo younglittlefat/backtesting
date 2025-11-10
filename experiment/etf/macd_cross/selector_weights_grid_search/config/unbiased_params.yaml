@@ -1,0 +1,28 @@
+# 方案B：无偏评分验证参数配置
+
+# 搜索空间定义（完全去除动量指标）
+search_space:
+  # 四个无偏技术指标的权重范围
+  adx_weight: [0.35, 0.40, 0.45, 0.50]
+  trend_consistency_weight: [0.25, 0.30, 0.35]
+  price_efficiency_weight: [0.15, 0.20, 0.25]
+  liquidity_weight: [0.05, 0.10, 0.15]
+
+  # 动量指标权重固定为0（完全去除）
+  momentum_3m_weight: 0.0
+  momentum_12m_weight: 0.0
+
+# 权重约束
+constraints:
+  # 四个主要指标权重之和必须为1
+  sum_equals_one: true
+  tolerance: 0.01
+
+# 预期组合数量
+expected_combinations: 108  # 4 * 3 * 3 * 3 = 108
+
+# 优化目标
+optimization:
+  primary_metric: "sharpe_ratio"  # 主要目标：夏普比率
+  secondary_metric: "annual_return"  # 次要目标：年化收益
+  constraint_metric: "max_drawdown"  # 约束：最大回撤 <= 0.25

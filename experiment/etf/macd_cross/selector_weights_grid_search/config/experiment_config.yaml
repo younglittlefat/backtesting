@@ -1,0 +1,52 @@
+# ETF筛选器权重参数网格搜索实验配置
+
+# 实验基本信息
+experiment:
+  name: "selector_weights_grid_search"
+  version: "1.0"
+  date: "2025-11-10"
+  description: "ETF筛选器权重参数优化实验，包含传统方法和无偏评分验证"
+
+# 数据配置
+data:
+  etf_data_dir: "data/chinese_etf"
+  start_date: "2023-01-01"
+  end_date: "2025-10-31"
+  target_size: 20
+  min_turnover: 500000  # 50万元
+  min_volatility: 0.15
+  max_volatility: 0.80
+
+# 筛选器基础参数
+selector:
+  min_listing_days: 180
+  adx_percentile: 70
+  momentum_min_positive: true
+  enable_ma_backtest_filter: false
+
+# 回测策略配置
+backtest:
+  strategy: "macd_cross_enhanced"
+  data_dir: "data/chinese_etf/daily"
+  optimize: true
+
+  # 方案A：传统MACD
+  traditional:
+    enable_loss_protection: false
+
+  # 方案B：MACD + 止损保护
+  unbiased:
+    enable_loss_protection: true
+    max_consecutive_losses: 3
+    pause_bars: 10
+
+# 结果输出配置
+output:
+  results_dir: "experiment/etf/macd_cross/selector_weights_grid_search/results"
+  log_dir: "experiment/etf/macd_cross/selector_weights_grid_search/logs"
+  checkpoint_interval: 10  # 每10个实验保存一次检查点
+
+# 并行计算配置
+parallel:
+  enabled: true
+  max_workers: 4
