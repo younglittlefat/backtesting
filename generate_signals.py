@@ -662,9 +662,9 @@ def print_signal_report(signals_df: pd.DataFrame,
         lines.append("-" * 80)
         for _, row in buy_signals.iterrows():
             lines.append(f"  {row['ts_code']}")
-            lines.append(f"    当前价格: ¥{row['price']:.2f}")
-            lines.append(f"    短期均线: {row['sma_short']:.2f}")
-            lines.append(f"    长期均线: {row['sma_long']:.2f}")
+            lines.append(f"    当前价格: ¥{row['price']:.3f}")
+            lines.append(f"    短期均线: {row['sma_short']:.3f}")
+            lines.append(f"    长期均线: {row['sma_long']:.3f}")
             lines.append(f"    信号强度: {row['signal_strength']:.2f}%")
             lines.append(f"    说明: {row['message']}")
             lines.append("")
@@ -676,7 +676,7 @@ def print_signal_report(signals_df: pd.DataFrame,
         lines.append("-" * 80)
         for _, row in sell_signals.iterrows():
             lines.append(f"  {row['ts_code']}")
-            lines.append(f"    当前价格: ¥{row['price']:.2f}")
+            lines.append(f"    当前价格: ¥{row['price']:.3f}")
             lines.append(f"    说明: {row['message']}")
             lines.append("")
 
@@ -695,7 +695,7 @@ def print_signal_report(signals_df: pd.DataFrame,
 
         for i, pos in enumerate(allocation['positions'], 1):
             lines.append(f"  [{i}] {pos['ts_code']}")
-            lines.append(f"      买入价格: ¥{pos['price']:.2f}")
+            lines.append(f"      买入价格: ¥{pos['price']:.3f}")
             lines.append(f"      买入数量: {pos['shares']} 股")
             lines.append(f"      预计成本: ¥{pos['cost']:,.2f}")
             lines.append(f"      仓位占比: {pos['weight']:.2f}%")
@@ -773,8 +773,8 @@ def print_portfolio_status(portfolio: Portfolio,
 
             lines.append(f"  {pos.ts_code}")
             lines.append(f"    持仓数量: {pos.shares} 股")
-            lines.append(f"    买入价格: ¥{pos.entry_price:.2f} ({pos.entry_date})")
-            lines.append(f"    当前价格: ¥{current_price:.2f}")
+            lines.append(f"    买入价格: ¥{pos.entry_price:.3f} ({pos.entry_date})")
+            lines.append(f"    当前价格: ¥{current_price:.3f}")
             lines.append(f"    持仓成本: ¥{pos.cost:,.2f}")
             lines.append(f"    当前市值: ¥{current_value:,.2f}")
             lines.append(f"    盈亏:     {pnl_sign}¥{pnl:,.2f} ({pnl_sign}{pnl_pct:.2f}%)")
@@ -815,7 +815,7 @@ def print_trade_plan(sell_trades: List[Trade],
         for i, trade in enumerate(sell_trades, 1):
             lines.append(f"  [{i}] {trade.ts_code}")
             lines.append(f"      操作: 卖出")
-            lines.append(f"      价格: ¥{trade.price:.2f}")
+            lines.append(f"      价格: ¥{trade.price:.3f}")
             lines.append(f"      数量: {trade.shares} 股")
             lines.append(f"      预计收入: ¥{trade.amount:,.2f}")
             lines.append(f"      原因: {trade.reason}")
@@ -828,7 +828,7 @@ def print_trade_plan(sell_trades: List[Trade],
         for i, trade in enumerate(buy_trades, 1):
             lines.append(f"  [{i}] {trade.ts_code}")
             lines.append(f"      操作: 买入")
-            lines.append(f"      价格: ¥{trade.price:.2f}")
+            lines.append(f"      价格: ¥{trade.price:.3f}")
             lines.append(f"      数量: {trade.shares} 股")
             lines.append(f"      预计成本: ¥{abs(trade.amount):,.2f}")
             lines.append(f"      原因: {trade.reason}")
@@ -915,6 +915,10 @@ def main():
     # 价格模式
     parser.add_argument('--disable-dual-price', action='store_true',
                        help='禁用双价格模式（回退到旧的单价格模式，不推荐）')
+
+    # 执行确认
+    parser.add_argument('--yes', '-y', action='store_true',
+                       help='自动确认执行，跳过交互式确认（用于非交互式环境或脚本自动化）')
 
     args = parser.parse_args()
 
@@ -1142,10 +1146,21 @@ def main():
             print(f"  - 买入 {len(buy_trades)} 只标的")
             print("")
 
-            confirm = input("是否确认执行？(yes/no): ").strip().lower()
-            if confirm != 'yes':
-                print("已取消执行。")
-                return
+            # 检查是否跳过确认
+            if not args.yes:
+                try:
+                    confirm = input("是否确认执行？(yes/no): ").strip().lower()
+                    if confirm != 'yes':
+                        print("已取消执行。")
+                        return
+                except EOFError:
+                    print("")
+                    print("❌ 错误: 无法读取用户输入（非交互式环境）")
+                    print("提示: 请使用 --yes 参数自动确认，或在交互式终端中运行")
+                    return
+            else:
+                print("使用 --yes 参数，自动确认执行...")
+                print("")
 
             # 执行交易
             print("")
@@ -1153,10 +1168,10 @@ def main():
             trader.execute_trades(sell_trades, buy_trades, dry_run=False)
 
             for trade in sell_trades:
-                print(f"✓ 卖出: {trade.ts_code} {trade.shares}股 @¥{trade.price:.2f} 收入¥{trade.amount:,.2f}")
+                print(f"✓ 卖出: {trade.ts_code} {trade.shares}股 @¥{trade.price:.3f} 收入¥{trade.amount:,.2f}")
 
             for trade in buy_trades:
-                print(f"✓ 买入: {trade.ts_code} {trade.shares}股 @¥{trade.price:.2f} 成本¥{abs(trade.amount):,.2f}")
+                print(f"✓ 买入: {trade.ts_code} {trade.shares}股 @¥{trade.price:.3f} 成本¥{abs(trade.amount):,.2f}")
 
             # 保存持仓
             portfolio.save()

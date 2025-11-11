@@ -77,11 +77,13 @@ def register_default_strategies() -> None:
     from strategies.sma_cross import SmaCross
     from strategies.sma_cross_enhanced import SmaCrossEnhanced
     from strategies.macd_cross import MacdCross
+    from strategies.kama_cross import KamaCrossStrategy
 
     registry = get_global_registry()
     registry.register('sma_cross', SmaCross)
     registry.register('sma_cross_enhanced', SmaCrossEnhanced)
     registry.register('macd_cross', MacdCross)
+    registry.register('kama_cross', KamaCrossStrategy)
 
 
 # 自动注册默认策略

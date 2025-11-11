@@ -37,7 +37,7 @@ ${YELLOW}工作模式（四选一）:${NC}
   --init <资金>                初始化持仓文件（指定初始资金）
   --status                     查看当前持仓状态
   --analyze                    分析模式（生成交易建议但不执行）⭐ 推荐日常使用
-  --execute                    执行模式（执行交易并更新持仓）
+  --execute                    执行模式（执行交易并更新持仓，自动确认）
 
 ${YELLOW}基本选项:${NC}
   --stock-list <csv_file>      股票列表CSV文件（必需，需包含ts_code列）
@@ -57,6 +57,10 @@ ${YELLOW}基本选项:${NC}
   --min-buy-signals <n>        最小买入信号数，少于此数不买入（默认: 1）
   -h, --help                   显示此帮助信息
 
+${YELLOW}注意事项:${NC}
+  ⚠️  ${RED}--execute 模式会自动确认并执行交易${NC}，请谨慎使用！
+  ✅  建议先使用 --analyze 模式查看交易建议，确认无误后再使用 --execute
+
 ${YELLOW}示例:${NC}
   ${GREEN}# 1. 初始化持仓（仅第一次使用）${NC}
   $0 --init 100000 --portfolio-file positions/portfolio.json
@@ -69,7 +73,7 @@ ${YELLOW}示例:${NC}
     --stock-list results/trend_etf_pool_20251107.csv \\
     --portfolio-file positions/portfolio.json
 
-  ${GREEN}# 4. 确认后执行交易${NC}
+  ${GREEN}# 4. 确认后执行交易（自动确认）${NC}
   $0 --execute \\
     --stock-list results/trend_etf_pool_20251107.csv \\
     --portfolio-file positions/portfolio.json
@@ -337,6 +341,11 @@ main() {
         CMD+=("--cost-model" "$COST_MODEL")
         CMD+=("--data-dir" "$DATA_DIR")
         CMD+=("--lookback-days" "$LOOKBACK_DAYS")
+
+        # 执行模式自动添加 --yes 参数（用于非交互式环境）
+        if [ "$MODE" = "execute" ]; then
+            CMD+=("--yes")
+        fi
 
         if [ -n "$N1" ]; then
             CMD+=("--n1" "$N1")
