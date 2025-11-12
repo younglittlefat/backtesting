@@ -757,10 +757,11 @@ python backtest_runner.py -s 159922.SZ -t kama_cross \
 
 **推荐使用**:
 ```bash
-# 基础使用（推荐参数）
+# ⭐ 推荐配置（基于实验验证）
 python backtest_runner.py -t kama_cross \
-  --enable-loss-protection \
   --data-dir data/chinese_etf/daily/etf
+# 预期：夏普1.69，收益34.63%，回撤-5.27%
+# 注意：不推荐启用 --enable-loss-protection（实验证明无效）
 
 # 调试模式
 python backtest_runner.py -t kama_cross \
@@ -768,5 +769,367 @@ python backtest_runner.py -t kama_cross \
   --debug-loss-protection \
   --data-dir data/chinese_etf/daily/etf
 ```
+
+---
+
+## 附录A：实验验证结果总结 ⭐
+
+### 实验概况
+- **实验日期**: 2025-11-11
+- **实验规模**: 1220次回测（Phase 1: 200次，Phase 2: 1020次）
+- **测试标的**: 20只中国趋势型ETF（2023-11至2025-11）
+- **实验位置**: `experiment/etf/kama_cross/hyperparameter_search/`
+
+### Phase 1结果（信号过滤器优化）
+- **Baseline夏普**: 1.69（远超SMA 0.61、MACD 0.6）
+- **最佳过滤器**: ADX（夏普1.68，回撤-4.71%）
+- **最佳组合**: ADX+Slope（夏普1.58，回撤-4.38%）
+- **不适用**: Confirm过滤器（与自适应特性冲突，导致零交易）
+
+### Phase 2关键发现（止损保护优化）⭐
+**核心结论**: **止损保护对KAMA策略无效**（-0.7%夏普变化）
+
+| 策略 | Baseline夏普 | 止损保护效果 | 效果评级 |
+|------|-------------|-------------|----------|
+| **KAMA** | **1.69** | **-0.7%** | ❌ 无效 |
+| SMA | 0.61 | **+75.4%** | ⭐⭐⭐ 高效 |
+| MACD | 0.73 | **+28.8%** | ⭐⭐ 有效 |
+
+**科学洞察**: **止损保护效果 ∝ 1/基础信号质量**
+
+### 实用建议
+1. ✅ **使用Baseline KAMA**，不启用止损保护
+2. ✅ **可选ADX过滤器**（轻微改善回撤，几乎不损失收益）
+3. ❌ **避免Confirm过滤器**（与KAMA不兼容）
+4. ⭐ **KAMA优先于SMA/MACD**（性能显著优于传统策略）
+
+---
+
+## 附录B：新一代智能策略探索方向 🚀
+
+*更新日期：2025-11-11*
+*基于最新研究和市场趋势的策略扩展建议*
+
+### 研究背景
+
+KAMA策略实验证明了**自适应机制**在量化交易中的巨大价值（夏普1.69 vs SMA 0.61）。这启发我们继续探索更多自适应/智能策略，构建多样化的策略组合。
+
+### 策略分类与实施路线图
+
+#### 🔹 第一优先级：自适应技术指标策略（短期，1-2周）
+
+##### 1. VIDYA（Variable Index Dynamic Average）⭐⭐⭐
+**推荐理由**: 与KAMA高度相似，快速验证可行
+
+**核心特性**:
+- 使用CMO（Chande Momentum Oscillator）代替效率比率
+- 动态调整alpha参数控制平滑度
+- 对动量变化更敏感
+
+**实施建议**:
+```python
+# 策略类：strategies/vidya_cross.py
+class VidyaCrossStrategy(BaseEnhancedStrategy):
+    # CMO计算
+    def calculate_cmo(self, prices, period=14):
+        up = max(price_change, 0)
+        down = max(-price_change, 0)
+        return (sum_up - sum_down) / (sum_up + sum_down)
+
+    # VIDYA = VIDYA[-1] + alpha * CMO * (Price - VIDYA[-1])
+    # 其中 alpha 是固定平滑常数
+```
+
+**预期性能**: 与KAMA类似（夏普1.5-1.8），但可能在动量市场表现更好
+
+**实验计划**: 复用KAMA实验框架（200次+1020次回测）
+
+##### 2. FRAMA（Fractal Adaptive Moving Average）⭐⭐
+**推荐理由**: 基于分形理论，数学优雅，适合学术研究
+
+**核心特性**:
+- 使用分形维度（Fractal Dimension）衡量市场复杂度
+- 在不同时间尺度上保持一致性
+- 理论基础更深厚
+
+**实施建议**:
+```python
+# 计算分形维度
+def calculate_fractal_dimension(highs, lows, period=16):
+    # 使用盒计数法或覆盖法
+    # FD范围：1.0（完全趋势）到 2.0（完全随机）
+    pass
+
+# FRAMA调整公式
+alpha = exp(-4.6 * (FD - 1))
+FRAMA = alpha * Price + (1 - alpha) * FRAMA[-1]
+```
+
+**预期性能**: 可能在长期趋势中表现更稳定
+
+**研究价值**: 可用于市场状态分类（趋势 vs 震荡）
+
+##### 3. T3 Moving Average / HMA（Hull Moving Average）⭐
+**推荐理由**: 实现简单，可作为补充指标
+
+**T3特性**:
+- 六重指数平滑
+- 体积因子调整（volume factor）
+- 极其平滑，滞后最小
+
+**HMA特性**:
+- 加权移动平均改进
+- 使用WMA(2*WMA(n/2) - WMA(n))
+- 显著减少滞后
+
+**实施建议**: 先实现，观察是否值得独立策略或作为辅助指标
+
+---
+
+#### 🔹 第二优先级：简单机器学习增强（中期，1-2月）
+
+##### 4. 自适应参数优化器 ⭐⭐
+**概念**: 使用贝叶斯优化动态调整KAMA参数
+
+**实施方案**:
+```python
+# 每N天重新优化参数
+from skopt import gp_minimize
+
+def optimize_kama_params(data_window):
+    # 优化 kama_period, kama_fast, kama_slow
+    # 目标：最大化近期夏普比率
+    result = gp_minimize(objective, space, n_calls=50)
+    return result.x  # 最优参数
+
+# 在策略中集成
+class AdaptiveKAMA(KamaCrossStrategy):
+    def init(self):
+        self.reoptimize_every = 60  # 60个交易日
+        # 定期调用优化器
+```
+
+**预期效果**: 可能提升5-10%夏普比率
+
+**技术难度**: 中等，需要sliding window和优化库
+
+##### 5. 市场状态识别系统 ⭐⭐⭐
+**概念**: 使用无监督学习识别市场regime，动态切换策略
+
+**实施方案**:
+```python
+from sklearn.cluster import KMeans
+from sklearn.preprocessing import StandardScaler
+
+# 特征工程
+features = [
+    '波动率',
+    '趋势强度（ADX）',
+    '效率比率',
+    '成交量变化',
+]
+
+# 识别市场状态
+kmeans = KMeans(n_clusters=3)  # 趋势/震荡/过渡
+market_state = kmeans.predict(features)
+
+# 策略切换
+if market_state == 'trending':
+    use_strategy = KAMA  # 夏普1.69
+elif market_state == 'choppy':
+    use_strategy = MeanReversion  # 待开发
+else:
+    use_strategy = Neutral  # 降低仓位
+```
+
+**预期效果**: 组合策略夏普可能达到2.0+
+
+**研究价值**: 高，可作为独立模块供所有策略使用
+
+---
+
+#### 🔹 第三优先级：深度学习策略（长期，3-6月）
+
+##### 6. 深度强化学习（DRL）策略 ⭐⭐⭐
+**概念**: 使用DQN/PPO训练智能交易agent
+
+**前沿研究**（2025）:
+- 结合认知博弈论的元强化学习
+- 风险感知的奖励塑造（Sharpe, Drawdown）
+- 在波动市场中表现优异
+
+**实施路线**:
+```python
+# Phase 1: 简单DQN（用于参数优化）
+import tensorflow as tf
+from tf_agents.agents.dqn import dqn_agent
+
+# State: [价格, KAMA, 效率比率, ADX, ...]
+# Action: [买入, 卖出, 持有]
+# Reward: Sharpe-aware reward
+
+# Phase 2: Policy Gradient（用于策略学习）
+# 更适合连续动作空间（仓位比例）
+
+# Phase 3: 混合系统
+# KAMA生成信号 + DRL优化执行（时机/仓位）
+```
+
+**资源需求**:
+- GPU算力（建议Tesla T4+）
+- 大量历史数据（至少5年）
+- 训练时间（数天到数周）
+
+**预期效果**: 可能超越KAMA（夏普2.0+），但需要持续维护
+
+##### 7. Transformer时间序列模型 ⭐
+**概念**: 使用注意力机制预测价格趋势
+
+**特点**:
+- 处理长期依赖关系
+- 捕捉多时间尺度模式
+- 近年NLP领域的成功经验
+
+**实施挑战**:
+- 需要大量数据
+- 过拟合风险高
+- 可解释性差
+
+**建议**: 作为学术研究方向，实用性待验证
+
+---
+
+#### 🔹 第四优先级：混合智能系统（创新方向）
+
+##### 8. KAMA + 强化学习混合系统 ⭐⭐⭐
+**概念**: KAMA生成基础信号，RL优化执行策略
+
+**架构设计**:
+```
+输入层: 市场数据
+  ↓
+KAMA模块: 生成买卖信号（规则层）
+  ↓
+RL Agent: 优化执行参数
+  - 何时执行？（信号确认度）
+  - 买多少？（仓位管理）
+  - 如何退出？（动态止损）
+  ↓
+输出: 最优交易决策
+```
+
+**优势**:
+- 保留KAMA的可解释性
+- 增加RL的灵活性
+- 两者协同增效
+
+**实施优先级**: 高（在完成DRL基础后）
+
+##### 9. 多策略集成系统
+**概念**: KAMA + VIDYA + FRAMA + SMA组合
+
+**集成方式**:
+```python
+# 方式1: 加权投票
+signal = 0.4*KAMA + 0.3*VIDYA + 0.2*FRAMA + 0.1*SMA
+
+# 方式2: 动态权重（基于近期表现）
+weights = softmax([sharpe_kama, sharpe_vidya, ...])
+
+# 方式3: 条件切换（基于市场状态）
+if trending:
+    use KAMA
+elif choppy:
+    use SMA
+```
+
+**预期效果**: 降低单一策略风险，提升稳定性
+
+---
+
+### 实施时间线（建议）
+
+#### Q1 2025（3个月）
+- ✅ Week 1-2: VIDYA策略实现 + 实验验证
+- ✅ Week 3-4: FRAMA策略实现 + 实验验证
+- 📊 Week 5-6: 多策略对比实验（SMA/MACD/KAMA/VIDYA/FRAMA）
+- 🤖 Week 7-12: 市场状态识别系统开发
+
+#### Q2 2025（3个月）
+- 🧠 Week 13-20: 简单DRL实现（DQN for parameter optimization）
+- 🔬 Week 21-24: KAMA+RL混合系统原型
+
+#### Q3-Q4 2025（6个月）
+- 🚀 高级DRL策略（Policy Gradient, PPO）
+- 📈 多策略集成系统
+- 📊 实盘模拟测试
+
+---
+
+### 技术栈准备
+
+#### 必需工具
+- ✅ `backtesting.py`: 已有
+- ✅ `pandas`, `numpy`: 已有
+- 🔲 `scikit-optimize`: 贝叶斯优化
+- 🔲 `scikit-learn`: 聚类/分类
+- 🔲 `tensorflow/pytorch`: 深度学习
+- 🔲 `stable-baselines3`: RL算法库
+
+#### 数据需求
+- ✅ ETF日线数据: 已有（2年）
+- 🔲 更长历史数据: 需采集（5-10年）
+- 🔲 高频数据: 如需要（分钟/秒级）
+
+---
+
+### 评估标准
+
+所有新策略需通过以下标准才考虑实盘：
+
+| 指标 | 最低要求 | 目标 |
+|------|---------|------|
+| **夏普比率** | ≥ 1.5 | ≥ 2.0 |
+| **最大回撤** | ≤ -10% | ≤ -5% |
+| **胜率** | ≥ 60% | ≥ 70% |
+| **样本外测试** | 通过 | 通过 |
+| **鲁棒性检查** | 通过 | 通过 |
+
+**KAMA基准**: 夏普1.69，回撤-5.27%，胜率84.54%（已达到目标）
+
+---
+
+### 参考资料
+
+#### 学术论文（2024-2025）
+1. "An adaptive quantitative trading strategy optimization framework based on meta reinforcement learning and cognitive game theory" - Applied Intelligence, 2025
+2. "A hybrid decision support system for adaptive trading strategies" - ScienceDirect, 2023
+3. "Deep Learning Based Stock Trading Strategies" - IJSAT, 2025
+
+#### 技术实现参考
+- KAMA实现: `strategies/kama_cross.py`
+- 实验框架: `experiment/etf/kama_cross/hyperparameter_search/`
+- TA-Lib文档: 技术指标参考实现
+
+#### 在线资源
+- Investopedia: 技术指标原理
+- QuantConnect: 策略回测平台
+- TradingView: 指标可视化
+
+---
+
+### 风险提示
+
+1. **过拟合风险**: 新策略需严格的样本外测试
+2. **计算成本**: 深度学习策略需要GPU资源
+3. **维护成本**: 复杂模型需持续监控和调整
+4. **市场适应性**: 策略可能在不同市场环境表现差异大
+
+**建议**: 优先实施简单自适应策略（VIDYA/FRAMA），积累经验后再尝试深度学习。
+
+---
+
+**文档更新**: 2025-11-11
+**下次审查**: 2025-Q2（根据Q1实施进度调整）
 
 **下一步**: Phase 4 - 增强信号功能开发（可选）

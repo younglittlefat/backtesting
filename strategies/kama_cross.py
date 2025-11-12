@@ -277,7 +277,7 @@ class KamaCrossStrategy(BaseEnhancedStrategy):
     adx_threshold = 25
     volume_period = 20
     volume_ratio = 1.2
-    confirm_bars = 3
+    confirm_bars = 2  # 降低阈值避免过度抑制信号
 
     # Phase 3止损保护开关（继承自BaseEnhancedStrategy，可启用）
     enable_loss_protection = False
