@@ -165,33 +165,15 @@ strategies/
 
 ### 4.2 核心类设计
 
-```python
-class KAMACrossStrategy(BaseEnhancedStrategy):
-    """KAMA自适应均线交叉策略"""
+**实现位置**: `strategies/kama_cross.py`
 
-    # KAMA参数
-    kama_period = 20
-    kama_fast = 2
-    kama_slow = 30
+**继承**: `BaseEnhancedStrategy` - 自动获得过滤器支持、止损保护、运行时参数导出
 
-    # 信号增强参数
-    enable_efficiency_filter = True
-    min_efficiency_ratio = 0.3
-    enable_slope_confirmation = True
-    min_slope_periods = 3
-
-    # 过滤器开关（复用现有）
-    enable_adx_filter = False
-    enable_volume_filter = False
-    enable_confirm_filter = False
-
-    # 止损保护开关（复用现有）
-    enable_loss_protection = False
-    max_consecutive_losses = 3
-    pause_bars = 10
-    enable_trailing_stop = False
-    trailing_stop_pct = 0.05
-```
+**核心参数**:
+- KAMA参数: `kama_period=20`, `kama_fast=2`, `kama_slow=30`
+- 信号增强: `enable_efficiency_filter=True`, `min_efficiency_ratio=0.3`
+- 过滤器开关: 复用现有（ADX, Volume, Slope, Confirm）
+- 止损保护: 复用现有（Loss Protection, Trailing Stop）
 
 ### 4.3 KAMA指标实现
 
@@ -243,23 +225,14 @@ class KAMACrossStrategy(BaseEnhancedStrategy):
 ### 5.2 参数优化实验
 
 **Phase 1: KAMA参数优化**
-```python
-# 参数网格
-kama_period: [10, 15, 20, 25, 30]
-kama_fast: [2, 3, 4, 5]
-kama_slow: [20, 25, 30, 35, 40]
-min_efficiency_ratio: [0.1, 0.2, 0.3, 0.4, 0.5]
-```
+- 参数网格: `kama_period: [10, 15, 20, 25, 30]`, `kama_fast: [2, 3, 4, 5]`, `kama_slow: [20, 25, 30, 35, 40]`
 
 **Phase 2: 过滤器组合优化**
-- 基础KAMA vs KAMA+ADX vs KAMA+Volume vs KAMA+ADX+Volume
-- 参考SMA策略的过滤器实验结果
-- 重点验证ADX+成交量组合的有效性
+- 测试: 基础KAMA vs KAMA+ADX vs KAMA+Volume vs KAMA+ADX+Volume
 
 **Phase 3: 止损保护验证**
-- 基础KAMA vs KAMA+连续止损保护
-- 参考SMA实验：期望夏普比率+75%，最大回撤-34%
-- 验证KAMA策略与止损保护的兼容性
+- 测试: 基础KAMA vs KAMA+连续止损保护
+- 参考SMA实验结果验证兼容性
 
 ### 5.3 实验输出
 

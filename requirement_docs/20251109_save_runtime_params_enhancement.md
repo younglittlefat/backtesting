@@ -62,7 +62,7 @@ params_manager.save_optimization_results(
 
 ### 需要保存的参数
 
-#### 1. 优化参数（已保存）
+#### 1. 优化参数（已保存）✅
 - `n1`, `n2` 等策略核心参数
 
 #### 2. 过滤器配置（未保存）⚠️
@@ -70,19 +70,13 @@ params_manager.save_optimization_results(
 - `adx_threshold`, `adx_period`, `volume_ratio`, `volume_period`, `slope_lookback`, `confirm_bars`
 
 #### 3. 止损保护配置（未保存）⚠️
-- `enable_loss_protection`
-- `max_consecutive_losses`
-- `pause_bars`
+- `enable_loss_protection`, `max_consecutive_losses`, `pause_bars`
 
 ### 实现方案
 
 #### 方案A：扩展配置文件结构 + 策略契约机制（推荐）✅
 
-**设计原则**:
-1. **分离关注点**: 区分优化参数、过滤器配置、止损保护配置
-2. **策略契约**: 强制所有策略实现参数导出接口
-3. **可扩展性**: 新增策略时自动检查是否实现必要接口
-4. **向后兼容**: 支持旧配置文件格式
+**设计原则**: 分离关注点、策略契约、可扩展性、向后兼容
 
 ---
 
@@ -145,244 +139,24 @@ params_manager.save_optimization_results(
 
 ##### 2. 策略契约机制（核心设计）
 
-**问题**: 如何强制新策略实现运行时参数导出？
+**实现位置**: `strategies/base_strategy.py`
 
-**解决方案**: 在策略基类中定义抽象方法，新策略必须实现。
-
-**新增策略基类接口**:
-
-在 `strategies/base_strategy.py` (需新建) 中定义:
-
-```python
-from abc import ABC, abstractmethod
-from typing import Dict, Any
-
-class RuntimeConfigurable(ABC):
-    """
-    强制策略实现运行时参数导出接口
-
-    所有支持止损保护的策略必须继承此类
-    """
-
-    @abstractmethod
-    def get_runtime_config(self) -> Dict[str, Any]:
-        """
-        导出当前策略的运行时配置
-
-        返回格式:
-        {
-            "filters": {
-                "enable_adx_filter": bool,
-                "adx_threshold": int,
-                ...
-            },
-            "loss_protection": {
-                "enable_loss_protection": bool,
-                "max_consecutive_losses": int,
-                "pause_bars": int
-            },
-            # 策略特有的运行时参数
-            "strategy_specific": {}
-        }
-        """
-        pass
-
-    @abstractmethod
-    def get_runtime_config_schema(self) -> Dict[str, Any]:
-        """
-        返回运行时配置的结构定义（用于验证）
-
-        返回格式:
-        {
-            "filters": {
-                "enable_adx_filter": {"type": "bool", "default": False},
-                "adx_threshold": {"type": "int", "default": 25, "range": [10, 50]},
-                ...
-            },
-            "loss_protection": {
-                "enable_loss_protection": {"type": "bool", "default": False},
-                "max_consecutive_losses": {"type": "int", "default": 3, "range": [1, 10]},
-                "pause_bars": {"type": "int", "default": 10, "range": [1, 50]}
-            }
-        }
-        """
-        pass
-
-
-class BaseEnhancedStrategy(Strategy, RuntimeConfigurable):
-    """
-    增强型策略基类，所有新策略应该继承此类
-
-    自动集成：
-    - 过滤器支持
-    - 止损保护
-    - 运行时参数导出
-    """
-
-    # 过滤器参数（子类可覆盖默认值）
-    enable_adx_filter = False
-    enable_volume_filter = False
-    enable_slope_filter = False
-    enable_confirm_filter = False
-
-    # 止损保护参数（子类可覆盖默认值）
-    enable_loss_protection = False
-    max_consecutive_losses = 3
-    pause_bars = 10
-
-    def get_runtime_config(self) -> Dict[str, Any]:
-        """默认实现：导出所有运行时参数"""
-        return {
-            "filters": {
-                "enable_adx_filter": self.enable_adx_filter,
-                "enable_volume_filter": self.enable_volume_filter,
-                "enable_slope_filter": self.enable_slope_filter,
-                "enable_confirm_filter": self.enable_confirm_filter,
-                "adx_threshold": getattr(self, 'adx_threshold', 25),
-                "adx_period": getattr(self, 'adx_period', 14),
-                "volume_ratio": getattr(self, 'volume_ratio', 1.2),
-                "volume_period": getattr(self, 'volume_period', 20),
-                "slope_lookback": getattr(self, 'slope_lookback', 5),
-                "confirm_bars": getattr(self, 'confirm_bars', 3),
-            },
-            "loss_protection": {
-                "enable_loss_protection": self.enable_loss_protection,
-                "max_consecutive_losses": self.max_consecutive_losses,
-                "pause_bars": self.pause_bars,
-            }
-        }
-
-    def get_runtime_config_schema(self) -> Dict[str, Any]:
-        """默认 schema（子类可扩展）"""
-        return {
-            "filters": {
-                "enable_adx_filter": {"type": "bool", "default": False},
-                "adx_threshold": {"type": "int", "default": 25},
-                # ... 其他过滤器参数
-            },
-            "loss_protection": {
-                "enable_loss_protection": {"type": "bool", "default": False},
-                "max_consecutive_losses": {"type": "int", "default": 3},
-                "pause_bars": {"type": "int", "default": 10},
-            }
-        }
-```
-
-**策略实现示例**:
-
-```python
-# strategies/sma_cross_enhanced.py
-from strategies.base_strategy import BaseEnhancedStrategy
-
-class SmaCrossEnhanced(BaseEnhancedStrategy):
-    """继承 BaseEnhancedStrategy，自动获得运行时参数导出能力"""
-
-    n1 = 10
-    n2 = 20
-
-    # 可选：覆盖默认止损保护参数
-    max_consecutive_losses = 3  # SMA 策略推荐值
-    pause_bars = 10
-
-    def init(self):
-        # 策略初始化
-        pass
-
-    def next(self):
-        # 策略逻辑
-        pass
-
-    # 可选：扩展 runtime_config（如果有策略特有参数）
-    def get_runtime_config(self) -> Dict[str, Any]:
-        config = super().get_runtime_config()
-        config["strategy_specific"] = {
-            "use_exponential_ma": getattr(self, 'use_exponential_ma', False),
-        }
-        return config
-
-
-# strategies/macd_cross.py
-class MacdCross(BaseEnhancedStrategy):
-    """MACD 策略，继承基类获得止损保护"""
-
-    fast_period = 12
-    slow_period = 26
-    signal_period = 9
-
-    # MACD 策略可能需要不同的止损参数
-    max_consecutive_losses = 4  # MACD 波动性更大
-    pause_bars = 12
-
-    def init(self):
-        # MACD 指标初始化
-        pass
-
-    def next(self):
-        # MACD 交易逻辑
-        pass
-```
+**核心组件**:
+- `RuntimeConfigurable` - 抽象接口，定义 `get_runtime_config()` 和 `get_runtime_config_schema()` 方法
+- `BaseEnhancedStrategy` - 基类实现，继承 Strategy + RuntimeConfigurable，提供默认实现
+- 支持过滤器参数和止损保护参数的自动导出
+- 子类可覆盖默认值和扩展特有参数
 
 ---
 
 ##### 3. 强制检查机制
 
-**在回测启动时检查策略契约**:
+**实现位置**: `backtest_runner/core/optimization.py` 或 `backtest_runner/cli.py`
 
-在 `backtest_runner/core/optimization.py` 或 `backtest_runner/cli.py` 中添加:
-
-```python
-def validate_strategy_contract(strategy_class):
-    """
-    验证策略是否实现了必要的接口
-
-    如果策略不符合契约，抛出异常并给出明确提示
-    """
-    from strategies.base_strategy import RuntimeConfigurable
-
-    if not issubclass(strategy_class, RuntimeConfigurable):
-        raise TypeError(
-            f"策略 {strategy_class.__name__} 必须继承 RuntimeConfigurable 接口！\n"
-            f"请修改策略定义为:\n"
-            f"  class {strategy_class.__name__}(BaseEnhancedStrategy):\n"
-            f"      ...\n"
-            f"\n"
-            f"或手动实现以下方法:\n"
-            f"  - get_runtime_config()\n"
-            f"  - get_runtime_config_schema()\n"
-            f"\n"
-            f"参考文档: requirement_docs/20251109_save_runtime_params_enhancement.md"
-        )
-
-    # 验证方法实现
-    if not hasattr(strategy_class, 'get_runtime_config'):
-        raise NotImplementedError(
-            f"策略 {strategy_class.__name__} 未实现 get_runtime_config() 方法"
-        )
-
-    if not hasattr(strategy_class, 'get_runtime_config_schema'):
-        raise NotImplementedError(
-            f"策略 {strategy_class.__name__} 未实现 get_runtime_config_schema() 方法"
-        )
-
-
-# 在回测执行前调用
-def run_backtest(strategy_class, data, ...):
-    # 验证策略契约
-    validate_strategy_contract(strategy_class)
-
-    # 执行回测
-    bt = Backtest(data, strategy_class, ...)
-    stats = bt.run(...)
-
-    # 保存参数时调用策略的 get_runtime_config()
-    if args.save_params:
-        runtime_config = strategy_class().get_runtime_config()  # 获取运行时配置
-        params_manager.save_optimization_results_with_runtime_config(
-            optimized_params=best_params,
-            runtime_config=runtime_config,  # 传入运行时配置
-            ...
-        )
-```
+**功能**: `validate_strategy_contract()` - 验证策略是否实现必要接口
+- 检查是否继承 `RuntimeConfigurable`
+- 检查是否实现 `get_runtime_config()` 和 `get_runtime_config_schema()` 方法
+- 提供友好的错误提示和修复指引
 
 ---
 
@@ -392,341 +166,61 @@ def run_backtest(strategy_class, data, ...):
 1. `strategies/base_strategy.py` - 定义 `RuntimeConfigurable` 和 `BaseEnhancedStrategy`
 
 **修改文件**:
-1. **strategies/sma_cross_enhanced.py**
-   - 继承 `BaseEnhancedStrategy`
-   - (可选) 覆盖默认止损参数
-
-2. **strategies/macd_cross.py**
-   - 继承 `BaseEnhancedStrategy`
-   - (可选) 定义 MACD 特有的止损参数
-
-3. **backtest_runner/core/optimization.py**
-   - 添加 `validate_strategy_contract()` 函数
-   - 修改 `save_best_params()`:
-     ```python
-     runtime_config = strategy_instance.get_runtime_config()
-     params_manager.save_optimization_results_with_runtime_config(
-         optimized_params=best_params,
-         runtime_config=runtime_config,
-         ...
-     )
-     ```
-
-4. **utils/strategy_params_manager.py**
-   - 添加方法 `save_optimization_results_with_runtime_config()`
-   - 添加方法 `get_runtime_config(strategy_name)`
-   - 添加方法 `validate_runtime_config(config, schema)` - 验证配置完整性
-
-5. **generate_signals.py**
-   - 加载参数时同时加载 `runtime_config`
-   - 应用到策略实例:
-     ```python
-     params = params_manager.load_strategy_params(strategy_name)
-     runtime_config = params_manager.get_runtime_config(strategy_name)
-
-     # 合并到策略参数
-     strategy_params = {**params, **flatten_runtime_config(runtime_config)}
-     ```
+1. `strategies/sma_cross_enhanced.py` - 继承 `BaseEnhancedStrategy`
+2. `strategies/macd_cross.py` - 继承 `BaseEnhancedStrategy`
+3. `backtest_runner/core/optimization.py` - 添加契约验证，调用 `get_runtime_config()`
+4. `utils/strategy_params_manager.py` - 添加 `save_optimization_results_with_runtime_config()` 等方法
+5. `generate_signals.py` - 加载并应用 `runtime_config`
 
 ---
 
 ##### 5. 新策略开发工作流
 
-**开发者视角**:
-
-```python
-# Step 1: 继承 BaseEnhancedStrategy（自动获得止损保护）
-from strategies.base_strategy import BaseEnhancedStrategy
-
-class MyNewStrategy(BaseEnhancedStrategy):
-    # Step 2: 定义优化参数
-    param1 = 10
-    param2 = 20
-
-    # Step 3: (可选) 覆盖止损保护默认值
-    max_consecutive_losses = 5  # 根据策略特点调整
-    pause_bars = 15
-
-    def init(self):
-        # 策略初始化
-        pass
-
-    def next(self):
-        # 策略逻辑
-        pass
-
-    # Step 4: (可选) 如果有策略特有的运行时参数，扩展 get_runtime_config()
-    def get_runtime_config(self):
-        config = super().get_runtime_config()
-        config["strategy_specific"] = {
-            "my_special_param": self.my_special_param,
-        }
-        return config
-```
-
-**强制检查**:
-- 如果忘记继承 `BaseEnhancedStrategy` 或 `RuntimeConfigurable`，回测启动时会报错并给出明确提示
-- 报错信息会包含修复指引和文档链接
-
----
+继承 `BaseEnhancedStrategy` → 定义优化参数 → (可选)覆盖止损默认值 → (可选)扩展 `get_runtime_config()`
+- 如果忘记继承，回测启动时会报错并给出明确提示
 
 ##### 6. 优势
 
-✅ **强制性**: 新策略如果不实现接口，无法通过回测启动时的检查
-✅ **灵活性**: 不同策略可以有不同的止损保护默认值
-✅ **可扩展性**: 新策略可以扩展 `runtime_config` 添加特有参数
-✅ **向后兼容**: 旧配置文件无 `runtime_config` 时使用策略默认值
-✅ **可维护性**: 通过基类统一管理通用功能（过滤器、止损保护）
-✅ **自文档化**: Schema 定义提供参数说明和验证规则
+✅ 强制性、灵活性、可扩展性、向后兼容、可维护性、自文档化
 
 #### 方案B：generate_signals.py 支持命令行参数（临时方案）
 
-添加与 `run_backtest.sh` 相同的命令行参数：
-```python
-parser.add_argument('--enable-loss-protection', action='store_true')
-parser.add_argument('--max-consecutive-losses', type=int, default=3)
-parser.add_argument('--pause-bars', type=int, default=10)
-# ... 其他过滤器参数
-```
+添加与 `run_backtest.sh` 相同的命令行参数
 
 ---
 
 ##### 7. 边界情况处理
 
-**场景1: 旧策略不支持 RuntimeConfigurable**
+**实现位置**: `strategies/base_strategy.py`, `utils/strategy_params_manager.py`
 
-```python
-# 旧策略（不继承 BaseEnhancedStrategy）
-class OldStrategy(Strategy):
-    def init(self):
-        pass
-
-    def next(self):
-        pass
-
-# 解决方案：提供向后兼容的包装器
-def get_strategy_runtime_config(strategy_instance):
-    """
-    安全获取策略运行时配置，支持旧策略
-
-    如果策略不支持 RuntimeConfigurable，返回空配置
-    """
-    if hasattr(strategy_instance, 'get_runtime_config'):
-        return strategy_instance.get_runtime_config()
-    else:
-        # 旧策略，返回默认值
-        return {
-            "filters": {},
-            "loss_protection": {
-                "enable_loss_protection": False,
-                "max_consecutive_losses": 3,
-                "pause_bars": 10,
-            }
-        }
-```
-
-**场景2: 配置文件中没有 runtime_config 字段（向后兼容）**
-
-```python
-def load_strategy_params_with_runtime_config(strategy_name):
-    """加载参数，支持旧配置文件格式"""
-    params = params_manager.load_strategy_params(strategy_name)
-
-    # 检查是否有 runtime_config
-    if "runtime_config" not in params:
-        # 旧配置文件，使用策略默认值
-        strategy_class = get_strategy_class(strategy_name)
-        if hasattr(strategy_class, 'get_runtime_config_schema'):
-            # 从 schema 中提取默认值
-            schema = strategy_class.get_runtime_config_schema()
-            runtime_config = extract_defaults_from_schema(schema)
-        else:
-            # 完全旧策略，使用硬编码默认值
-            runtime_config = get_default_runtime_config()
-
-        params["runtime_config"] = runtime_config
-
-    return params
-```
-
-**场景3: 命令行参数覆盖配置文件**
-
-```python
-def merge_runtime_config(config_from_file, config_from_cli):
-    """
-    合并配置，命令行参数优先级更高
-
-    用例：用户想临时测试不同的止损参数，不修改配置文件
-    """
-    merged = config_from_file.copy()
-
-    # CLI 参数覆盖配置文件参数
-    if config_from_cli.get('enable_loss_protection') is not None:
-        merged['loss_protection']['enable_loss_protection'] = config_from_cli['enable_loss_protection']
-
-    if config_from_cli.get('max_consecutive_losses') is not None:
-        merged['loss_protection']['max_consecutive_losses'] = config_from_cli['max_consecutive_losses']
-
-    # ... 其他参数
-    return merged
-```
-
-**场景4: 配置验证失败处理**
-
-```python
-def validate_runtime_config(config, schema):
-    """
-    验证配置完整性和参数范围
-
-    失败时给出明确的错误提示
-    """
-    errors = []
-
-    for section, params in schema.items():
-        if section not in config:
-            errors.append(f"缺少配置节: {section}")
-            continue
-
-        for param_name, param_spec in params.items():
-            if param_name not in config[section]:
-                errors.append(
-                    f"缺少参数: {section}.{param_name} "
-                    f"(默认值: {param_spec.get('default')})"
-                )
-                continue
-
-            value = config[section][param_name]
-            param_type = param_spec.get('type')
-            param_range = param_spec.get('range')
-
-            # 类型检查
-            if param_type == 'int' and not isinstance(value, int):
-                errors.append(f"{section}.{param_name} 应该是整数，实际: {type(value)}")
-
-            # 范围检查
-            if param_range and (value < param_range[0] or value > param_range[1]):
-                errors.append(
-                    f"{section}.{param_name} 超出范围 {param_range}，实际: {value}"
-                )
-
-    if errors:
-        raise ValueError(
-            "运行时配置验证失败:\n" + "\n".join(f"  - {e}" for e in errors)
-        )
-```
+**场景覆盖**:
+- 场景1: 旧策略不支持 RuntimeConfigurable - 提供兼容包装器
+- 场景2: 配置文件无 runtime_config - 使用策略默认值
+- 场景3: 命令行参数覆盖配置文件 - 合并配置时命令行优先
+- 场景4: 配置验证失败 - 提供明确错误提示
 
 ---
 
 ##### 8. 分阶段实现计划
 
-**Phase 1: 基础架构（必须）**
-- [ ] 创建 `strategies/base_strategy.py`
-- [ ] 实现 `RuntimeConfigurable` 和 `BaseEnhancedStrategy`
-- [ ] 扩展 `StrategyParamsManager` 支持 `runtime_config`
-
-**Phase 2: 策略迁移（必须）**
-- [ ] 修改 `SmaCrossEnhanced` 继承 `BaseEnhancedStrategy`
-- [ ] 修改 `MacdCross` 继承 `BaseEnhancedStrategy`
-- [ ] 验证现有策略功能不受影响
-
-**Phase 3: 保存和加载（必须）**
-- [ ] 修改 `save_best_params()` 调用 `get_runtime_config()`
-- [ ] 修改 `generate_signals.py` 加载 `runtime_config`
-- [ ] 实现配置验证函数
-
-**Phase 4: 强制检查（推荐）**
-- [ ] 添加 `validate_strategy_contract()` 函数
-- [ ] 在回测启动时检查策略契约
-- [ ] 添加友好的错误提示
-
-**Phase 5: 测试和文档（必须）**
-- [ ] 添加单元测试验证参数完整性
-- [ ] 测试向后兼容性（旧配置文件、旧策略）
-- [ ] 更新 CLAUDE.md 说明新的策略开发规范
+**Phase 1-3**: 基础架构、参数管理器增强、策略迁移
+**Phase 4-5**: 保存逻辑、加载逻辑
+**Phase 6-7**: 测试、文档
 
 ---
 
 ##### 9. 测试策略
 
-**单元测试**:
+**单元测试位置**: `tests/test_runtime_config.py`
 
-```python
-# tests/test_runtime_config.py
+**测试用例**:
+- 基类默认实现测试
+- 子类覆盖默认值测试
+- 契约验证测试
+- 配置保存和加载测试
+- 向后兼容性测试
 
-def test_base_strategy_get_runtime_config():
-    """测试基类默认实现"""
-    strategy = BaseEnhancedStrategy()
-    config = strategy.get_runtime_config()
-
-    assert "filters" in config
-    assert "loss_protection" in config
-    assert config["loss_protection"]["enable_loss_protection"] == False
-
-
-def test_strategy_override_defaults():
-    """测试子类覆盖默认值"""
-    class CustomStrategy(BaseEnhancedStrategy):
-        max_consecutive_losses = 5
-        pause_bars = 15
-
-    strategy = CustomStrategy()
-    config = strategy.get_runtime_config()
-
-    assert config["loss_protection"]["max_consecutive_losses"] == 5
-    assert config["loss_protection"]["pause_bars"] == 15
-
-
-def test_validate_strategy_contract():
-    """测试契约检查"""
-    class InvalidStrategy(Strategy):
-        pass
-
-    with pytest.raises(TypeError) as exc_info:
-        validate_strategy_contract(InvalidStrategy)
-
-    assert "必须继承 RuntimeConfigurable" in str(exc_info.value)
-
-
-def test_save_and_load_runtime_config():
-    """测试配置保存和加载"""
-    # 保存配置
-    runtime_config = {
-        "loss_protection": {
-            "enable_loss_protection": True,
-            "max_consecutive_losses": 4,
-            "pause_bars": 12
-        }
-    }
-    params_manager.save_optimization_results_with_runtime_config(
-        strategy_name="test_strategy",
-        optimized_params={"n1": 10, "n2": 20},
-        runtime_config=runtime_config,
-        ...
-    )
-
-    # 加载配置
-    loaded_config = params_manager.get_runtime_config("test_strategy")
-    assert loaded_config == runtime_config
-
-
-def test_backward_compatibility():
-    """测试向后兼容性"""
-    # 创建旧格式配置文件（无 runtime_config）
-    old_config = {
-        "test_strategy": {
-            "params": {"n1": 10, "n2": 20}
-        }
-    }
-
-    # 加载应该成功，使用默认值
-    params = load_strategy_params_with_runtime_config("test_strategy")
-    assert "runtime_config" in params
-    assert params["runtime_config"]["loss_protection"]["enable_loss_protection"] == False
-```
-
-**集成测试**:
-
-见下文「验证方法」章节。
+**集成测试**: 见下文「验证方法」章节
 
 ---
 

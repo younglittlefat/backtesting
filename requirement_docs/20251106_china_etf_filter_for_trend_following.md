@@ -52,36 +52,9 @@
 
 **原理**: ADX (Average Directional Index) 衡量趋势强度（非方向）
 
-**计算步骤**:
-```python
-def calculate_adx(high, low, close, period=14):
-    # 步骤1: 计算方向运动和真实波幅
-    plus_dm = high.diff()  # +DM = 今日高 - 昨日高
-    minus_dm = -low.diff()  # -DM = 昨日低 - 今日低
-
-    # 应用规则
-    plus_dm[plus_dm < 0] = 0
-    minus_dm[minus_dm < 0] = 0
-    plus_dm[(plus_dm <= minus_dm)] = 0
-    minus_dm[(minus_dm < plus_dm)] = 0
-
-    # 真实波幅 TR
-    tr1 = high - low
-    tr2 = (high - close.shift()).abs()
-    tr3 = (low - close.shift()).abs()
-    tr = pd.concat([tr1, tr2, tr3], axis=1).max(axis=1)
-
-    # 步骤2: 平滑移动平均 (Wilder's smoothing)
-    atr = tr.ewm(alpha=1/period, adjust=False).mean()
-    plus_di = 100 * plus_dm.ewm(alpha=1/period, adjust=False).mean() / atr
-    minus_di = 100 * minus_dm.ewm(alpha=1/period, adjust=False).mean() / atr
-
-    # 步骤3: 计算DX和ADX
-    dx = 100 * (plus_di - minus_di).abs() / (plus_di + minus_di)
-    adx = dx.ewm(alpha=1/period, adjust=False).mean()
-
-    return adx
-```
+**实现位置**: `etf_selector/indicators.py:calculate_adx()`
+- 使用Wilder's smoothing方法计算
+- 参数：period=14, window=250天均值
 
 **筛选标准**:
 - 计算过去250个交易日（1年）的ADX均值
@@ -91,42 +64,9 @@ def calculate_adx(high, low, close, period=14):
 
 **原理**: 用简单趋势策略检验标的对趋势交易的适应性
 
-**计算逻辑**:
-```python
-def dual_ma_backtest(data, short=20, long=50):
-    """
-    双均线策略回测
-    返回: 年化收益率, 最大回撤, 收益回撤比
-    """
-    # 计算均线
-    ma_short = data['close'].rolling(short).mean()
-    ma_long = data['close'].rolling(long).mean()
-
-    # 生成信号: 1=持仓, 0=空仓
-    signal = (ma_short > ma_long).astype(int).shift(1)
-
-    # 计算收益率
-    returns = data['close'].pct_change()
-    strategy_returns = signal * returns
-
-    # 计算净值曲线
-    equity = (1 + strategy_returns).cumprod()
-
-    # 年化收益率
-    total_days = len(data)
-    total_return = equity.iloc[-1] - 1
-    annual_return = (1 + total_return) ** (252 / total_days) - 1
-
-    # 最大回撤
-    cummax = equity.cummax()
-    drawdown = (equity - cummax) / cummax
-    max_dd = drawdown.min()
-
-    # 收益回撤比
-    return_dd_ratio = annual_return / abs(max_dd) if max_dd != 0 else 0
-
-    return annual_return, max_dd, return_dd_ratio
-```
+**实现位置**: `etf_selector/backtest_engine.py`
+- MA(20,50)策略回测
+- 计算年化收益率、最大回撤、收益回撤比
 
 **筛选标准**:
 - 回测周期: 3-5年历史数据
@@ -137,18 +77,8 @@ def dual_ma_backtest(data, short=20, long=50):
 
 **原理**: 趋势跟踪需要适度波动，过低无利可图，过高风险巨大
 
-**计算方法**:
-```python
-def calculate_volatility(returns, window=252):
-    """
-    计算年化波动率
-    """
-    # 日收益率标准差
-    daily_vol = returns.rolling(window).std()
-    # 年化
-    annual_vol = daily_vol * np.sqrt(252)
-    return annual_vol.iloc[-1]
-```
+**实现位置**: `etf_selector/indicators.py:calculate_volatility()`
+- 年化波动率 = 日波动率 × √252
 
 **筛选标准**:
 - 波动率范围: 20% < 年化波动率 < 60%
@@ -157,18 +87,8 @@ def calculate_volatility(returns, window=252):
 
 **原理**: 强者恒强，选择正在上涨的标的
 
-**计算方法**:
-```python
-def calculate_momentum(close, periods=[63, 252]):
-    """
-    计算多期动量
-    periods: [3个月, 12个月]
-    """
-    momentum = {}
-    for p in periods:
-        momentum[f'{p}d'] = (close.iloc[-1] / close.iloc[-p] - 1)
-    return momentum
-```
+**实现位置**: `etf_selector/indicators.py:calculate_momentum()`
+- 计算63日(3月)和252日(12月)动量
 
 **筛选标准**:
 - 计算3个月和12个月动量
@@ -238,8 +158,7 @@ def calculate_momentum(close, periods=[63, 252]):
 
 ### 3.2 主流程实现
 
-**核心筛选器类**: `etf_selector/selector.py:20-150`
-- `TrendETFSelector` - 主筛选器类
+**核心筛选器类**: `etf_selector/selector.py:20-150` - `TrendETFSelector`
 - `run_selector()` - 执行完整三级筛选流程
 - 第一级：流动性和上市时间筛选
 - 第二级：趋势性量化分析
@@ -251,79 +170,10 @@ def calculate_momentum(close, periods=[63, 252]):
 - `etf_selector/portfolio.py` - 智能去重和组合优化
 - `etf_selector/config.py` - 配置管理和行业分类
 
-        # 按收益回撤比排序
-        metrics.sort(key=lambda x: x['ret_dd_ratio'], reverse=True)
-        return [m['etf'] for m in metrics[:100]]  # 保留前100
-
-    def stage3_portfolio_optimization(self, etf_list, target_size=20):
-        """第三级: 相关性优化与去重"""
-        # 步骤1: 重复ETF去重
-        deduplicated_list = self.deduplicate_by_correlation(etf_list, dedup_threshold=0.95)
-        print(f"去重后标的数: {len(deduplicated_list)}")
-
-        # 步骤2: 计算收益率矩阵
-        returns_df = pd.DataFrame({
-            etf.code: etf.get_returns() for etf in deduplicated_list
-        })
-
-        # 步骤3: 分散化组合构建
-        portfolio = build_diversified_portfolio(
-            deduplicated_list, returns_df,
-            max_corr=0.7,
-            target_size=target_size
-        )
-
-        return portfolio
-
-    def deduplicate_by_correlation(self, etf_list, dedup_threshold=0.95):
-        """去除高度相关的重复ETF"""
-        if len(etf_list) < 2:
-            return etf_list
-
-        # 计算收益率相关矩阵
-        returns_df = pd.DataFrame({
-            etf.code: etf.get_returns() for etf in etf_list
-        })
-        corr_matrix = returns_df.corr()
-
-        to_remove = set()
-        for i in range(len(etf_list)):
-            if etf_list[i].code in to_remove:
-                continue
-            for j in range(i+1, len(etf_list)):
-                if etf_list[j].code in to_remove:
-                    continue
-
-                corr = corr_matrix.loc[etf_list[i].code, etf_list[j].code]
-                if corr > dedup_threshold:
-                    # 保留收益回撤比更高的ETF
-                    if etf_list[i].return_dd_ratio >= etf_list[j].return_dd_ratio:
-                        to_remove.add(etf_list[j].code)
-                    else:
-                        to_remove.add(etf_list[i].code)
-
-        return [etf for etf in etf_list if etf.code not in to_remove]
-```
-
 ### 3.3 使用示例
 
-```python
-# 初始化
-selector = TrendETFSelector(
-    etf_universe=load_all_etfs(),
-    start_date='2020-01-01',
-    end_date='2024-12-31'
-)
-
-# 执行筛选
-selected_etfs = selector.run_pipeline()
-
-# 导出结果
-export_to_csv(selected_etfs, 'trend_etf_pool.csv')
-
-# 定期更新 (每季度运行)
-schedule.every().quarter.do(selector.run_pipeline)
-```
+**命令行接口**: `python -m etf_selector.main --target-size 20 --optimize`
+详细使用见下文"模式对比"章节。
 
 ---
 
@@ -393,57 +243,14 @@ REITs:        75只 (4.2%)
 2. **新上市标的**: 约200+只ETF上市不足6个月，会被第一级筛选自动过滤
 3. **行业分类缺失**: 无标准化行业字段，需通过名称关键词匹配
 
-**解决方案 - 行业分类**:
-```python
-# 基于名称的行业关键词匹配
-industry_keywords = {
-    '科技': ['科技', '半导体', '芯片', '软件', '人工智能', 'AI', '5G'],
-    '医药': ['医药', '医疗', '生物', '健康', '制药'],
-    '金融': ['金融', '银行', '证券', '保险', '券商'],
-    '消费': ['消费', '食品', '白酒', '零售', '商业'],
-    '新能源': ['新能源', '光伏', '储能', '锂电', '电池'],
-    '军工': ['军工', '国防', '航空', '航天'],
-    '地产': ['地产', '房地产', '建筑', '基建'],
-    '周期': ['煤炭', '有色', '钢铁', '化工', '石油'],
-}
-
-def classify_industry(etf_name):
-    for industry, keywords in industry_keywords.items():
-        if any(kw in etf_name for kw in keywords):
-            return industry
-    return '其他'
-```
+**技术实现**: `etf_selector/config.py` - 行业关键词字典
+- 基于名称的行业关键词匹配
+- 支持9个行业分类（科技、医药、金融、消费、新能源、军工、地产、周期、其他）
 
 ### 4.4 数据预处理要求
 
-#### 优先级1: 必须实现
-```python
-# 1. 过滤非股票型ETF
-etf_universe = etf_basic[etf_basic['fund_type'] == '股票型']
-
-# 2. 日期格式转换
-data['trade_date'] = pd.to_datetime(data['trade_date'], format='%Y%m%d')
-data['list_date'] = pd.to_datetime(data['list_date'], format='%Y%m%d')
-
-# 3. 设置索引和排序
-data = data.sort_values('trade_date').set_index('trade_date')
-
-# 4. 处理缺失值
-data = data.dropna(subset=['adj_close', 'volume', 'amount'])
-
-# 5. 过滤成交额为0的异常日
-data = data[data['amount'] > 0]
-```
-
-#### 优先级2: 建议实现
-```python
-# 6. 行业分类
-etf_basic['industry'] = etf_basic['name'].apply(classify_industry)
-
-# 7. 数据验证
-assert len(data) >= 180, "数据不足180天"
-assert (data['adj_close'] > 0).all(), "存在非正价格"
-```
+**实现代码**: 见 `etf_selector/data_loader.py` - ETF数据预处理函数
+- 日期格式转换、索引排序、缺失值处理、异常值过滤、行业分类、数据验证
 
 ### 4.5 评估结论
 
@@ -1272,98 +1079,27 @@ df.sort_values('return_dd_ratio', ascending=False)  # ❌ 基于回测结果
 
 **定义**: 衡量价格趋势的稳定性和一致性，不依赖具体涨跌幅
 
-**计算方法**:
-```python
-def calculate_trend_consistency(close: pd.Series, window: int = 63) -> float:
-    """
-    计算趋势一致性评分
-
-    Args:
-        close: 收盘价序列
-        window: 计算窗口，默认63天（3个月）
-
-    Returns:
-        趋势一致性评分 (0-1)，值越高表示趋势越一致
-    """
-    # 方法1: 连续同向天数占比
-    returns = close.pct_change().dropna()
-    positive_days = (returns > 0).rolling(window).sum()
-    consistency_ratio = (positive_days / window - 0.5).abs() * 2
-
-    # 方法2: 价格单调性评分
-    price_ranks = close.rolling(window).apply(
-        lambda x: np.sum(x.iloc[-1] >= x.iloc[:-1]) / (len(x) - 1)
-    )
-
-    # 综合评分
-    trend_consistency = (consistency_ratio + price_ranks).mean() / 2
-    return float(trend_consistency.iloc[-1])
-```
+**实现位置**: `etf_selector/unbiased_indicators.py:calculate_trend_consistency()`
+- 方法1: 连续同向天数占比
+- 方法2: 价格单调性评分
+- 综合评分范围: 0-1
 
 **2. 价格发现效率 (Price Efficiency Score)**
 
 **定义**: 基于价量关系评估ETF价格发现的有效性
 
-**计算方法**:
-```python
-def calculate_price_efficiency(close: pd.Series, volume: pd.Series, window: int = 252) -> float:
-    """
-    计算价格发现效率
-
-    Args:
-        close: 收盘价序列
-        volume: 成交量序列
-        window: 计算窗口，默认252天
-
-    Returns:
-        价格效率评分 (0-1)，值越高表示价格发现越有效
-    """
-    returns = close.pct_change().dropna()
-    volume_aligned = volume.iloc[1:]  # 对齐长度
-
-    # 1. 成交量与收益率相关性（绝对值）
-    volume_return_corr = abs(returns.rolling(window).corr(volume_aligned))
-
-    # 2. 价格跳跃频率（低跳跃 = 高效率）
-    price_jumps = (returns.abs() > returns.rolling(20).std() * 2)
-    jump_frequency = price_jumps.rolling(window).mean()
-    jump_efficiency = 1 - jump_frequency
-
-    # 3. 买卖价差代理（基于日内波动）
-    daily_range = (close.rolling(window).max() - close.rolling(window).min()) / close
-    spread_efficiency = 1 / (1 + daily_range)
-
-    # 综合评分
-    efficiency_score = (
-        volume_return_corr * 0.4 +
-        jump_efficiency * 0.3 +
-        spread_efficiency * 0.3
-    )
-
-    return float(efficiency_score.iloc[-1])
-```
+**实现位置**: `etf_selector/unbiased_indicators.py:calculate_price_efficiency()`
+- 成交量与收益率相关性
+- 价格跳跃频率（低跳跃 = 高效率）
+- 买卖价差代理（基于日内波动）
+- 综合评分范围: 0-1
 
 #### 12.2.2 修改排序权重
 
-**新的排序逻辑**:
-```python
-# 主要指标：纯技术指标，不暴露收益
-primary_score = (
-    adx_mean * 0.4 +                    # ADX趋势强度 40%
-    trend_consistency * 0.3 +           # 趋势一致性 30%
-    price_efficiency * 0.2 +            # 价格效率 20%
-    liquidity_score * 0.1               # 流动性评分 10%
-)
-
-# 次要指标：动量，权重大幅降低
-secondary_score = (
-    momentum_3m * 0.3 +                 # 3个月动量 30%
-    momentum_12m * 0.7                  # 12个月动量 70%
-)
-
-# 综合评分：主要指标占80%，次要指标占20%
-final_score = primary_score * 0.8 + secondary_score * 0.2
-```
+**实现位置**: `etf_selector/scoring.py` - 综合评分算法
+- 主要指标(80%): ADX 40% + 趋势一致性 30% + 价格效率 20% + 流动性 10%
+- 次要指标(20%): 动量3M 30% + 动量12M 70%
+- 大幅降低动量权重，避免选择性偏差
 
 #### 12.2.3 实施文件清单
 
@@ -1377,37 +1113,17 @@ final_score = primary_score * 0.8 + secondary_score * 0.2
 
 ### 12.3 二期优化方案（后续实施）⭐⭐
 
-#### 12.3.1 其他无偏指标
+#### 12.3.1 其他无偏指标（待实现）
 
-**1. 成交量活跃度评分**
-```python
-def calculate_volume_activity_score(volume: pd.Series, sector_volumes: pd.DataFrame) -> float:
-    """基于同行业相对排名的成交量活跃度"""
-    pass
-```
-
-**2. 结构性强度指标**
-```python
-def calculate_structural_strength(ohlc_data: pd.DataFrame) -> float:
-    """基于支撑阻力位清晰度的结构评分"""
-    pass
-```
-
-**3. 行业内技术领导力**
-```python
-def calculate_sector_technical_leadership(etf_code: str, sector_etfs: List[str]) -> float:
-    """ETF在同行业内的技术指标排名"""
-    pass
-```
+- 成交量活跃度评分
+- 结构性强度指标
+- 行业内技术领导力
 
 #### 12.3.2 时间分段验证框架
 
 **核心思路**: 将筛选期和验证期彻底分离
-```python
-# 参数配置示例
-SELECTION_PERIOD = "2022-01-01" to "2023-12-31"  # 仅用于计算筛选指标
-VALIDATION_PERIOD = "2024-01-01" to "2024-12-31"  # 仅用于策略验证
-```
+- SELECTION_PERIOD: 仅用于计算筛选指标
+- VALIDATION_PERIOD: 仅用于策略验证
 
 ### 12.4 实施计划和Todo
 
