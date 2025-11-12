@@ -6,7 +6,7 @@ python scripts/fetch_tushare_data_v2.py --start_date 20251107 --end_date 2025110
 python scripts/fetch_tushare_data_v2.py --fetch_dividend --data_type fund
 
 ## 输出最新etf日线到目录（最近两年）
-python scripts/export_mysql_to_csv.py --start_date 20231107 --end_date 20251107 --data_type etf --output_dir data/chinese_etf --export_daily --export_basic
+python scripts/export_mysql_to_csv.py --data_type etf --output_dir data/chinese_etf --export_daily --export_basic --start_date 20211107 --end_date 20251112
 
 ## ETF标的预筛选
 python -m etf_selector.main --data-dir data/chinese_etf --output results/trend_etf_pool.csv --target-size 20 --min-turnover 100000 --min-volatility 0.15 --max-volatility 0.80 --adx-percentile 70 --momentum-min-positive
@@ -23,6 +23,10 @@ python -m etf_selector.main --data-dir data/chinese_etf --output results/trend_e
 ./generate_daily_signals.sh --init 100000 --portfolio-file positions/etf_macd_cross_portfolio.json
 
 ## 根据超参获取今天信号
-./generate_daily_signals.sh --analyze --strategy sma_cross_enhanced --stock-list results/trend_etf_pool.csv --portfolio-file positions/etf_sma_cross_portfolio.json --load-params config/sma_strategy_params.json --data-dir data/chinese_etf/daily
-./generate_daily_signals.sh --analyze --strategy macd_cross --stock-list results/trend_etf_pool.csv --portfolio-file positions/etf_macd_cross_portfolio.json --load-params config/macd_strategy_params.json --data-dir data/chinese_etf/daily
+./generate_daily_signals.sh --analyze --strategy sma_cross_enhanced --stock-list results/trend_etf_pool.csv --portfolio-file positions/etf_sma_cross_portfolio.json --load-params config/sma_strategy_params.json --data-dir data/chinese_etf/daily --end-date 20251112
+./generate_daily_signals.sh --analyze --strategy macd_cross --stock-list results/trend_etf_pool.csv --portfolio-file positions/etf_macd_cross_portfolio.json --load-params config/macd_strategy_params.json --data-dir data/chinese_etf/daily --end-date 20251112
+
+## 根据超参执行今天的调仓
+./generate_daily_signals.sh --execute --strategy sma_cross_enhanced --stock-list results/trend_etf_pool.csv --portfolio-file positions/etf_sma_cross_portfolio.json --load-params config/sma_strategy_params.json --data-dir data/chinese_etf/daily --end-date 20251110
+./generate_daily_signals.sh --execute --strategy macd_cross --stock-list results/trend_etf_pool.csv --portfolio-file positions/etf_macd_cross_portfolio.json --load-params config/macd_strategy_params.json --data-dir data/chinese_etf/daily --end-date 20251110
 

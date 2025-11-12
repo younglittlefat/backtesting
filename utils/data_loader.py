@@ -558,11 +558,7 @@ def load_dual_price_data(
                 volume_col='volume',
             )
             real_df = adj_df.copy()  # 复权价格作为原始价格
-            price_mapping = {
-                'adj_factor': 1.0,
-                'latest_adj_price': adj_df['Close'].iloc[-1] if len(adj_df) > 0 else 0.0,
-                'latest_real_price': adj_df['Close'].iloc[-1] if len(adj_df) > 0 else 0.0,
-            }
+            # price_mapping 将在日期过滤后构建
         elif has_real_prices:
             if verbose:
                 print("只有原始价格，使用原始价格作为双价格")
@@ -576,11 +572,7 @@ def load_dual_price_data(
                 volume_col='volume',
             )
             adj_df = real_df.copy()  # 原始价格作为复权价格
-            price_mapping = {
-                'adj_factor': 1.0,
-                'latest_adj_price': real_df['Close'].iloc[-1] if len(real_df) > 0 else 0.0,
-                'latest_real_price': real_df['Close'].iloc[-1] if len(real_df) > 0 else 0.0,
-            }
+            # price_mapping 将在日期过滤后构建
         else:
             raise ValueError(f"CSV文件缺少价格数据列。可用列: {list(df.columns)}")
     else:
@@ -610,18 +602,7 @@ def load_dual_price_data(
             volume_col='volume',
         )
 
-        # 构建价格映射
-        latest_adj_factor = df_lower['adj_factor'].iloc[-1] if has_adj_factor and len(df_lower) > 0 else 1.0
-        latest_adj_price = adj_df['Close'].iloc[-1] if len(adj_df) > 0 else 0.0
-        latest_real_price = real_df['Close'].iloc[-1] if len(real_df) > 0 else 0.0
-
-        price_mapping = {
-            'adj_factor': latest_adj_factor,
-            'latest_adj_price': latest_adj_price,
-            'latest_real_price': latest_real_price,
-        }
-
-    # 应用日期过滤（对两个DataFrame）
+    # 应用日期过滤（对两个DataFrame）- 必须在提取最新价格之前过滤
     if start_date or end_date:
         original_len = len(adj_df)
         if start_date:
@@ -638,6 +619,36 @@ def load_dual_price_data(
 
     if len(adj_df) == 0 or len(real_df) == 0:
         raise ValueError("处理后数据为空（可能是日期过滤范围不正确）")
+
+    # 在日期过滤后构建价格映射（确保使用过滤后的最新价格）
+    if has_adj_prices and has_real_prices:
+        # 使用过滤后的DataFrame获取最新数据
+        # 需要从原始df_lower中查找对应日期的adj_factor
+        latest_date = adj_df.index[-1]
+        # 将 latest_date 转换为 YYYYMMDD 格式以匹配 trade_date
+        latest_date_str = latest_date.strftime('%Y%m%d')
+        matched_rows = df_lower[df_lower['trade_date'] == int(latest_date_str)]
+
+        if len(matched_rows) > 0 and has_adj_factor:
+            latest_adj_factor = matched_rows['adj_factor'].iloc[0]
+        else:
+            latest_adj_factor = 1.0
+
+        latest_adj_price = adj_df['Close'].iloc[-1]
+        latest_real_price = real_df['Close'].iloc[-1]
+
+        price_mapping = {
+            'adj_factor': latest_adj_factor,
+            'latest_adj_price': latest_adj_price,
+            'latest_real_price': latest_real_price,
+        }
+    else:
+        # 单价格模式（只有复权价格或只有原始价格）
+        price_mapping = {
+            'adj_factor': 1.0,
+            'latest_adj_price': adj_df['Close'].iloc[-1] if len(adj_df) > 0 else 0.0,
+            'latest_real_price': real_df['Close'].iloc[-1] if len(real_df) > 0 else 0.0,
+        }
 
     if verbose:
         print(f"处理后数据行数: {len(adj_df)}")

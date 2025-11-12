@@ -59,7 +59,9 @@ class SignalGenerator:
                  lookback_days: int = 250,
                  use_dual_price: bool = True,
                  max_position_pct: float = 0.05,
-                 min_buy_signals: int = 1):
+                 min_buy_signals: int = 1,
+                 start_date: Optional[str] = None,
+                 end_date: Optional[str] = None):
         """
         初始化信号生成器
 
@@ -73,6 +75,8 @@ class SignalGenerator:
             use_dual_price: 是否使用双价格模式
             max_position_pct: 单仓位上限（默认0.05，即5%）
             min_buy_signals: 最小买入信号数（默认1）
+            start_date: 起始日期（可选，格式: YYYY-MM-DD）
+            end_date: 截止日期（可选，格式: YYYY-MM-DD）
         """
         self.strategy_class = strategy_class
         self.strategy_params = strategy_params or {}
@@ -93,14 +97,33 @@ class SignalGenerator:
         self.spread = cost_config.get('spread', 0.0)
 
         # 计算日期范围
-        if lookback_days > 0:
-            end_date = datetime.now()
-            start_date = end_date - timedelta(days=lookback_days * 2)  # 预留更多天数以防节假日
-            self.start_date = start_date.strftime('%Y-%m-%d')
-            self.end_date = end_date.strftime('%Y-%m-%d')
+        # 优先使用自定义日期，如果没有则使用lookback_days计算
+        # 日期格式支持 YYYYMMDD
+        if end_date:
+            # 转换 YYYYMMDD 格式到 YYYY-MM-DD
+            if len(end_date) == 8 and end_date.isdigit():
+                self.end_date = f"{end_date[:4]}-{end_date[4:6]}-{end_date[6:]}"
+            else:
+                self.end_date = end_date
         else:
-            self.start_date = None
-            self.end_date = None
+            self.end_date = datetime.now().strftime('%Y-%m-%d')
+
+        if start_date:
+            # 转换 YYYYMMDD 格式到 YYYY-MM-DD
+            if len(start_date) == 8 and start_date.isdigit():
+                self.start_date = f"{start_date[:4]}-{start_date[4:6]}-{start_date[6:]}"
+            else:
+                self.start_date = start_date
+        elif lookback_days > 0:
+            # 使用end_date计算start_date
+            end_dt = datetime.strptime(self.end_date, '%Y-%m-%d')
+            start_dt = end_dt - timedelta(days=lookback_days * 2)  # 预留更多天数以防节假日
+            self.start_date = start_dt.strftime('%Y-%m-%d')
+        else:
+            # 默认使用250个交易日（约1年）
+            end_dt = datetime.strptime(self.end_date, '%Y-%m-%d')
+            start_dt = end_dt - timedelta(days=500)
+            self.start_date = start_dt.strftime('%Y-%m-%d')
 
         # 追踪最新价格日期
         self.latest_price_date = None
@@ -912,6 +935,12 @@ def main():
     parser.add_argument('--min-buy-signals', type=int, default=1,
                        help='最小买入信号数，少于此数不执行买入（默认: 1，有信号就买入）')
 
+    # 日期范围参数
+    parser.add_argument('--start-date', type=str,
+                       help='起始日期（格式: YYYYMMDD），优先级高于--lookback-days')
+    parser.add_argument('--end-date', type=str,
+                       help='截止日期（格式: YYYYMMDD），默认为当前日期')
+
     # 价格模式
     parser.add_argument('--disable-dual-price', action='store_true',
                        help='禁用双价格模式（回退到旧的单价格模式，不推荐）')
@@ -961,7 +990,9 @@ def main():
             cash=0,
             cost_model=args.cost_model,
             data_dir=args.data_dir,
-            lookback_days=args.lookback_days
+            lookback_days=args.lookback_days,
+            start_date=args.start_date if hasattr(args, 'start_date') else None,
+            end_date=args.end_date if hasattr(args, 'end_date') else None
         )
 
         current_prices = {}
@@ -1075,7 +1106,9 @@ def main():
             lookback_days=args.lookback_days,
             use_dual_price=not args.disable_dual_price,
             max_position_pct=args.max_position_pct,
-            min_buy_signals=args.min_buy_signals
+            min_buy_signals=args.min_buy_signals,
+            start_date=args.start_date if hasattr(args, 'start_date') else None,
+            end_date=args.end_date if hasattr(args, 'end_date') else None
         )
 
         # 读取股票列表
@@ -1233,7 +1266,9 @@ def main():
         lookback_days=args.lookback_days,
         use_dual_price=not args.disable_dual_price,
         max_position_pct=args.max_position_pct,
-        min_buy_signals=args.min_buy_signals
+        min_buy_signals=args.min_buy_signals,
+        start_date=args.start_date if hasattr(args, 'start_date') else None,
+        end_date=args.end_date if hasattr(args, 'end_date') else None
     )
 
     # 生成信号

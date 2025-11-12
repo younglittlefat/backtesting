@@ -313,13 +313,15 @@ class TrendETFSelector:
                         }
 
                 # 应用筛选条件
-                # 波动率范围检查
-                if volatility < self.config.min_volatility or volatility > self.config.max_volatility:
-                    continue
+                # 波动率范围检查（可选）
+                if not self.config.skip_stage2_range_filtering:
+                    if volatility < self.config.min_volatility or volatility > self.config.max_volatility:
+                        continue
 
-                # 动量检查（3个月动量必须为正）
-                if np.isnan(momentum_3m) or momentum_3m <= 0:
-                    continue
+                # 动量检查（3个月动量必须为正）（可选）
+                if not self.config.skip_stage2_range_filtering:
+                    if np.isnan(momentum_3m) or momentum_3m <= 0:
+                        continue
 
                 # 获取ETF名称和行业分类
                 etf_info = basic_info[basic_info['ts_code'] == ts_code]
@@ -361,22 +363,27 @@ class TrendETFSelector:
         # 转为DataFrame便于排序和筛选
         df = pd.DataFrame(metrics_list)
 
-        # ADX筛选：保留前adx_percentile%的标的
-        adx_threshold = np.percentile(df['adx_mean'], self.config.adx_percentile)
-        df = df[df['adx_mean'] >= adx_threshold]
-
-        if verbose:
-            print(f"  🎯 ADX筛选(>{adx_threshold:.1f}): 保留 {len(df)} 只")
-
-        # 收益回撤比筛选：保留前ret_dd_percentile%的标的（可选）
-        if len(df) > 0 and use_ma_filter:
-            ret_dd_threshold = np.percentile(df['return_dd_ratio'], self.config.ret_dd_percentile)
-            df = df[df['return_dd_ratio'] >= ret_dd_threshold]
+        # 如果启用了跳过二级百分位筛选选项，直接跳到排序步骤
+        if self.config.skip_stage2_percentile_filtering:
+            if verbose:
+                print("  ⚠️ 已跳过第二级百分位筛选（ADX、收益回撤比），将直接按评分排序")
+        else:
+            # ADX筛选：保留前adx_percentile%的标的
+            adx_threshold = np.percentile(df['adx_mean'], self.config.adx_percentile)
+            df = df[df['adx_mean'] >= adx_threshold]
 
             if verbose:
-                print(f"  📈 收益回撤比筛选(>{ret_dd_threshold:.2f}): 保留 {len(df)} 只")
-        elif len(df) > 0 and not use_ma_filter and verbose:
-            print("  ⚠️ 已禁用双均线回测过滤，跳过收益回撤比筛选")
+                print(f"  🎯 ADX筛选(>{adx_threshold:.1f}): 保留 {len(df)} 只")
+
+            # 收益回撤比筛选：保留前ret_dd_percentile%的标的（可选）
+            if len(df) > 0 and use_ma_filter:
+                ret_dd_threshold = np.percentile(df['return_dd_ratio'], self.config.ret_dd_percentile)
+                df = df[df['return_dd_ratio'] >= ret_dd_threshold]
+
+                if verbose:
+                    print(f"  📈 收益回撤比筛选(>{ret_dd_threshold:.2f}): 保留 {len(df)} 只")
+            elif len(df) > 0 and not use_ma_filter and verbose:
+                print("  ⚠️ 已禁用双均线回测过滤，跳过收益回撤比筛选")
 
         # 按收益回撤比降序排序
         if use_ma_filter:

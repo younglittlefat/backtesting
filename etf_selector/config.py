@@ -31,6 +31,10 @@ class FilterConfig:
     momentum_periods: List[int] = None  # 动量计算周期，默认[63, 252]
     momentum_min_positive: bool = True  # 是否要求动量为正
 
+    # 二级筛选模式控制
+    skip_stage2_percentile_filtering: bool = False  # 是否跳过第二级的百分位筛选（ADX、收益回撤比），直接按评分排序返回topN
+    skip_stage2_range_filtering: bool = False  # 是否跳过第二级的范围过滤（波动率、动量），仅在轮换场景下启用
+
     # 第三级：组合优化
     max_correlation: float = 0.7  # 最大相关系数
     target_portfolio_size: int = 20  # 目标组合数量

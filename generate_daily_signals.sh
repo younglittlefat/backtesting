@@ -55,6 +55,8 @@ ${YELLOW}基本选项:${NC}
   --load-params <file>         从配置文件加载策略参数（覆盖--n1和--n2）
   --max-position-pct <0.0-1.0> 单仓位上限，占总资金百分比（默认: 0.05，即5%）
   --min-buy-signals <n>        最小买入信号数，少于此数不买入（默认: 1）
+  --start-date <YYYYMMDD>      起始日期（格式: YYYYMMDD），优先级高于--lookback-days
+  --end-date <YYYYMMDD>        截止日期（格式: YYYYMMDD），默认为当前日期
   -h, --help                   显示此帮助信息
 
 ${YELLOW}注意事项:${NC}
@@ -90,7 +92,20 @@ ${YELLOW}示例:${NC}
     --portfolio-file positions/portfolio.json \\
     --load-params config/strategy_params.json
 
-  ${GREEN}# 7. 无状态模式（原有功能，不使用持仓管理）${NC}
+  ${GREEN}# 7. 指定日期范围生成信号${NC}
+  $0 --analyze \\
+    --stock-list results/trend_etf_pool_20251107.csv \\
+    --portfolio-file positions/portfolio.json \\
+    --start-date 20240101 \\
+    --end-date 20241231
+
+  ${GREEN}# 8. 只指定截止日期（使用默认lookback-days计算起始日期）${NC}
+  $0 --analyze \\
+    --stock-list results/trend_etf_pool_20251107.csv \\
+    --portfolio-file positions/portfolio.json \\
+    --end-date 20241231
+
+  ${GREEN}# 9. 无状态模式（原有功能，不使用持仓管理）${NC}
   $0 --stock-list results/trend_etf_pool_20251107.csv --cash 200000 --positions 15
 
 ${YELLOW}持仓管理工作流:${NC}
@@ -160,6 +175,8 @@ main() {
     LOAD_PARAMS=""
     MAX_POSITION_PCT="0.05"
     MIN_BUY_SIGNALS="1"
+    START_DATE=""
+    END_DATE=""
 
     # 解析命令行参数
     while [[ $# -gt 0 ]]; do
@@ -241,6 +258,14 @@ main() {
                 MIN_BUY_SIGNALS="$2"
                 shift 2
                 ;;
+            --start-date)
+                START_DATE="$2"
+                shift 2
+                ;;
+            --end-date)
+                END_DATE="$2"
+                shift 2
+                ;;
             -h|--help)
                 show_help
                 exit 0
@@ -318,6 +343,14 @@ main() {
         CMD+=("--status")
         CMD+=("--portfolio-file" "$PORTFOLIO_FILE")
         CMD+=("--data-dir" "$DATA_DIR")
+
+        # 添加日期参数
+        if [ -n "$START_DATE" ]; then
+            CMD+=("--start-date" "$START_DATE")
+        fi
+        if [ -n "$END_DATE" ]; then
+            CMD+=("--end-date" "$END_DATE")
+        fi
     elif [ "$MODE" = "analyze" ] || [ "$MODE" = "execute" ]; then
         if [ -z "$PORTFOLIO_FILE" ]; then
             echo -e "${RED}错误: 分析/执行模式必须指定 --portfolio-file${NC}"
@@ -362,6 +395,14 @@ main() {
         # 添加仓位管理参数
         CMD+=("--max-position-pct" "$MAX_POSITION_PCT")
         CMD+=("--min-buy-signals" "$MIN_BUY_SIGNALS")
+
+        # 添加日期参数
+        if [ -n "$START_DATE" ]; then
+            CMD+=("--start-date" "$START_DATE")
+        fi
+        if [ -n "$END_DATE" ]; then
+            CMD+=("--end-date" "$END_DATE")
+        fi
     else
         # 无状态模式（原有逻辑）
         if [ -z "$STOCK_LIST" ]; then
@@ -402,6 +443,14 @@ main() {
         # 添加仓位管理参数
         CMD+=("--max-position-pct" "$MAX_POSITION_PCT")
         CMD+=("--min-buy-signals" "$MIN_BUY_SIGNALS")
+
+        # 添加日期参数
+        if [ -n "$START_DATE" ]; then
+            CMD+=("--start-date" "$START_DATE")
+        fi
+        if [ -n "$END_DATE" ]; then
+            CMD+=("--end-date" "$END_DATE")
+        fi
     fi
 
     # 执行

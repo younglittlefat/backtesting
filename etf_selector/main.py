@@ -148,7 +148,13 @@ def parse_arguments():
     )
     parser.add_argument(
         '--dedup-min-ratio', type=float, default=0.8,
-        help='去重后最小保留比例 (默认: 0.8, 即保留80%目标数量)'
+        help='去重后最小保留比例 (默认: 0.8, 即保留80%%目标数量)'
+    )
+
+    # 二级筛选模式控制
+    parser.add_argument(
+        '--skip-stage2-filtering', action='store_true', default=False,
+        help='跳过第二级的百分位筛选（ADX、收益回撤比），直接按综合评分排序返回topN'
     )
 
     # 技术参数
@@ -245,6 +251,10 @@ def load_config(config_path: str = None, args: argparse.Namespace = None) -> Fil
             config.enable_unbiased_scoring = False
         elif getattr(args, 'enable_unbiased_scoring', False):
             config.enable_unbiased_scoring = True
+
+        # 处理二级筛选模式
+        if getattr(args, 'skip_stage2_filtering', False):
+            config.skip_stage2_percentile_filtering = True
 
     return config
 
