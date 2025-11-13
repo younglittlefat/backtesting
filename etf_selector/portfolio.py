@@ -88,6 +88,13 @@ class PortfolioOptimizer:
                 if len(returns) < min_periods:
                     continue
 
+                # 🔍 诊断：检查单个ETF的returns索引是否有重复
+                if returns.index.duplicated().any():
+                    dup_count = returns.index.duplicated().sum()
+                    warnings.warn(f"⚠️ {ts_code}: 收益率序列存在 {dup_count} 个重复日期索引，自动去重")
+                    # 去除重复索引
+                    returns = returns[~returns.index.duplicated(keep='first')]
+
                 returns_dict[ts_code] = returns
 
             except (FileNotFoundError, ValueError, KeyError) as e:
@@ -98,10 +105,41 @@ class PortfolioOptimizer:
             return pd.DataFrame()
 
         # 构建收益率矩阵，对齐日期
-        returns_df = pd.DataFrame(returns_dict)
+        try:
+            returns_df = pd.DataFrame(returns_dict)
+        except Exception as e:
+            warnings.warn(f"⚠️ 构建收益率矩阵失败: {e}")
+            # 尝试逐个添加，找出问题列
+            returns_df = pd.DataFrame()
+            for ts_code, returns_series in returns_dict.items():
+                try:
+                    if returns_df.empty:
+                        returns_df = pd.DataFrame({ts_code: returns_series})
+                    else:
+                        returns_df[ts_code] = returns_series
+                except Exception as e2:
+                    warnings.warn(f"⚠️ 添加 {ts_code} 到矩阵失败: {e2}, 跳过该ETF")
+                    continue
+
+            if returns_df.empty:
+                return pd.DataFrame()
+
+        # 🔍 诊断：检查是否有重复的列名
+        if returns_df.columns.duplicated().any():
+            duplicates = returns_df.columns[returns_df.columns.duplicated()].tolist()
+            warnings.warn(f"⚠️ 收益率矩阵存在重复列名: {duplicates}")
+            # 去除重复列，保留第一个
+            returns_df = returns_df.loc[:, ~returns_df.columns.duplicated()]
 
         # 删除全为NaN的日期
         returns_df = returns_df.dropna(how='all')
+
+        # 🔍 诊断：检查索引是否有重复
+        if returns_df.index.duplicated().any():
+            duplicate_dates = returns_df.index[returns_df.index.duplicated()].tolist()
+            warnings.warn(f"⚠️ 收益率矩阵存在重复日期索引: {len(duplicate_dates)} 条")
+            # 去除重复索引，保留第一个
+            returns_df = returns_df[~returns_df.index.duplicated(keep='first')]
 
         return returns_df
 
@@ -167,6 +205,10 @@ class PortfolioOptimizer:
 
         # 获取ETF代码和计算收益率矩阵
         etf_codes = [etf['ts_code'] for etf in etf_candidates]
+
+        if verbose:
+            print(f"  🔍 准备计算 {len(etf_codes)} 只ETF的收益率矩阵...")
+
         returns_df = self.calculate_returns_matrix(
             etf_codes, start_date=start_date, end_date=end_date
         )
@@ -176,18 +218,34 @@ class PortfolioOptimizer:
                 print("  ❌ 无法获取收益率数据，跳过去重")
             return etf_candidates
 
+        if verbose:
+            print(f"  ✅ 收益率矩阵: {returns_df.shape[0]} 行 × {returns_df.shape[1]} 列")
+            print(f"  🔍 准备计算相关系数矩阵...")
+
         correlation_matrix = self.calculate_correlation_matrix(returns_df)
 
         if correlation_matrix.empty:
+            if verbose:
+                print("  ❌ 相关系数矩阵为空，跳过去重")
             return etf_candidates
+
+        if verbose:
+            print(f"  ✅ 相关系数矩阵: {correlation_matrix.shape[0]} × {correlation_matrix.shape[1]}")
 
         # 动态阈值去重
         thresholds = [0.98, 0.95, 0.92, 0.90]  # 从严格到宽松
 
         for i, threshold in enumerate(thresholds):
-            deduplicated = self._remove_duplicates_by_correlation(
-                etf_candidates, correlation_matrix, threshold, verbose=(verbose and i==0)
-            )
+            try:
+                deduplicated = self._remove_duplicates_by_correlation(
+                    etf_candidates, correlation_matrix, threshold, verbose=(verbose and i==0)
+                )
+            except Exception as e:
+                if verbose:
+                    print(f"  ❌ 阈值 {threshold} 去重失败: {e}")
+                import traceback
+                traceback.print_exc()
+                continue
 
             if len(deduplicated) >= min_required:
                 if verbose:

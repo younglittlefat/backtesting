@@ -352,6 +352,16 @@ cd doc
 
 **最终推荐**: 使用Baseline KAMA，不启用止损保护（夏普1.69，收益34.63%）
 
+### 📁 2025年11月12日 - 动态投资组合管理
+
+#### `20251112_dynamic_pool_rotation_strategy.md` ⭐ **投资组合轮动策略**
+**动态ETF池轮动策略实现**
+研究定期重新筛选ETF池（如每30天）能否提升收益，突破固定池子的局限性：
+- **核心思路**: 预计算轮动表 + 虚拟ETF组合回测
+- **技术创新**: 等权组合法解决backtesting.py单标的假设
+- **实现状态**: Phase 1-2完成 ✅（轮动表生成 + 虚拟ETF数据生成器）
+- **待验证**: 动态轮动 vs 固定池的收益对比实验
+
 ### 📊 功能完成度总结
 
 | 功能模块 | 状态 | 核心文档 | 说明 |
@@ -361,6 +371,7 @@ cd doc
 | **信号过滤器** | ✅ 完成 | 20251109_signal_quality_optimization.md | 5种过滤器增强信号质量 |
 | **MACD策略** | ✅ 75%完成 | 20251109_macd_cross_strategy_implementation.md | Phase 1-3完成，Phase 4待实现 |
 | **KAMA策略** | ✅ 100%完成 | 20251111_kama_adaptive_strategy_implementation.md | 完整实现+实验验证，性能卓越 |
+| **动态轮动池** | 🟡 60%完成 | 20251112_dynamic_pool_rotation_strategy.md | Phase 1-2完成，待回测实验验证 |
 | **参数管理** | ✅ 完成 | 20251109_save_runtime_params_enhancement.md | 解决回测/实盘参数一致性问题 |
 | **系统重构** | ✅ 完成 | 20251109_backtest_runner_refactoring_*.md | 模块化架构，易维护扩展 |
 | **数据管道** | ✅ 完成 | 20251103_tushare_fetcher_refactoring.md | 数据获取稳定可靠 |

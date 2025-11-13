@@ -47,6 +47,9 @@ def create_argument_parser() -> argparse.ArgumentParser:
     # === 策略过滤器参数（通用，适用于所有策略）===
     _add_strategy_filter_arguments(parser)
 
+    # === 轮动策略参数 ===
+    _add_rotation_arguments(parser)
+
     return parser
 
 
@@ -285,6 +288,54 @@ def _add_strategy_filter_arguments(parser: argparse.ArgumentParser) -> None:
         '--debug-loss-protection',
         action='store_true',
         help='启用止损保护调试日志',
+    )
+
+
+def _add_rotation_arguments(parser: argparse.ArgumentParser) -> None:
+    """添加ETF轮动策略参数"""
+    rotation_group = parser.add_argument_group('ETF轮动策略参数 (Phase 3新增功能)')
+
+    # 轮动模式启用开关
+    rotation_group.add_argument(
+        '--enable-rotation',
+        action='store_true',
+        help='启用ETF轮动策略模式（需配合--rotation-schedule参数）',
+    )
+    rotation_group.add_argument(
+        '--rotation-schedule',
+        type=str,
+        default=None,
+        help='轮动表JSON文件路径（启用轮动模式时必填）',
+    )
+
+    # 轮动配置参数
+    rotation_group.add_argument(
+        '--rebalance-mode',
+        type=str,
+        default='incremental',
+        choices=['full_liquidation', 'incremental'],
+        help='再平衡模式：full_liquidation（全平仓）或 incremental（增量调整），默认incremental',
+    )
+    rotation_group.add_argument(
+        '--rotation-trading-cost',
+        type=float,
+        default=0.003,
+        help='轮动交易成本比例（单边），默认0.003（0.3%%）',
+    )
+
+    # 轮动模式对比
+    rotation_group.add_argument(
+        '--compare-rotation-modes',
+        action='store_true',
+        help='同时测试两种再平衡模式（full_liquidation vs incremental）并对比结果',
+    )
+
+    # 轮动调试和输出
+    rotation_group.add_argument(
+        '--save-virtual-etf',
+        type=str,
+        default=None,
+        help='保存虚拟ETF数据到CSV文件（用于调试轮动策略）',
     )
 
 

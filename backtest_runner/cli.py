@@ -56,6 +56,8 @@ from utils.data_loader import (
     load_instrument_data,
 )
 from utils.trading_cost import TradingCostConfig
+from backtest_runner.data.virtual_etf_builder import VirtualETFBuilder, RebalanceMode
+from backtesting import Backtest
 
 
 def main() -> int:
@@ -68,7 +70,20 @@ def main() -> int:
         print("\n错误: 标的数量限制必须为正整数。")
         return 1
 
+    # 轮动模式参数验证
+    if hasattr(args, 'enable_rotation') and args.enable_rotation:
+        if not args.rotation_schedule:
+            print("\n错误: 启用轮动模式时必须指定 --rotation-schedule 参数。")
+            return 1
+        if not Path(args.rotation_schedule).exists():
+            print(f"\n错误: 轮动表文件不存在: {args.rotation_schedule}")
+            return 1
+
     verbose = args.verbose
+
+    # 检查是否为轮动模式
+    if hasattr(args, 'enable_rotation') and args.enable_rotation:
+        return _run_rotation_mode(args)
 
     # 打印系统信息
     _print_system_info(args)
@@ -483,6 +498,372 @@ def _save_summary_csv(all_results: List[Dict], args) -> None:
     aggregate_path.parent.mkdir(parents=True, exist_ok=True)
     summary_df.to_csv(aggregate_path, index=False, encoding='utf-8-sig')
     print(f"汇总结果已保存: {aggregate_path}")
+
+
+def _run_rotation_mode(args) -> int:
+    """运行ETF轮动策略模式"""
+
+    print("=" * 70)
+    print("ETF轮动策略回测模式")
+    print("=" * 70)
+    print(f"轮动表文件: {args.rotation_schedule}")
+    print(f"策略选择:   {args.strategy}")
+    print(f"再平衡模式: {args.rebalance_mode}")
+    print(f"轮动成本:   {args.rotation_trading_cost:.3%}")
+    print(f"初始资金:   {args.cash:,.2f}")
+
+    # 显示启用的功能
+    enabled_features = []
+    if hasattr(args, 'enable_slope_filter') and args.enable_slope_filter:
+        enabled_features.append("斜率过滤")
+    if hasattr(args, 'enable_adx_filter') and args.enable_adx_filter:
+        enabled_features.append("ADX过滤")
+    if hasattr(args, 'enable_volume_filter') and args.enable_volume_filter:
+        enabled_features.append("成交量过滤")
+    if hasattr(args, 'enable_confirm_filter') and args.enable_confirm_filter:
+        enabled_features.append("确认过滤")
+    if hasattr(args, 'enable_loss_protection') and args.enable_loss_protection:
+        enabled_features.append(f"止损保护({args.max_consecutive_losses}次/{args.pause_bars}bars)")
+
+    if enabled_features:
+        print(f"启用功能:   {', '.join(enabled_features)}")
+    else:
+        print("启用功能:   Baseline（无过滤器和保护）")
+    print("=" * 70)
+
+    try:
+        # 检查是否为对比模式
+        if hasattr(args, 'compare_rotation_modes') and args.compare_rotation_modes:
+            return _run_rotation_comparison(args)
+        else:
+            return _run_single_rotation_strategy(args)
+    except Exception as e:
+        print(f"\n错误: {e}")
+        if args.verbose:
+            import traceback
+            traceback.print_exc()
+        return 1
+
+
+def _run_single_rotation_strategy(args) -> int:
+    """运行单个轮动策略"""
+
+    # Step 1: 构建虚拟ETF数据
+    print("\n[1/3] 构建虚拟ETF数据...")
+
+    builder = VirtualETFBuilder(
+        rotation_schedule_path=args.rotation_schedule,
+        data_dir=args.data_dir
+    )
+
+    rebalance_mode = RebalanceMode(args.rebalance_mode)
+    virtual_etf_data = builder.build(
+        rebalance_mode=rebalance_mode,
+        trading_cost_pct=args.rotation_trading_cost,
+        verbose=args.verbose
+    )
+
+    # 保存虚拟ETF数据（如果指定）
+    if hasattr(args, 'save_virtual_etf') and args.save_virtual_etf:
+        save_path = Path(args.save_virtual_etf)
+        save_path.parent.mkdir(parents=True, exist_ok=True)
+        virtual_etf_data.to_csv(save_path)
+        if args.verbose:
+            print(f"虚拟ETF数据已保存到: {save_path}")
+
+    # Step 2: 应用策略回测
+    print(f"\n[2/3] 应用{args.strategy}策略...")
+
+    strategy_class = STRATEGIES[args.strategy]
+
+    # 构建带参数的策略实例
+    ParameterizedStrategy = _build_strategy_instance(strategy_class, args)
+
+    # 运行回测
+    bt = Backtest(
+        virtual_etf_data,
+        ParameterizedStrategy,
+        cash=args.cash,
+        commission=0.0,  # 成本已在虚拟ETF中计入
+    )
+
+    stats = bt.run()
+
+    # Step 3: 输出结果
+    print(f"\n[3/3] 结果分析...")
+
+    rotation_stats = _calculate_rotation_stats(virtual_etf_data, stats)
+    _print_rotation_results(stats, rotation_stats, args)
+
+    # 保存结果（如果指定汇总输出）
+    if args.aggregate_output:
+        _save_rotation_summary_csv(stats, rotation_stats, args)
+        print(f"\n汇总结果已保存: {args.aggregate_output}")
+
+    return 0
+
+
+def _run_rotation_comparison(args) -> int:
+    """对比两种再平衡模式"""
+
+    print("\n" + "=" * 70)
+    print("再平衡模式对比实验")
+    print("=" * 70)
+
+    modes = [RebalanceMode.FULL_LIQUIDATION, RebalanceMode.INCREMENTAL]
+    results = {}
+
+    for mode in modes:
+        print(f"\n运行{mode.value}模式...")
+
+        # 临时修改参数
+        original_mode = args.rebalance_mode
+        args.rebalance_mode = mode.value
+
+        try:
+            # 构建虚拟ETF
+            builder = VirtualETFBuilder(
+                rotation_schedule_path=args.rotation_schedule,
+                data_dir=args.data_dir
+            )
+
+            virtual_etf_data = builder.build(
+                rebalance_mode=mode,
+                trading_cost_pct=args.rotation_trading_cost,
+                verbose=False  # 减少噪音
+            )
+
+            # 运行回测
+            strategy_class = STRATEGIES[args.strategy]
+            ParameterizedStrategy = _build_strategy_instance(strategy_class, args)
+
+            bt = Backtest(
+                virtual_etf_data,
+                ParameterizedStrategy,
+                cash=args.cash,
+                commission=0.0,
+            )
+
+            stats = bt.run()
+            rotation_stats = _calculate_rotation_stats(virtual_etf_data, stats)
+
+            results[mode.value] = {
+                'backtest_stats': stats,
+                'rotation_stats': rotation_stats,
+            }
+
+        finally:
+            # 恢复原始参数
+            args.rebalance_mode = original_mode
+
+    # 对比结果
+    _print_rotation_comparison_results(results)
+
+    return 0
+
+
+def _build_strategy_instance(strategy_class, args):
+    """构建带参数的策略实例"""
+
+    # 创建策略实例的参数字典
+    strategy_params = {}
+
+    # 应用过滤器开关
+    if hasattr(strategy_class, 'enable_slope_filter') and hasattr(args, 'enable_slope_filter'):
+        strategy_params['enable_slope_filter'] = args.enable_slope_filter
+    if hasattr(strategy_class, 'enable_adx_filter') and hasattr(args, 'enable_adx_filter'):
+        strategy_params['enable_adx_filter'] = args.enable_adx_filter
+    if hasattr(strategy_class, 'enable_volume_filter') and hasattr(args, 'enable_volume_filter'):
+        strategy_params['enable_volume_filter'] = args.enable_volume_filter
+    if hasattr(strategy_class, 'enable_confirm_filter') and hasattr(args, 'enable_confirm_filter'):
+        strategy_params['enable_confirm_filter'] = args.enable_confirm_filter
+
+    # 应用止损保护参数
+    if hasattr(strategy_class, 'enable_loss_protection') and hasattr(args, 'enable_loss_protection'):
+        strategy_params['enable_loss_protection'] = args.enable_loss_protection
+        strategy_params['max_consecutive_losses'] = args.max_consecutive_losses
+        strategy_params['pause_bars'] = args.pause_bars
+
+    # 应用过滤器参数
+    if hasattr(strategy_class, 'slope_lookback') and hasattr(args, 'slope_lookback'):
+        strategy_params['slope_lookback'] = args.slope_lookback
+    if hasattr(strategy_class, 'adx_period') and hasattr(args, 'adx_period'):
+        strategy_params['adx_period'] = args.adx_period
+    if hasattr(strategy_class, 'adx_threshold') and hasattr(args, 'adx_threshold'):
+        strategy_params['adx_threshold'] = args.adx_threshold
+    if hasattr(strategy_class, 'volume_period') and hasattr(args, 'volume_period'):
+        strategy_params['volume_period'] = args.volume_period
+    if hasattr(strategy_class, 'volume_ratio') and hasattr(args, 'volume_ratio'):
+        strategy_params['volume_ratio'] = args.volume_ratio
+    if hasattr(strategy_class, 'confirm_bars') and hasattr(args, 'confirm_bars'):
+        strategy_params['confirm_bars'] = args.confirm_bars
+
+    # 动态创建策略类（带参数）
+    class ParameterizedStrategy(strategy_class):
+        pass
+
+    # 设置参数为类属性
+    for param_name, param_value in strategy_params.items():
+        setattr(ParameterizedStrategy, param_name, param_value)
+
+    return ParameterizedStrategy
+
+
+def _calculate_rotation_stats(virtual_etf_data: pd.DataFrame, backtest_stats) -> dict:
+    """计算轮动相关的统计信息"""
+
+    # 轮动次数和成本
+    rebalance_dates = virtual_etf_data[virtual_etf_data['rebalance_cost'] > 0]
+    total_rotations = len(rebalance_dates)
+    total_rebalance_cost = virtual_etf_data['rebalance_cost'].sum()
+
+    # 平均轮动间隔
+    if total_rotations > 1:
+        rotation_dates = rebalance_dates.index
+        intervals = [(rotation_dates[i] - rotation_dates[i-1]).days for i in range(1, len(rotation_dates))]
+        avg_rotation_interval = sum(intervals) / len(intervals)
+    else:
+        avg_rotation_interval = None
+
+    # 活跃ETF统计
+    avg_active_etfs = virtual_etf_data['active_etf_count'].mean()
+
+    return {
+        'total_rotations': total_rotations,
+        'total_rebalance_cost_pct': total_rebalance_cost,
+        'avg_rotation_interval_days': avg_rotation_interval,
+        'avg_active_etfs': avg_active_etfs,
+        'rebalance_dates': rebalance_dates.index.tolist(),
+    }
+
+
+def _print_rotation_results(stats, rotation_stats, args):
+    """打印轮动策略结果"""
+
+    print("\n" + "=" * 70)
+    print("ETF轮动策略回测结果")
+    print("=" * 70)
+
+    # 基本信息
+    print(f"策略: {args.strategy}")
+    print(f"再平衡模式: {args.rebalance_mode}")
+    print(f"交易成本: {args.rotation_trading_cost:.3%}")
+
+    # 轮动统计
+    print(f"\n轮动统计:")
+    print(f"  总轮动次数: {rotation_stats['total_rotations']}")
+    print(f"  累计轮动成本: {rotation_stats['total_rebalance_cost_pct']:.3%}")
+    if rotation_stats['avg_rotation_interval_days']:
+        print(f"  平均轮动间隔: {rotation_stats['avg_rotation_interval_days']:.1f}天")
+    print(f"  平均活跃ETF数: {rotation_stats['avg_active_etfs']:.1f}")
+
+    # 策略表现
+    print(f"\n策略表现:")
+    print(f"  回测期间: {stats['Start']} 至 {stats['End']}")
+    print(f"  总收益率: {stats['Return [%]']:.2f}%")
+    if 'Return (Ann.) [%]' in stats:
+        print(f"  年化收益率: {stats['Return (Ann.) [%]']:.2f}%")
+    print(f"  夏普比率: {stats['Sharpe Ratio']:.3f}")
+    print(f"  最大回撤: {stats['Max. Drawdown [%]']:.2f}%")
+    print(f"  交易次数: {stats['# Trades']}")
+    print(f"  胜率: {stats['Win Rate [%]']:.2f}%")
+
+    if args.verbose and len(rotation_stats['rebalance_dates']) > 0:
+        print(f"\n轮动时点:")
+        for i, date in enumerate(rotation_stats['rebalance_dates'][:10]):  # 只显示前10个
+            print(f"  {i+1}. {str(date)[:10]}")
+        if len(rotation_stats['rebalance_dates']) > 10:
+            print(f"  ... 等共{len(rotation_stats['rebalance_dates'])}次轮动")
+
+
+def _print_rotation_comparison_results(results):
+    """打印轮动模式对比结果"""
+
+    print("\n" + "=" * 70)
+    print("对比结果")
+    print("=" * 70)
+
+    headers = ["指标", "全平仓", "增量调整", "差异"]
+    print(f"{headers[0]:<20} {headers[1]:<15} {headers[2]:<15} {headers[3]:<15}")
+    print("-" * 70)
+
+    # 提取对比数据
+    full_stats = results['full_liquidation']['backtest_stats']
+    incr_stats = results['incremental']['backtest_stats']
+    full_rotation = results['full_liquidation']['rotation_stats']
+    incr_rotation = results['incremental']['rotation_stats']
+
+    # 对比项目
+    comparisons = [
+        ("总收益率(%)", full_stats['Return [%]'], incr_stats['Return [%]']),
+        ("夏普比率", full_stats['Sharpe Ratio'], incr_stats['Sharpe Ratio']),
+        ("最大回撤(%)", full_stats['Max. Drawdown [%]'], incr_stats['Max. Drawdown [%]']),
+        ("轮动成本(%)", full_rotation['total_rebalance_cost_pct']*100, incr_rotation['total_rebalance_cost_pct']*100),
+        ("交易次数", full_stats['# Trades'], incr_stats['# Trades']),
+    ]
+
+    for metric, full_val, incr_val in comparisons:
+        diff = incr_val - full_val
+        diff_str = f"+{diff:.3f}" if diff > 0 else f"{diff:.3f}"
+        print(f"{metric:<20} {full_val:<15.3f} {incr_val:<15.3f} {diff_str:<15}")
+
+    # 推荐
+    incr_return = incr_stats['Return [%]']
+    full_return = full_stats['Return [%]']
+    incr_cost = incr_rotation['total_rebalance_cost_pct']
+    full_cost = full_rotation['total_rebalance_cost_pct']
+
+    print(f"\n推荐模式:")
+    if incr_return > full_return and incr_cost < full_cost:
+        print("✅ 增量调整: 收益更高且成本更低")
+    elif incr_return > full_return:
+        print("✅ 增量调整: 收益更高")
+    elif incr_cost < full_cost:
+        print("✅ 增量调整: 成本更低")
+    else:
+        print("⚠️ 全平仓: 需要根据具体情况选择")
+
+
+def _save_rotation_summary_csv(stats, rotation_stats, args):
+    """保存轮动策略汇总结果到CSV"""
+
+    # 构建结果字典
+    result_dict = {
+        # 基本信息
+        'strategy': args.strategy,
+        'rebalance_mode': args.rebalance_mode,
+        'rotation_trading_cost_pct': args.rotation_trading_cost,
+        'initial_cash': args.cash,
+
+        # 轮动统计
+        'total_rotations': rotation_stats['total_rotations'],
+        'total_rebalance_cost_pct': rotation_stats['total_rebalance_cost_pct'],
+        'avg_rotation_interval_days': rotation_stats.get('avg_rotation_interval_days'),
+        'avg_active_etfs': rotation_stats['avg_active_etfs'],
+
+        # 回测结果
+        'start_date': str(stats['Start']),
+        'end_date': str(stats['End']),
+        'return_pct': stats['Return [%]'],
+        'return_ann_pct': stats.get('Return (Ann.) [%]'),
+        'sharpe_ratio': stats['Sharpe Ratio'],
+        'max_drawdown_pct': stats['Max. Drawdown [%]'],
+        'num_trades': stats['# Trades'],
+        'win_rate_pct': stats['Win Rate [%]'],
+
+        # 启用的功能
+        'enable_slope_filter': getattr(args, 'enable_slope_filter', False),
+        'enable_adx_filter': getattr(args, 'enable_adx_filter', False),
+        'enable_volume_filter': getattr(args, 'enable_volume_filter', False),
+        'enable_confirm_filter': getattr(args, 'enable_confirm_filter', False),
+        'enable_loss_protection': getattr(args, 'enable_loss_protection', False),
+    }
+
+    # 保存到CSV
+    df = pd.DataFrame([result_dict])
+    output_path = Path(args.aggregate_output)
+    output_path.parent.mkdir(parents=True, exist_ok=True)
+    df.to_csv(output_path, index=False, encoding='utf-8-sig')
 
 
 if __name__ == '__main__':

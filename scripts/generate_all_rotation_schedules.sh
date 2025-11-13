@@ -5,8 +5,8 @@
 set -e  # 遇到错误立即退出
 
 # 配置参数
-START_DATE="2023-11-01"
-END_DATE="2025-11-12"
+START_DATE="2024-01-02"
+END_DATE="2024-05-06"
 POOL_SIZE=20
 DATA_DIR="data/chinese_etf"
 OUTPUT_DIR="results/rotation_schedules"
@@ -26,7 +26,8 @@ echo "  输出目录: $OUTPUT_DIR"
 echo ""
 
 # 轮动周期列表
-PERIODS=(7 15 30 60)
+# PERIODS=(7 15 30 60)
+PERIODS=(30)
 
 # 逐个生成
 for period in "${PERIODS[@]}"; do

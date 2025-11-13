@@ -69,8 +69,8 @@ def parse_arguments():
         help='评分窗口天数 (默认: 120天)'
     )
     parser.add_argument(
-        '--data-dir', type=str, default='data/chinese_etf/daily',
-        help='ETF数据目录路径 (默认: data/chinese_etf/daily)'
+        '--data-dir', type=str, default='data/chinese_etf',
+        help='ETF数据根目录路径 (默认: data/chinese_etf)'
     )
     parser.add_argument(
         '--output', type=str,
@@ -340,7 +340,7 @@ def main():
         print(f"  池子大小: {args.pool_size} 只")
         print(f"  评分窗口: {args.lookback_days} 天")
         print(f"  回测区间: {args.start_date} 至 {args.end_date}")
-        print(f"  数据目录: {args.data_dir}")
+        print(f"  数据根目录: {args.data_dir}")
 
     # 确定输出路径
     if args.output:
