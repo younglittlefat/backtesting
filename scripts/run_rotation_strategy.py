@@ -121,6 +121,16 @@ def create_rotation_argument_parser():
         help='启用持续确认过滤器'
     )
 
+    # KAMA策略特有过滤器（默认启用，可通过参数禁用）
+    parser.add_argument(
+        '--disable-efficiency-filter', action='store_true',
+        help='禁用KAMA效率比率过滤器（KAMA默认启用）'
+    )
+    parser.add_argument(
+        '--disable-slope-confirmation', action='store_true',
+        help='禁用KAMA斜率确认过滤器（KAMA默认启用）'
+    )
+
     # 止损保护参数
     parser.add_argument(
         '--enable-loss-protection', action='store_true',
@@ -198,6 +208,12 @@ def build_strategy_instance(strategy_name: str, strategy_class, args):
     if hasattr(strategy_class, 'enable_confirm_filter'):
         strategy_params['enable_confirm_filter'] = args.enable_confirm_filter
 
+    # KAMA策略特有过滤器（默认启用，可通过--disable-*参数禁用）
+    if hasattr(strategy_class, 'enable_efficiency_filter'):
+        strategy_params['enable_efficiency_filter'] = not args.disable_efficiency_filter
+    if hasattr(strategy_class, 'enable_slope_confirmation'):
+        strategy_params['enable_slope_confirmation'] = not args.disable_slope_confirmation
+
     # 应用止损保护参数
     if hasattr(strategy_class, 'enable_loss_protection'):
         strategy_params['enable_loss_protection'] = args.enable_loss_protection
@@ -269,8 +285,17 @@ def run_rotation_strategy(
         if args.enable_loss_protection:
             enabled_features.append(f"止损保护({args.max_consecutive_losses}次/{args.pause_bars}bars)")
 
-        if enabled_features:
-            print(f"启用功能: {', '.join(enabled_features)}")
+        # KAMA策略特有过滤器状态
+        kama_features = []
+        if strategy_name == 'kama_cross':
+            if not args.disable_efficiency_filter:
+                kama_features.append("效率比率过滤")
+            if not args.disable_slope_confirmation:
+                kama_features.append("斜率确认")
+
+        if enabled_features or kama_features:
+            all_features = enabled_features + kama_features
+            print(f"启用功能: {', '.join(all_features)}")
         else:
             print("启用功能: Baseline（无过滤器和保护）")
         print("-" * 80)
@@ -345,11 +370,13 @@ def run_rotation_strategy(
     }
 
     # 获取策略运行时配置
-    if hasattr(ParameterizedStrategy, '__call__'):
-        # 创建一个临时实例获取运行时配置
-        temp_instance = ParameterizedStrategy()
-        if hasattr(temp_instance, 'get_runtime_config'):
-            result['runtime_config'] = temp_instance.get_runtime_config()
+    # 注意：策略实例在bt.run()后已经创建，我们通过类属性获取配置
+    if hasattr(ParameterizedStrategy, 'get_runtime_config'):
+        # 尝试通过类方法获取（如果是静态配置）
+        try:
+            result['runtime_config'] = get_strategy_runtime_config(ParameterizedStrategy)
+        except:
+            pass  # 如果获取失败，忽略运行时配置
 
     return result
 

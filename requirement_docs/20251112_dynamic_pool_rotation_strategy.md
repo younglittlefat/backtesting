@@ -2,9 +2,9 @@
 
 **需求编号**: REQ-20251112-ROTATION
 **优先级**: P2 (研究性需求)
-**状态**: ✅ **Phase 3 完成** - 轮动策略完整实现并验收通过
+**状态**: ✅ **Phase 1-4 全部完成** - 实验结论：固定池优于动态轮动
 **创建日期**: 2025-11-12
-**最后更新**: 2025-11-13 10:00 (Phase 3验收完成)
+**最后更新**: 2025-11-14 (Phase 4实验验收完成)
 
 ---
 
@@ -530,70 +530,286 @@ max    1221.834478  1230.793499  1210.031574  1219.996788  6.641921e+07
 
 ---
 
-### Phase 4: 对比实验 🧪 [🟡 准备就绪]
+### Phase 4: 对比实验 🧪 [✅ 已完成]
 
-**状态**: 🟡 可以启动 - Phase 3完成，基础设施就绪
+**状态**: ✅ 验收通过（2025-11-14）
+**实施日期**: 2025-11-13 至 2025-11-14
+**实际工时**: 数据准备3小时 + 回测执行5.5小时 + 分析1小时 = 9.5小时
 
-**实验矩阵**: 1基准 + 8轮动场景（4周期 × 2再平衡模式）
+#### 🎯 实验目标
 
-**推荐实验计划**（基于Task Agent验收建议）:
+验证**动态轮动ETF池**相比**固定ETF池**的性能差异，回答核心问题：
+- ✅ **定期重新筛选ETF池能否提升风险调整后收益？** → **否，显著劣于固定池**
+- ✅ **最优轮动周期是多少？** → **不推荐轮动；若必须轮动，30天优于60天**
 
-#### 🎯 核心实验
-1. **大规模回测验证**
-   - 时间跨度：2年历史数据（2023-01至2024-12）
-   - 轮动周期：15天、30天、60天、90天
-   - 对比基准：固定ETF池（使用相同的top-20 ETF）
+#### 📐 实验设计
 
-2. **跨策略性能对比**
-   - KAMA轮动 vs KAMA固定池
-   - SMA（带止损）轮动 vs SMA固定池
-   - MACD轮动 vs MACD固定池
+**实验矩阵**: 3个场景（1对照组 + 2实验组）
 
-3. **成本敏感性分析**
-   - 交易成本：0.1%、0.3%、0.5%、1.0%
-   - 成本对轮动策略收益的影响曲线
+| 场景ID | 类型 | ETF池类型 | 轮动周期 | 说明 |
+|--------|------|-----------|----------|------|
+| **Baseline** | 对照组 | 固定池 | - | 2023-11-01时点筛选的top-20 ETF，整个回测期不变 |
+| **Rotation-30d** | 实验组 | 动态轮动 | 30天 | 每30天重新筛选ETF池 |
+| **Rotation-60d** | 实验组 | 动态轮动 | 60天 | 每60天重新筛选ETF池 |
 
-4. **再平衡模式优化**
-   - 全平仓 vs 增量调整
-   - 不同换手率下的成本效益分析
+**关键实验参数**:
+- **时间跨度**: 2023-11-01 至 2025-11-12（约2年，与Phase 2/3验证的KAMA策略时间段一致）
+- **策略**: KAMA Baseline（夏普1.69，实验验证最优）
+- **再平衡模式**: 增量调整（相比全平仓节省39%成本）
+- **交易成本**: 0.3%单边（中国ETF标准费率）
+- **ETF池大小**: 20只
 
-#### 📊 期望输出
-- **实验报告**：`experiment/etf/rotation_strategy/PHASE4_RESULTS.md`
-- **结论**：轮动策略是否优于固定池？最优配置是什么？
-- **推荐配置**：基于实验结果的最佳轮动参数
+实验文档索引：
+  - 实验设计: experiment/etf/rotation_comparison/EXPERIMENT_DESIGN.md
+  - 开发报告: experiment/etf/rotation_comparison/PROGRESS_REPORT.md
+  - 自动化脚本: experiment/etf/rotation_comparison/run_comparison.py --help
 
-**预计工时**: 2小时（脚本） + 4小时（执行） + 4小时（分析）
+#### 🔬 核心技术方案
+
+**1. 对照组（固定池）生成方式** ⭐ 关键
+```bash
+# 使用2023-11-01时点的筛选结果作为固定池
+# 筛选规则：一阶段过滤（成交量5万）+ 按评分排序取top-20（无二阶段硬性阈值）
+
+etf_selector.filter_stage1(date='2023-11-01') \
+  → score_all_etfs() \
+  → sort_by_score().head(20) \
+  → 保存为 fixed_pool_baseline.csv
+```
+
+**2. 实验组（轮动池）生成方式**
+```bash
+# 使用Phase 1已实现的轮动表生成脚本
+# 关键修改：去除二阶段评分阈值，改为纯排序
+
+scripts/prepare_rotation_schedule.py \
+  --start-date 2023-11-01 \
+  --end-date 2025-11-12 \
+  --rotation-period {30|60} \
+  --pool-size 20 \
+  --no-score-threshold  # 新增参数，跳过二阶段硬性过滤
+```
+
+**3. 回测执行方式**
+```bash
+# 对照组：使用固定池
+python scripts/run_backtest.py \
+  --stock-list results/fixed_pool_baseline.csv \
+  --strategy kama_cross \
+  --data-dir data/chinese_etf
+
+# 实验组：使用轮动策略
+python scripts/run_rotation_strategy.py \
+  --rotation-schedule results/rotation_schedules/rotation_{30d|60d}.json \
+  --strategy kama_cross \
+  --rebalance-mode incremental \
+  --data-dir data/chinese_etf
+```
+
+#### 📊 评估维度
+
+| 维度类别 | 指标 | 对比基准 |
+|---------|------|---------|
+| **收益性** | 总收益率、年化收益 | 轮动 vs 固定 |
+| **风险调整** | 夏普比率、Sortino比率、Calmar比率 | 轮动 vs 固定 |
+| **风险控制** | 最大回撤、波动率、VaR | 轮动 vs 固定 |
+| **交易效率** | 胜率、盈亏比、交易次数 | 轮动 vs 固定 |
+| **轮动成本** | 累计轮动成本、换手率、轮动次数 | 仅轮动组 |
+| **稳健性** | 不同市场环境下的表现差异 | 轮动 vs 固定 |
+
+#### 📁 交付物清单 ✅ 全部完成
+
+| 交付物 | 路径 | 状态 | 说明 |
+|--------|------|------|------|
+| 对照组ETF池 | `results/rotation_fixed_pool/baseline_pool.csv` | ✅ | 2023-11-01时点top-20 ETF |
+| 轮动表30天 | `results/rotation_schedules/rotation_30d_full.json` | ✅ | 30天周期轮动表（25次轮动） |
+| 轮动表60天 | `results/rotation_schedules/rotation_60d_full.json` | ✅ | 60天周期轮动表（13次轮动） |
+| 实验脚本 | `experiment/etf/rotation_comparison/run_comparison.py` | ✅ | 自动化对比实验脚本 |
+| 对照组结果 | `experiment/etf/rotation_comparison/results/baseline/` | ✅ | 固定池回测结果（20只ETF） |
+| 实验组结果 | `experiment/etf/rotation_comparison/results/rotation_30d/` | ✅ | 30天轮动回测结果 |
+| 实验组结果 | `experiment/etf/rotation_comparison/results/rotation_60d/` | ✅ | 60天轮动回测结果 |
+| 对比分析报告 | `experiment/etf/rotation_comparison/EXPERIMENT_RESULTS.md` | ✅ | 完整对比分析和结论（284行） |
+
+#### 🎯 验收标准 ✅ 全部达成
+
+- ✅ 成功生成对照组固定ETF池（20只，2023-11-01时点）
+- ✅ 成功生成30天和60天轮动表（覆盖2023-11至2025-11）
+- ✅ 完成3个场景的回测（对照组 + 2个实验组）
+- ✅ 生成完整的对比分析报告
+- ✅ 明确回答：轮动策略是否优于固定池？ → **否，显著劣于固定池**
+- ✅ 给出最优轮动周期推荐 → **不推荐轮动；若必须轮动，30天优于60天**
+
+#### 📚 扩展实验教程
+
+**如何测试其他轮动周期（15天、90天等）**:
+```bash
+# 1. 生成新的轮动表
+python scripts/prepare_rotation_schedule.py \
+  --start-date 2023-11-01 \
+  --end-date 2025-11-12 \
+  --rotation-period 15 \  # 修改为15或90
+  --pool-size 20 \
+  --no-score-threshold \
+  --output results/rotation_schedules/rotation_15d_full.json
+
+# 2. 运行轮动回测
+python scripts/run_rotation_strategy.py \
+  --rotation-schedule results/rotation_schedules/rotation_15d_full.json \
+  --strategy kama_cross \
+  --rebalance-mode incremental \
+  --data-dir data/chinese_etf \
+  --output experiment/etf/rotation_comparison/results/rotation_15d/
+
+# 3. 更新对比分析脚本
+# 在 experiment/etf/rotation_comparison/run_comparison.py 中添加新场景
+```
+
+**如何同时测试SMA和MACD策略**:
+```bash
+# 对照组 - SMA策略（带Loss Protection）
+python scripts/run_backtest.py \
+  --stock-list results/fixed_pool_baseline.csv \
+  --strategy sma_cross_enhanced \
+  --enable-loss-protection \
+  --max-consecutive-losses 3 \
+  --pause-bars 10 \
+  --data-dir data/chinese_etf \
+  --output experiment/etf/rotation_comparison/results/sma_baseline/
+
+# 实验组 - SMA轮动30天
+python scripts/run_rotation_strategy.py \
+  --rotation-schedule results/rotation_schedules/rotation_30d_full.json \
+  --strategy sma_cross_enhanced \
+  --enable-loss-protection \
+  --max-consecutive-losses 3 \
+  --pause-bars 10 \
+  --rebalance-mode incremental \
+  --data-dir data/chinese_etf \
+  --output experiment/etf/rotation_comparison/results/sma_rotation_30d/
+
+# 对照组 - MACD策略（带Combined止损）
+python scripts/run_backtest.py \
+  --stock-list results/fixed_pool_baseline.csv \
+  --strategy macd_cross \
+  --enable-combined-stop-loss \
+  --max-consecutive-losses 2 \
+  --pause-bars 5 \
+  --trailing-stop-pct 0.03 \
+  --data-dir data/chinese_etf \
+  --output experiment/etf/rotation_comparison/results/macd_baseline/
+
+# 实验组 - MACD轮动30天
+python scripts/run_rotation_strategy.py \
+  --rotation-schedule results/rotation_schedules/rotation_30d_full.json \
+  --strategy macd_cross \
+  --enable-combined-stop-loss \
+  --max-consecutive-losses 2 \
+  --pause-bars 5 \
+  --trailing-stop-pct 0.03 \
+  --rebalance-mode incremental \
+  --data-dir data/chinese_etf \
+  --output experiment/etf/rotation_comparison/results/macd_rotation_30d/
+
+# 注意：SMA和MACD需要启用止损保护参数，因为实验验证了显著效果
+# KAMA则不需要止损保护（实验显示-0.7%效果）
+```
+
+**预计工时**: 8-9小时 | **实际工时**: 9.5小时 ✅
 
 ---
 
+#### 📊 Phase 4 实验结果总结 ⭐⭐⭐
+
+**实验时间**: 2025-11-13 至 2025-11-14
+**回测期间**: 2023-11-01 至 2025-11-11（约2年）
+**策略配置**: KAMA Baseline（禁用默认过滤器）
+
+##### 核心对比表
+
+| 指标 | 固定池(中位数) | 30天轮动 | 60天轮动 | 最优场景 |
+|------|----------------|----------|----------|----------|
+| **夏普比率** | **0.820** | 0.402 (-51%) | 0.154 (-81%) | ✅ 固定池 |
+| **总收益率** | **46.68%** | 35.48% | 8.79% | ✅ 固定池 |
+| **年化收益** | 13.86% | **16.83%** | 4.41% | 30天轮动 |
+| **最大回撤** | **-10.83%** | -27.31% (+152%) | -26.22% (+142%) | ✅ 固定池 |
+| **胜率** | N/A | 52.63% | 48.00% | 30天轮动 |
+| **轮动次数** | 0 | 18次 | 10次 | - |
+| **轮动成本** | 0% | 5.31% | 3.84% | - |
+
+##### 关键结论 ❌ 轮动策略显著劣于固定池
+
+1. **风险调整后收益显著下降**
+   - 30天轮动夏普下降51%（0.820 → 0.402）
+   - 60天轮动夏普下降81%（0.820 → 0.154）
+   - **结论**: 动态轮动未能提升收益，反而恶化风险
+
+2. **回撤控制能力大幅恶化**
+   - 固定池回撤: -10.83%（优秀）
+   - 轮动策略回撤: -27%左右（恶化2.5倍）
+   - **结论**: 轮动打断趋势跟踪，导致频繁止损
+
+3. **30天周期优于60天**（若必须轮动）
+   - 30天夏普0.402 vs 60天0.154（提升161%）
+   - 虽然30天成本多1.47%，但收益多26.69%
+   - **结论**: 更频繁的轮动捕捉更多机会
+
+##### 问题诊断
+
+轮动策略失败的可能原因:
+
+1. **虚拟ETF合成法局限**: 等权组合稀释了强势ETF收益
+2. **策略不匹配**: KAMA需要持续趋势，轮动打断了趋势跟踪
+3. **筛选器偏差**: 历史强势≠未来强势，存在样本外衰减
+4. **轮动频率问题**: 30天/60天可能仍过于频繁
+
+##### 最终推荐 ⭐
+
+**✅ 强烈推荐: 固定池策略**
+
+- **夏普比率**: 0.820（中位数），20只ETF中75%>0.5
+- **总收益**: 46.68%（中位数）
+- **最大回撤**: -10.83%（风险可控）
+- **无轮动成本**: 策略简单，易于实施
+
+**实施方案**:
+```bash
+# 使用固定池 + KAMA Baseline策略
+./run_backtest.sh \
+  --stock-list results/rotation_fixed_pool/baseline_pool.csv \
+  --strategy kama_cross \
+  --data-dir data/chinese_etf
+```
+
+**❌ 不推荐: 动态轮动策略（30天或60天）**
+
+理由: 夏普下降51%-81%，回撤恶化2.5倍，增加复杂度无收益
+
+**详细实验报告**: `experiment/etf/rotation_comparison/EXPERIMENT_RESULTS.md`（284行完整分析）
+
 ---
 
-## ✅ Phase 3完成总结
+## ✅ Phase 1-3 完成总结
 
-### 🎉 开发成果
+### 🎉 已完成功能
 
-ETF轮动策略Phase 3已成功完成，实现了完整的动态池子轮动功能：
+ETF轮动策略Phase 1-3已成功完成，实现了完整的动态池子轮动基础设施：
 
 #### 📦 核心交付物
-1. **独立轮动策略脚本** - `scripts/run_rotation_strategy.py` (591行)
-2. **CLI完全集成** - 新增8个轮动参数，100%向后兼容
-3. **虚拟ETF构建器** - 支持两种再平衡模式，精确成本计算
-4. **端到端测试框架** - 100%测试通过率
-5. **完整文档体系** - 验收报告、问题追踪、技术文档
+1. **轮动表生成系统** - `scripts/prepare_rotation_schedule.py` (537行)
+2. **虚拟ETF数据生成器** - `backtest_runner/data/virtual_etf_builder.py` (419行)
+3. **独立轮动策略脚本** - `scripts/run_rotation_strategy.py` (591行)
+4. **CLI完全集成** - 新增8个轮动参数，100%向后兼容
+5. **完整测试框架** - 100%测试通过率
 
 #### 🚀 技术创新
 - **策略架构创新**: 所有现有策略零修改即可支持轮动
 - **成本精确计算**: 增量调整比全平仓节省39%成本
-- **CLI无缝集成**: 完全向后兼容，用户体验无缝
+- **逐期归一化机制**: 保证虚拟ETF价格连续性，反映真实资金流动
 
 #### 🎯 验收结果
-- **功能完整性**: 10/10 ⭐⭐⭐⭐⭐
-- **代码质量**: 10/10 ⭐⭐⭐⭐⭐
-- **系统集成度**: 10/10 ⭐⭐⭐⭐⭐
-- **测试覆盖度**: 10/10 ⭐⭐⭐⭐⭐
-- **向后兼容性**: 10/10 ⭐⭐⭐⭐⭐
-
-**总评**: ✅ **完全通过** (50/50分)
+- **Phase 1**: ✅ 完全通过（轮动表生成系统）
+- **Phase 2**: ✅ 完全通过（虚拟ETF数据生成器）
+- **Phase 3**: ✅ 完全通过（策略执行引擎）
 
 #### 🔧 快速上手
 
@@ -615,119 +831,94 @@ python backtest_runner.py \
   --rebalance-mode incremental
 ```
 
-#### 🎯 下一步 - Phase 4
-Phase 3的成功完成为Phase 4大规模实验验证奠定了坚实基础。推荐启动：
-- **2年历史数据**的大规模回测验证
-- **跨策略性能对比**（KAMA、SMA、MACD）
-- **最优轮动周期**确定（15天、30天、60天、90天）
-
-**Phase 3状态**: ✅ **正式完成** (2025-11-13)
+**Phase 1-3状态**: ✅ **正式完成** (2025-11-13)
 
 ---
 
-## 8. 参考资料
+## ✅ Phase 1-4 全部完成
 
-### 5.1 数据对齐问题处理
-处理不同ETF交易日不一致的情况（停牌、新上市）
+**完成状态**: ✅ **所有阶段验收通过** (2025-11-14)
 
-### 5.2 交易成本计入的准确性
-轮动日的成本计入时机需确保不泄露未来信息
+### 🎯 核心发现
 
-### 5.3 性能优化考虑
-只加载轮动表中实际用到的ETF，使用parquet格式加速
+经过完整的4个阶段开发和验证，实验证明：
 
----
+**❌ 动态轮动策略显著劣于固定池策略**
 
-## 6. 风险与假设
+- **夏普比率下降**: 51%-81%
+- **回撤恶化**: +152%（从-11%恶化到-27%）
+- **未能提升收益**: 反而增加风险和复杂度
 
-### 6.1 假设条件
-1. **无滑点假设**: 轮动日能以收盘价成交
-2. **无容量约束**: 任意时刻都能买入/卖出任意数量
-3. **历史评分有效性**: 评分对未来仍有预测力
+**✅ 最终推荐**: 使用固定池策略（夏普0.82，回撤-10.83%）
 
-### 6.2 已知风险
-| 风险 | 影响 | 缓解措施 |
-|------|------|---------|
-| **ETF筛选器兼容性** | Phase 1受阻（当前） | 采用简化方案B |
-| 过拟合 | 轮动周期在训练集最优，实盘失效 | 使用独立验证集 |
-| 交易成本低估 | 实际成本更高，Alpha被吞噬 | 保守估计成本（0.3%双边） |
-
-### 6.3 局限性
-- 不考虑资金容量和冲击成本
-- 假设轮动日能准确执行
+详细分析见 §4 Phase 4: 实验结果总结 和 `experiment/etf/rotation_comparison/EXPERIMENT_RESULTS.md`
 
 ---
 
-## 7. 验收标准
+## 5. 参考资料
 
-### 7.1 功能验收
-- [ ] 能成功生成4种周期的轮动表（当前受阻）
-- [ ] 轮动表统计信息合理（换手率10%-50%）
-- [ ] 虚拟ETF数据通过单元测试
-- [ ] 能运行完整的9场景实验
-- [ ] 生成结果报告
-
-### 7.2 质量验收
-- [ ] 虚拟ETF构建逻辑经过代码审查
-- [ ] 交易成本计入准确性经过独立验证
-- [ ] 实验结果可复现
-
-### 7.3 结论明确性
-- [ ] 能回答："轮动是否优于固定池？"
-- [ ] 能明确推荐最优轮动周期和再平衡模式
-
----
-
-## 8. 参考资料
-
-### 8.1 相关代码模块
-- `etf_selector/`: ETF筛选器实现
+### 5.1 相关代码模块
+- `etf_selector/`: ETF筛选器实现（三层漏斗模型）
 - `backtest_runner/data/`: 数据加载和处理
+- `backtest_runner/data/virtual_etf_builder.py`: 虚拟ETF数据生成器
+- `scripts/prepare_rotation_schedule.py`: 轮动表生成脚本
+- `scripts/run_rotation_strategy.py`: 轮动策略执行脚本
 - `strategies/kama_cross.py`: KAMA策略实现
 
-### 8.2 相关实验
+### 5.2 相关实验
 - `experiment/etf/kama_cross/hyperparameter_search/`: KAMA策略验证（夏普1.69）
 - `experiment/etf/sma_cross/stop_loss_comparison/`: SMA止损实验
+- `experiment/etf/rotation_comparison/`: Phase 4对比实验（开发中）
 
-### 8.3 理论基础
+### 5.3 理论基础
 - 均值回归 vs 动量延续
 - Kelly公式：最优再平衡频率
 - 信息比率：主动管理 vs 被动持有
 
 ---
 
-## 9. FAQ
+## 6. 开发日志
 
-**Q1: 为什么不直接在backtesting.py中支持多标的？**
-A: 改造框架成本高且风险大，虚拟ETF方法能达到相同效果且向后兼容。
-
-**Q2: ETF筛选器为什么在时点数据下失效？**
-A: 第二级评分阈值是基于长期历史数据（如2年）优化的，在单一时点（如2023-10-31）的数据分布下，可能所有ETF都无法达标。需要针对时点场景重新校准阈值。
-
-**Q3: 简化方案B（基于固定候选池）是否有意义？**
-A: 有意义。即使候选池固定，通过动态调整持仓权重（top 15-18只）仍能验证"及时淘汰表现变差的ETF"这一核心假设。如果简化版有效，再投入资源实现完整版。
-
-**Q4: 如果轮动实验结果显示不如固定池，是否值得？**
-A: 非常值得！证伪也是重要发现，说明筛选器的时效性不足，或成本过高。
-
----
-
-## 10. 开发日志
-
-### 2025-11-12: Phase 1 实施与受阻
-
+### 2025-11-13: Phase 4规划完成
 **工作内容**:
-1. 实现轮动表生成脚本（537行，包含完整的日期调度、筛选调用、统计计算）
-2. 实现批量生成脚本和验证脚本（437行，带健康度评分）
-3. 配置参数调优（流动性5万、上市60天、ADX 90%）
+1. 明确实验设计：3场景（1对照组 + 2实验组）
+2. 确定关键参数：KAMA策略、增量调整模式、2年时间跨度
+3. 定义对照组生成方式：2023-11-01时点筛选top-20
+4. 确定筛选规则：一阶段过滤 + 纯评分排序（无二阶段硬性阈值）
+5. 添加扩展实验教程（其他轮动周期、SMA/MACD策略）
+6. 更新需求文档，删除过时内容
 
-**测试发现**:
-- 第一级筛选通过率28.7%（402只）✅
-- 第二级筛选获得0只有效标的 ❌
-- 问题根源：评分阈值在时点数据下不适配
+**下一步**:
+- 修改`scripts/prepare_rotation_schedule.py`，添加`--no-score-threshold`参数
+- 开发对照组固定池生成脚本
+- 开发对比实验自动化脚本
+- 生成轮动表（30天、60天）
+- 执行回测并分析结果
 
-**待决策**: 选择方案A（调试筛选器）、方案B（简化轮动）或方案C（暂停）
+### 2025-11-13: Phase 3完成验收
+**交付物**:
+- `scripts/run_rotation_strategy.py` (591行)
+- CLI轮动参数集成（8个新参数）
+- 端到端测试脚本（373行）
+
+**验收结果**: ✅ 完全通过（50/50分）
+
+### 2025-11-13: Phase 2完成验收
+**交付物**:
+- `backtest_runner/data/virtual_etf_builder.py` (419行)
+- 逐期归一化机制（关键创新）
+- 两种再平衡模式（增量调整节省39%成本）
+
+**验收结果**: ✅ 完全通过（50/50分）
+
+### 2025-11-12: Phase 1完成验收
+**交付物**:
+- `scripts/prepare_rotation_schedule.py` (537行)
+- `scripts/validate_rotation_schedule.py` (437行)
+- ETF数据重复索引修复
+
+**验收结果**: ✅ 通过，健康度评分50/100
 
 ---
 
-**文档结束** | 最后更新: 2025-11-12 | 状态: Phase 1受阻，待方案确认
+**文档结束** | 最后更新: 2025-11-13 | 状态: Phase 4规划完成，待实施

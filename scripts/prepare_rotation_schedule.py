@@ -84,6 +84,14 @@ def parse_arguments():
         '--quiet', action='store_true',
         help='静默模式，仅显示关键信息'
     )
+    parser.add_argument(
+        '--no-score-threshold', action='store_true', default=True,
+        help='跳过二阶段百分位过滤，改为纯评分排序取top-N (默认: True)'
+    )
+    parser.add_argument(
+        '--use-score-threshold', dest='no_score_threshold', action='store_false',
+        help='启用二阶段百分位过滤（与默认行为相反）'
+    )
 
     return parser.parse_args()
 
@@ -362,9 +370,11 @@ def main():
         config.min_turnover = 50_000  # 5万元，原默认1亿
         # 放宽其他限制，确保短窗口下能筛选出足够ETF
         config.min_listing_days = 60  # 原默认180天，降低到60天
-        # ⭐ 跳过第二级的百分位筛选和范围过滤，直接按综合评分排序
-        config.skip_stage2_percentile_filtering = True
-        config.skip_stage2_range_filtering = True  # 轮换场景下跳过波动率和动量硬性限制
+        # ⭐ 跳过第二级的百分位筛选和范围过滤，直接按综合评分排序（可通过命令行控制）
+        config.skip_stage2_percentile_filtering = args.no_score_threshold
+        config.skip_stage2_range_filtering = args.no_score_threshold
+        # 启用无偏评分（避免动量偏差）
+        config.enable_unbiased_scoring = True
 
         data_loader = ETFDataLoader(args.data_dir)
         selector = TrendETFSelector(config=config, data_loader=data_loader)
