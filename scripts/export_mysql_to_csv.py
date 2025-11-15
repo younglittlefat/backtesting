@@ -16,6 +16,7 @@ from datetime import datetime
 from pathlib import Path
 from typing import Dict, Iterable, List, Optional, Tuple
 import shutil
+import math
 
 import pandas as pd
 
@@ -137,6 +138,9 @@ class MySQLToCSVExporter:
         self.basic_dir = self.output_dir / "basic_info"
         self.daily_dir = self.output_dir / "daily"
         self._instrument_name_cache: Dict[str, Dict[str, str]] = {}
+        # 缓存最近一次过滤计算结果，避免重复统计
+        self._filter_cache: Optional[Dict[str, object]] = None
+        self._filter_csv_written: bool = False
 
     @staticmethod
     def validate_date(date_str: str, label: str) -> str:
@@ -597,14 +601,22 @@ class MySQLToCSVExporter:
         return [start, end]
 
     def export_basic_info(
-        self, data_types: Iterable[str], ts_code: Optional[str] = None
+        self,
+        data_types: Iterable[str],
+        ts_code: Optional[str] = None,
+        whitelist_by_type: Optional[Dict[str, set]] = None,
+        start_date: Optional[str] = None,
+        end_date: Optional[str] = None,
     ) -> Dict[str, int]:
         """
-        导出指定类型的基础信息
+        导出指定类型的基础信息（可选：按白名单过滤）
 
         Args:
             data_types: 需要处理的数据类型集合
             ts_code: 可选，指定单个标的代码
+            whitelist_by_type: 可选，按类型分组的白名单集合（仅导出其中的标的）
+            start_date: 可选，若未显式提供白名单，将基于此与end_date进行筛选计算
+            end_date: 可选，同上
 
         Returns:
             Dict[str, int]: 每个类型导出的记录数
@@ -615,6 +627,25 @@ class MySQLToCSVExporter:
         self._ensure_directories(need_basic=True, daily_types=[])
         stats: Dict[str, int] = {}
 
+        # 若未提供白名单但提供了日期参数，则计算筛选白名单
+        computed_whitelist: Optional[Dict[str, set]] = None
+        if whitelist_by_type is None and start_date and end_date:
+            metrics, fstats, filtered_rows, thresholds = self.compute_filtering(
+                data_types=list(data_types), start_date=start_date, end_date=end_date, ts_code=ts_code
+            )
+            # 写出过滤明细（仅写一次）
+            if filtered_rows and not self._filter_csv_written:
+                filtered_df = pd.DataFrame(filtered_rows)
+                filtered_csv = self.output_dir / "filtered_out.csv"
+                filtered_df.to_csv(filtered_csv, index=False, encoding="utf-8", na_rep="")
+                self.logger.info("已输出过滤明细: %s (共%d条)", filtered_csv, len(filtered_df))
+                self._filter_csv_written = True
+            # 生成白名单集合
+            computed_whitelist = {
+                dtype: {code for code, m in (metrics.get(dtype, {}) or {}).items() if m.get("passed", False)}
+                for dtype in data_types
+            }
+
         for dtype in data_types:
             try:
                 records = self.db_manager.get_instrument_basic(
@@ -624,7 +655,32 @@ class MySQLToCSVExporter:
                 self.logger.error("查询基础信息失败: %s", exc)
                 raise RuntimeError("基础信息查询失败") from exc
 
-            df = self._prepare_basic_dataframe(dtype, records)
+            # 应用白名单过滤（仅对 etf/fund；index 保持不变）
+            if (whitelist_by_type or computed_whitelist) and dtype in {"etf", "fund"}:
+                wl = (whitelist_by_type or computed_whitelist or {}).get(dtype, set())
+                # 单标模式下，如未通过则给出日志说明
+                if ts_code and wl is not None and ts_code not in wl:
+                    try:
+                        cache = self._filter_cache or {}
+                        metrics_map = (cache.get("metrics", {}) or {}).get(dtype, {})  # type: ignore[assignment]
+                        m = (metrics_map or {}).get(ts_code, {})
+                        reasons = "|".join(m.get("fail_reasons", [])) or "未通过过滤条件"
+                        self.logger.info(
+                            "标的%s(%s)未导出基础信息，原因: %s",
+                            ts_code,
+                            self._resolve_instrument_name(dtype, ts_code),
+                            reasons,
+                        )
+                    except Exception:
+                        pass
+                if wl:
+                    filtered_records = [r for r in (records or []) if r.get("ts_code") in wl]
+                else:
+                    filtered_records = []
+                df = self._prepare_basic_dataframe(dtype, filtered_records)
+            else:
+                df = self._prepare_basic_dataframe(dtype, records)
+
             if df.empty:
                 self.logger.warning(
                     "未查询到基础信息: data_type=%s ts_code=%s",
@@ -645,6 +701,254 @@ class MySQLToCSVExporter:
             stats[dtype] = len(df)
 
         return stats
+
+    def compute_filtering(
+        self,
+        data_types: List[str],
+        start_date: str,
+        end_date: str,
+        ts_code: Optional[str] = None,
+    ) -> Tuple[
+        Dict[str, Dict[str, Dict[str, object]]],
+        Dict[str, Dict[str, int]],
+        List[Dict[str, object]],
+        Dict[str, float],
+    ]:
+        """
+        计算过滤所需指标与白名单（不落地文件）
+
+        Returns:
+            - filter_metrics_by_type: dtype -> {ts_code -> metrics dict(passed, reasons...)}
+            - filter_stats_by_type: dtype -> stats counters
+            - filtered_rows: 过滤失败的明细记录（用于可选写出）
+            - thresholds: 阈值配置字典
+        """
+        filter_applicable = {"etf", "fund"}
+
+        min_history_days = int(os.environ.get("EXPORT_MIN_HISTORY_DAYS", "180"))
+        min_annual_vol = float(os.environ.get("EXPORT_MIN_ANNUAL_VOL", "0.02"))
+        min_avg_turnover_yuan = float(os.environ.get("EXPORT_MIN_AVG_TURNOVER_YUAN", "5000"))
+
+        filter_metrics: Dict[str, Dict[str, Dict[str, object]]] = {}
+        filtered_rows: List[Dict[str, object]] = []
+        filter_stats: Dict[str, Dict[str, int]] = {}
+
+        for dtype in data_types:
+            sql, params = self._build_daily_query(dtype, start_date, end_date, ts_code)
+            has_data = False
+            per_code: Dict[str, Dict[str, object]] = {}
+            filter_stats[dtype] = {
+                "total_candidates": 0,
+                "passed": 0,
+                "filtered": 0,
+                "fail_insufficient_history": 0,
+                "fail_low_volatility": 0,
+                "fail_low_turnover": 0,
+            }
+
+            try:
+                with self.db_manager.get_connection() as conn:
+                    cursor = conn.cursor()
+                    cursor.execute(sql, params)
+
+                    while True:
+                        rows = cursor.fetchmany(self.batch_size)
+                        if not rows:
+                            break
+                        chunk = pd.DataFrame(rows)
+                        if chunk.empty:
+                            continue
+                        has_data = True
+                        chunk.sort_values(by=["ts_code", "trade_date"], inplace=True)
+
+                        for code, group in chunk.groupby("ts_code", sort=False):
+                            transformed = self._transform_daily_frame(dtype, group)
+                            if transformed.empty:
+                                continue
+
+                            agg = per_code.get(code)
+                            if agg is None:
+                                agg = {
+                                    "count_days": 0,
+                                    "first_trade_date": None,
+                                    "last_trade_date": None,
+                                    "ret_count": 0,
+                                    "ret_mean": 0.0,
+                                    "ret_m2": 0.0,
+                                    "prev_price": None,
+                                    "amount_sum_thousand": 0.0,
+                                }
+                                per_code[code] = agg
+
+                            for _, row in transformed.iterrows():
+                                trade_date = str(row["trade_date"])
+                                agg["count_days"] += 1
+                                if agg["first_trade_date"] is None:
+                                    agg["first_trade_date"] = trade_date
+                                agg["last_trade_date"] = trade_date
+
+                                if dtype == "etf":
+                                    amt = row.get("amount", None)
+                                    try:
+                                        amt_v = float(amt) if amt is not None and amt == amt else 0.0
+                                    except Exception:
+                                        amt_v = 0.0
+                                    agg["amount_sum_thousand"] += amt_v
+
+                                ret_val: Optional[float] = None
+                                if dtype == "etf":
+                                    pct = row.get("pct_chg", None)
+                                    if pct is not None and pct == pct:
+                                        try:
+                                            ret_val = float(pct) / 100.0
+                                        except Exception:
+                                            ret_val = None
+                                    if ret_val is None:
+                                        close = row.get("close", None)
+                                        if close is not None and close == close:
+                                            try:
+                                                close_v = float(close)
+                                                if agg["prev_price"] is not None:
+                                                    prev = agg["prev_price"]
+                                                    if prev and prev != 0:
+                                                        ret_val = close_v / prev - 1.0
+                                                agg["prev_price"] = close_v
+                                            except Exception:
+                                                pass
+                                elif dtype == "fund":
+                                    price = row.get("adj_nav", None)
+                                    if price is None or not (price == price):
+                                        price = row.get("unit_nav", None)
+                                    if price is not None and price == price:
+                                        try:
+                                            price_v = float(price)
+                                            if agg["prev_price"] is not None:
+                                                prev = agg["prev_price"]
+                                                if prev and prev != 0:
+                                                    ret_val = price_v / prev - 1.0
+                                            agg["prev_price"] = price_v
+                                        except Exception:
+                                            pass
+
+                                if ret_val is not None:
+                                    agg["ret_count"] += 1
+                                    delta = ret_val - agg["ret_mean"]
+                                    agg["ret_mean"] += delta / agg["ret_count"]
+                                    delta2 = ret_val - agg["ret_mean"]
+                                    agg["ret_m2"] += delta2 * delta
+
+            except Exception as exc:
+                self.logger.error("过滤统计失败: %s", exc)
+                raise RuntimeError("日线数据导出失败") from exc
+
+            # 汇总通过/失败情况
+            results_per_code: Dict[str, Dict[str, object]] = {}
+            for code, agg in per_code.items():
+                apply_filter = dtype in filter_applicable
+                count_days = int(agg["count_days"])
+                if agg["ret_count"] > 1:
+                    var = agg["ret_m2"] / (agg["ret_count"] - 1)
+                    daily_std = math.sqrt(var) if var > 0 else 0.0
+                    annual_vol = daily_std * math.sqrt(252.0)
+                else:
+                    annual_vol = 0.0
+
+                avg_turnover_yuan: Optional[float] = None
+                if dtype == "etf" and count_days > 0:
+                    avg_thousand = float(agg["amount_sum_thousand"]) / float(count_days)
+                    avg_turnover_yuan = avg_thousand * 1000.0
+
+                fail_reasons: List[str] = []
+                if apply_filter:
+                    if not (count_days > min_history_days):
+                        fail_reasons.append("insufficient_history")
+                    if not (annual_vol > min_annual_vol):
+                        fail_reasons.append("low_volatility")
+                    if dtype == "etf":
+                        if avg_turnover_yuan is None or not (avg_turnover_yuan > min_avg_turnover_yuan):
+                            fail_reasons.append("low_turnover")
+
+                passed = (len(fail_reasons) == 0) if apply_filter else True
+
+                filter_stats[dtype]["total_candidates"] += 1
+                if passed:
+                    filter_stats[dtype]["passed"] += 1
+                else:
+                    filter_stats[dtype]["filtered"] += 1
+                    for reason in fail_reasons:
+                        key = {
+                            "insufficient_history": "fail_insufficient_history",
+                            "low_volatility": "fail_low_volatility",
+                            "low_turnover": "fail_low_turnover",
+                        }.get(reason, None)
+                        if key:
+                            filter_stats[dtype][key] += 1
+
+                results_per_code[code] = {
+                    "passed": passed,
+                    "count_days": count_days,
+                    "first_trade_date": agg["first_trade_date"],
+                    "last_trade_date": agg["last_trade_date"],
+                    "annual_vol": annual_vol,
+                    "avg_turnover_yuan": avg_turnover_yuan,
+                    "fail_reasons": fail_reasons,
+                }
+
+                if not passed and apply_filter:
+                    instrument_name = self._resolve_instrument_name(dtype, code)
+                    filtered_rows.append(
+                        {
+                            "data_type": dtype,
+                            "ts_code": code,
+                            "instrument_name": instrument_name,
+                            "admission_start_date": agg["first_trade_date"],
+                            "end_date": end_date,
+                            "sample_trading_days": count_days,
+                            "annual_volatility": round(annual_vol, 6),
+                            "avg_turnover_yuan": (
+                                round(avg_turnover_yuan, 2) if avg_turnover_yuan is not None else None
+                            ),
+                            "fail_reasons": "|".join(fail_reasons),
+                            "threshold_min_history_days": min_history_days,
+                            "threshold_min_annual_vol": min_annual_vol,
+                            "threshold_min_avg_turnover_yuan": (
+                                min_avg_turnover_yuan if dtype == "etf" else None
+                            ),
+                        }
+                    )
+
+            filter_metrics[dtype] = results_per_code
+
+            if not has_data:
+                self.logger.warning(
+                    "未查询到日线数据: data_type=%s ts_code=%s 日期范围=%s-%s",
+                    dtype,
+                    ts_code or "全部",
+                    start_date,
+                    end_date,
+                )
+
+        thresholds = {
+            "min_history_days": min_history_days,
+            "min_annual_vol": min_annual_vol,
+            "min_avg_turnover_yuan": min_avg_turnover_yuan,
+        }
+
+        # 缓存结果
+        self._filter_cache = {
+            "metrics": filter_metrics,
+            "stats": filter_stats,
+            "filtered_rows": filtered_rows,
+            "thresholds": thresholds,
+            "args": {
+                "data_types": data_types,
+                "start_date": start_date,
+                "end_date": end_date,
+                "ts_code": ts_code,
+            },
+        }
+
+        return filter_metrics, filter_stats, filtered_rows, thresholds
 
     def export_daily_data(
         self,
@@ -671,6 +975,33 @@ class MySQLToCSVExporter:
         self._ensure_directories(need_basic=False, daily_types=data_types)
         stats: Dict[str, Dict[str, object]] = {}
 
+        # 1) 复用已有缓存或计算过滤白名单与统计
+        reuse_cache = False
+        if getattr(self, "_filter_cache", None):
+            cache = self._filter_cache or {}
+            args = cache.get("args", {})  # type: ignore[assignment]
+            # 判断是否与本次参数一致
+            cached_types = set(args.get("data_types", []))
+            if cached_types == set(data_types) and args.get("start_date") == start_date and args.get("end_date") == end_date and args.get("ts_code") == ts_code:
+                reuse_cache = True
+                filter_metrics = cache.get("metrics", {})  # type: ignore[assignment]
+                filter_stats = cache.get("stats", {})  # type: ignore[assignment]
+                filtered_rows = cache.get("filtered_rows", [])  # type: ignore[assignment]
+                thresholds = cache.get("thresholds", {})  # type: ignore[assignment]
+        if not reuse_cache:
+            filter_metrics, filter_stats, filtered_rows, thresholds = self.compute_filtering(
+                data_types=list(data_types), start_date=start_date, end_date=end_date, ts_code=ts_code
+            )
+
+        # 输出过滤明细CSV（如有且未写过）
+        if filtered_rows and not getattr(self, "_filter_csv_written", False):
+            filtered_df = pd.DataFrame(filtered_rows)
+            filtered_csv = self.output_dir / "filtered_out.csv"
+            filtered_df.to_csv(filtered_csv, index=False, encoding="utf-8", na_rep="")
+            self.logger.info("已输出过滤明细: %s (共%d条)", filtered_csv, len(filtered_df))
+            self._filter_csv_written = True
+
+        # 2) Phase Two: 执行实际导出，仅导出通过的标的
         for dtype in data_types:
             sql, params = self._build_daily_query(dtype, start_date, end_date, ts_code)
             dtype_dir = self.daily_dir / dtype
@@ -679,8 +1010,18 @@ class MySQLToCSVExporter:
                 "instrument_count": 0,
                 "daily_records": 0,
                 "date_range": [None, None],  # type: ignore[list-item]
+                # 附加过滤统计信息，用于元数据（不会写入文件，但返回给调用方）
+                "filter_statistics": filter_stats.get(dtype, {}),
+                "filter_thresholds": thresholds,
             }
             has_data = False
+
+            # 已通过过滤的白名单
+            passed_codes: Optional[set] = None
+            if dtype in filter_metrics:
+                passed_codes = {
+                    code for code, m in filter_metrics[dtype].items() if m.get("passed", False)
+                }
 
             try:
                 with self.db_manager.get_connection() as conn:
@@ -700,6 +1041,19 @@ class MySQLToCSVExporter:
                         chunk.sort_values(by=["ts_code", "trade_date"], inplace=True)
 
                         for code, group in chunk.groupby("ts_code", sort=False):
+                            # 不在白名单的标的不导出
+                            if passed_codes is not None and code not in passed_codes:
+                                # 单标模式下要给出解释日志
+                                if ts_code:
+                                    reason_info = filter_metrics.get(dtype, {}).get(code, {})
+                                    self.logger.info(
+                                        "标的%s(%s)未导出，原因: %s",
+                                        code,
+                                        self._resolve_instrument_name(dtype, code),
+                                        "|".join(reason_info.get("fail_reasons", [])) or "未通过过滤条件",
+                                    )
+                                continue
+
                             transformed = self._transform_daily_frame(dtype, group)
                             if transformed.empty:
                                 continue
@@ -737,7 +1091,7 @@ class MySQLToCSVExporter:
 
             if not has_data:
                 self.logger.warning(
-                    "未查询到日线数据: data_type=%s ts_code=%s 日期范围=%s-%s",
+                    "未查询到日线数据(第二阶段): data_type=%s ts_code=%s 日期范围=%s-%s",
                     dtype,
                     ts_code or "全部",
                     start_date,
@@ -815,6 +1169,40 @@ class MySQLToCSVExporter:
             },
             "disk_free_gb": round(self._query_disk_free_gb(), 2),
         }
+        # 附加过滤配置与统计（如有）
+        # 从环境变量读取阈值（与导出阶段保持一致）
+        if export_daily:
+            filter_cfg = {
+                "min_history_days": int(os.environ.get("EXPORT_MIN_HISTORY_DAYS", "180")),
+                "min_annual_vol": float(os.environ.get("EXPORT_MIN_ANNUAL_VOL", "0.02")),
+                "min_avg_turnover_yuan": float(
+                    os.environ.get("EXPORT_MIN_AVG_TURNOVER_YUAN", "5000")
+                ),
+                "applied_to_types": ["etf", "fund"],
+                "boundary_inclusive_as_fail": True,
+            }
+            filter_stats: Dict[str, object] = {}
+            for dtype in data_types:
+                if dtype in daily_stats and "filter_statistics" in daily_stats[dtype]:
+                    filter_stats[dtype] = daily_stats[dtype]["filter_statistics"]  # type: ignore[index]
+            metadata["filters"] = filter_cfg
+            metadata["filter_statistics"] = filter_stats
+        else:
+            # 若未导出日线，但可能进行了basic导出且执行了过滤，尝试从缓存补充过滤信息
+            if hasattr(self, "_filter_cache") and self._filter_cache:
+                cache = self._filter_cache or {}
+                thresholds = cache.get("thresholds", {})  # type: ignore[assignment]
+                stats_map = cache.get("stats", {})  # type: ignore[assignment]
+                metadata["filters"] = {
+                    "min_history_days": int(os.environ.get("EXPORT_MIN_HISTORY_DAYS", "180")),
+                    "min_annual_vol": float(os.environ.get("EXPORT_MIN_ANNUAL_VOL", "0.02")),
+                    "min_avg_turnover_yuan": float(
+                        os.environ.get("EXPORT_MIN_AVG_TURNOVER_YUAN", "5000")
+                    ),
+                    "applied_to_types": ["etf", "fund"],
+                    "boundary_inclusive_as_fail": True,
+                }
+                metadata["filter_statistics"] = stats_map
         return metadata
 
     def _query_disk_free_gb(self) -> float:
@@ -918,6 +1306,25 @@ def parse_arguments() -> argparse.Namespace:
         action="store_true",
         help="是否导出元数据文件",
     )
+    # 过滤相关参数（仅适用于 etf、fund）
+    parser.add_argument(
+        "--min_history_days",
+        type=int,
+        default=180,
+        help="最小历史样本交易日数N（严格大于N才通过，默认: 180）",
+    )
+    parser.add_argument(
+        "--min_annual_vol",
+        type=float,
+        default=0.02,
+        help="区间年化波动率阈值x（严格大于x才通过，默认: 0.02）",
+    )
+    parser.add_argument(
+        "--min_avg_turnover_yuan",
+        type=float,
+        default=5000.0,
+        help="区间日均成交额阈值y，单位元（严格大于y才通过，默认: 5000）",
+    )
     parser.add_argument(
         "--log_level",
         default="INFO",
@@ -990,6 +1397,11 @@ def main() -> None:
         db_manager=db_manager,
     )
 
+    # 将过滤阈值通过环境变量传递到导出实现（避免修改大量函数签名）
+    os.environ["EXPORT_MIN_HISTORY_DAYS"] = str(args.min_history_days)
+    os.environ["EXPORT_MIN_ANNUAL_VOL"] = str(args.min_annual_vol)
+    os.environ["EXPORT_MIN_AVG_TURNOVER_YUAN"] = str(args.min_avg_turnover_yuan)
+
     if ts_code:
         basic_info = exporter.db_manager.get_instrument_basic(ts_code=ts_code)
         if not basic_info:
@@ -1011,7 +1423,9 @@ def main() -> None:
 
     if args.export_basic:
         logger.info("开始导出基础信息...")
-        basic_stats = exporter.export_basic_info(data_types, ts_code=ts_code)
+        basic_stats = exporter.export_basic_info(
+            data_types, ts_code=ts_code, start_date=start_date, end_date=end_date
+        )
 
     if args.export_daily:
         logger.info("开始导出日线数据...")

@@ -198,6 +198,86 @@ results/
 - 当 Volume/Amount 为 0 时，提示用户策略不应依赖成交量指标。
 - 对无效日期范围或空数据，抛出 `ValueError` 并输出建议。
 
+## 7. MySQL 导出与标的筛选用法
+
+本项目提供 `scripts/export_mysql_to_csv.py` 将 MySQL 中的 ETF/基金/指数数据导出为 CSV，并对 ETF 与基金应用筛选（AND 关系，边界视为不通过）。指数不参与筛选。
+
+### 7.1 核心筛选规则（仅 etf、fund）
+- 样本交易日数（回测准入天数）: `sample_trading_days > N` 才通过（默认 N=180）
+  - 回测准入起点: `admission_start_date = max(--start_date, 该标的在 instrument_daily 的最早 trade_date)`
+  - 样本期: `[admission_start_date, --end_date]` 内实际可得的交易日
+- 区间年化波动率: `annual_volatility > x` 才通过（默认 x=0.02；算术收益率、252 年化）
+  - ETF: 优先 `pct_chg/100`，缺失回退 `close` 简单收益率
+  - 基金: 优先 `adj_nav`，缺失回退 `unit_nav`
+- 区间日均成交额（仅 ETF）: `avg_turnover_yuan > y` 才通过（默认 y=5000 元）
+  - `amount` 单位为“千元”，空值按 0 计；计算平均后×1000 转为“元”
+  - 基金不应用该条
+
+筛选为 AND 关系，任一不满足则不导出 CSV；边界值（等于阈值）视为不通过。
+
+### 7.2 常用命令
+基础参数：
+- `--start_date YYYYMMDD` `--end_date YYYYMMDD`
+- `--data_type etf,fund,index,all`（逗号分隔）
+- `--output_dir data/csv` 结果目录
+- 过滤参数（仅 etf、fund 生效）：
+  - `--min_history_days`（默认 180）
+  - `--min_annual_vol`（默认 0.02）
+  - `--min_avg_turnover_yuan`（默认 5000；仅 ETF）
+
+示例：
+```bash
+# 仅导出基础信息（按白名单过滤 etf/fund；index 全量）
+python scripts/export_mysql_to_csv.py \
+  --start_date 20240101 --end_date 20241031 \
+  --data_type etf,fund,index \
+  --export_basic \
+  --output_dir data/csv
+
+# 仅导出日线（按白名单导出 etf/fund；index 全量）
+python scripts/export_mysql_to_csv.py \
+  --start_date 20240101 --end_date 20241031 \
+  --data_type etf,fund \
+  --export_daily \
+  --output_dir data/csv
+
+# 同时导出基础信息 + 日线（两者均按白名单）
+python scripts/export_mysql_to_csv.py \
+  --start_date 20240101 --end_date 20241031 \
+  --data_type etf,fund \
+  --export_basic --export_daily \
+  --output_dir data/csv \
+  --min_history_days 180 --min_annual_vol 0.02 --min_avg_turnover_yuan 5000
+
+# 单标导出（若被筛掉：不落地，退出码0，并打印原因）
+python scripts/export_mysql_to_csv.py \
+  --start_date 20240101 --end_date 20241031 \
+  --data_type etf --ts_code 510300.SH \
+  --export_basic --export_daily \
+  --output_dir data/csv
+```
+
+### 7.3 导出产物与对接
+- 基础信息：`{output_dir}/basic_info/{etf|fund|index}_basic_info.csv`（etf/fund 按白名单）
+- 日线数据：`{output_dir}/daily/{etf|fund|index}/*.csv`（etf/fund 按白名单）
+- 过滤明细：`{output_dir}/filtered_out.csv`
+  - 字段：`data_type, ts_code, instrument_name, admission_start_date, end_date, sample_trading_days, annual_volatility, avg_turnover_yuan, fail_reasons, threshold_*`
+- 元数据：`{output_dir}/export_metadata.json`
+  - 包含 `filters`（阈值与适用类型、边界策略）与 `filter_statistics`（各类型候选/通过/过滤/原因计数）
+
+回测入口对接：`--data-dir` 指向 `{output_dir}/daily`；示例：
+```bash
+./run_backtest.sh -s 510300.SH -t sma_cross \
+  --data-dir data/csv/daily \
+  --start-date 2024-01-01 --end-date 2024-10-31
+```
+
+### 7.4 注意事项
+- 边界策略：等于阈值视为不通过（inclusive-as-fail）
+- end_date 非交易日时，统计与导出均以数据库内 `<= end_date` 的最后一个交易日为准
+- `--export_basic` 现已按白名单导出（仅 etf、fund 生效；index 仍全量）
+- amount 单位是“千元”；阈值 y 单位是“元”
+
 ### 6.3 可扩展性
 - 将数据解析逻辑独立到 `parsers/` 子模块，未来可接入港股、期货。
 - 策略与数据之间通过 metadata 耦合，便于针对不同标的启用差异化手续费。
