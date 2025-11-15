@@ -10,7 +10,7 @@ class FilterConfig:
     """筛选参数配置"""
 
     # 第一级：初级筛选
-    min_turnover: float = 100_000_000  # 最小日均成交额（元），默认1亿
+    min_turnover: float = 50_000  # 最小日均成交额（元），默认5万元
     min_listing_days: int = 180  # 最小上市天数，默认180天（6个月）
     turnover_lookback_days: int = 30  # 计算日均成交额的回看天数
 
@@ -32,8 +32,8 @@ class FilterConfig:
     momentum_min_positive: bool = True  # 是否要求动量为正
 
     # 二级筛选模式控制
-    skip_stage2_percentile_filtering: bool = False  # 是否跳过第二级的百分位筛选（ADX、收益回撤比），直接按评分排序返回topN
-    skip_stage2_range_filtering: bool = False  # 是否跳过第二级的范围过滤（波动率、动量），仅在轮换场景下启用
+    skip_stage2_percentile_filtering: bool = True  # 是否跳过第二级的百分位筛选（ADX、收益回撤比），直接按评分排序返回topN
+    skip_stage2_range_filtering: bool = True  # 是否跳过第二级的范围过滤（波动率、动量），仅在轮换场景下启用
 
     # 第三级：组合优化
     max_correlation: float = 0.7  # 最大相关系数
