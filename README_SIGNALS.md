@@ -64,6 +64,19 @@
   --data-dir data/chinese_etf/daily
 ```
 
+### 交易历史文件（新增）
+
+- 保存位置：`positions/history/`
+- 文件命名：`trades_{portfolio_name}_{YYYYMMDD}.json`
+  - `portfolio_name` 为 `--portfolio-file` 的文件名（去掉扩展名）
+  - `YYYYMMDD` 使用 `--end-date`；若未指定则为当天日期
+- 示例：`positions/history/trades_etf_macd_cross_portfolio_20251113.json`
+- 目的：区分不同策略/组合的历史记录，便于长期留存与对账
+
+读取方式（可选）：
+- 代码读取：`TradeLogger(history_dir).get_trades('20251113', 'etf_macd_cross_portfolio')`
+- 手工查看：直接打开对应 JSON 文件
+
 ### 持仓状态文件格式
 
 **`positions/etf_sma_cross_portfolio.json`** - 核心状态文件
@@ -173,6 +186,7 @@
 - ✅ **复权因子正确匹配**：从CSV中查找对应日期的复权因子，而非最后一行
 - ✅ **信号计算准确**：均线等技术指标只使用截止日期前的历史数据
 - ✅ **适用于历史回溯分析**：可用于验证过去某日的信号是否准确
+- ✅ **执行模式日期对齐**：新建仓位的 `entry_date`、交易记录的 `date` 字段、交易历史文件名中的日期，均使用 `--end-date`
 
 **使用示例**：
 ```bash

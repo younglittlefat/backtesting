@@ -159,8 +159,13 @@ class SignalGenerator:
                 warnings.warn(f"{ts_code}: 数据文件不存在")
                 return None
 
-            # 使用utils.data_loader加载数据
-            df = load_chinese_ohlcv_data(data_file, verbose=False)
+            # 使用utils.data_loader加载数据（严格应用起止日期，避免前瞻性偏差）
+            df = load_chinese_ohlcv_data(
+                data_file,
+                start_date=self.start_date,
+                end_date=self.end_date,
+                verbose=False
+            )
 
             if df is None or len(df) < 30:
                 return None
@@ -1157,7 +1162,9 @@ def main():
             spread=cost_config.get('spread', 0.0),
             max_positions=args.positions,
             max_position_pct=args.max_position_pct,
-            min_buy_signals=args.min_buy_signals
+            min_buy_signals=args.min_buy_signals,
+            # 将交易日绑定为 --end-date（若未指定则为今天，见SignalGenerator逻辑）
+            trade_date=generator.end_date
         )
 
         # 生成交易计划
@@ -1215,9 +1222,12 @@ def main():
                 history_dir = Path(args.portfolio_file).parent / 'history'
                 logger = TradeLogger(str(history_dir))
                 all_trades = sell_trades + buy_trades
-                logger.log_trades(all_trades)
-                today = datetime.now().strftime('%Y%m%d')
-                print(f"✓ 交易记录已保存: {history_dir}/trades_{today}.json")
+                # 使用 --end-date 作为交易日期（YYYYMMDD）
+                trade_date_compact = generator.end_date.replace('-', '')
+                # 在文件名中加入持仓配置名称（不含扩展名），用于跨策略区分
+                portfolio_name = Path(args.portfolio_file).stem
+                logger.log_trades(all_trades, date=trade_date_compact, portfolio_name=portfolio_name)
+                print(f"✓ 交易记录已保存: {history_dir}/trades_{portfolio_name}_{trade_date_compact}.json")
 
         return
 
@@ -1289,4 +1299,3 @@ def main():
 
 if __name__ == '__main__':
     main()
-

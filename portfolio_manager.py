@@ -293,19 +293,26 @@ class TradeLogger:
         self.history_dir = Path(history_dir)
         self.history_dir.mkdir(parents=True, exist_ok=True)
 
-    def log_trades(self, trades: List[Trade], date: Optional[str] = None):
+    def log_trades(self, trades: List[Trade], date: Optional[str] = None, portfolio_name: Optional[str] = None):
         """
         记录交易
 
         Args:
             trades: 交易列表
             date: 日期字符串（YYYYMMDD），如果为None则使用当天
+            portfolio_name: 可选，持仓配置名称（用于区分不同策略/组合）
         """
         if not trades:
             return
 
         date = date or datetime.now().strftime('%Y%m%d')
-        filepath = self.history_dir / f'trades_{date}.json'
+        # 文件名中加入持仓配置名（若提供）
+        if portfolio_name:
+            safe_name = portfolio_name.replace('/', '_')
+            filename = f"trades_{safe_name}_{date}.json"
+        else:
+            filename = f"trades_{date}.json"
+        filepath = self.history_dir / filename
 
         # 转换为字典列表
         trades_data = [trade.to_dict() for trade in trades]
@@ -318,19 +325,36 @@ class TradeLogger:
                 'timestamp': datetime.now().strftime('%Y-%m-%d %H:%M:%S')
             }, f, ensure_ascii=False, indent=2)
 
-    def get_trades(self, date: str) -> List[Trade]:
+    def get_trades(self, date: str, portfolio_name: Optional[str] = None) -> List[Trade]:
         """
         获取指定日期的交易记录
 
         Args:
             date: 日期字符串（YYYYMMDD）
+            portfolio_name: 可选，持仓配置名称
 
         Returns:
             交易列表
         """
-        filepath = self.history_dir / f'trades_{date}.json'
-        if not filepath.exists():
-            return []
+        # 优先匹配带 portfolio_name 的文件
+        candidates: List[Path] = []
+        if portfolio_name:
+            candidates.append(self.history_dir / f"trades_{portfolio_name}_{date}.json")
+        # 兼容旧命名（无 portfolio_name）
+        candidates.append(self.history_dir / f"trades_{date}.json")
+
+        filepath: Optional[Path] = None
+        for p in candidates:
+            if p.exists():
+                filepath = p
+                break
+        if filepath is None:
+            # 回退到通配查找（取第一个匹配）
+            matches = list(self.history_dir.glob(f"trades_*_{date}.json"))
+            if matches:
+                filepath = matches[0]
+            else:
+                return []
 
         with open(filepath, 'r', encoding='utf-8') as f:
             data = json.load(f)
@@ -347,7 +371,8 @@ class PortfolioTrader:
                  spread: float = 0.0001,
                  max_positions: int = 10,
                  max_position_pct: float = 0.05,
-                 min_buy_signals: int = 1):
+                 min_buy_signals: int = 1,
+                 trade_date: Optional[str] = None):
         """
         初始化交易引擎
 
@@ -358,6 +383,7 @@ class PortfolioTrader:
             max_positions: 最大持仓数
             max_position_pct: 单仓位上限（默认0.05，即5%）
             min_buy_signals: 最小买入信号数（默认1）
+            trade_date: 交易日期（YYYY-MM-DD）。不指定则使用当前日期
         """
         self.portfolio = portfolio
         self.commission = commission
@@ -365,6 +391,8 @@ class PortfolioTrader:
         self.max_positions = max_positions
         self.max_position_pct = max_position_pct
         self.min_buy_signals = min_buy_signals
+        # 如果传入交易日则全流程使用该日期（与 --end-date 对齐）
+        self.trade_date = trade_date
 
     def generate_trade_plan(self,
                            signals: Dict[str, Dict]) -> Tuple[List[Trade], List[Trade]]:
@@ -380,7 +408,8 @@ class PortfolioTrader:
         sell_trades = []
         buy_trades = []
 
-        today = datetime.now().strftime('%Y-%m-%d')
+        # 统一使用指定交易日（若未指定则为“今天”）
+        today = self.trade_date or datetime.now().strftime('%Y-%m-%d')
 
         # 第一步：处理卖出（优先）
         for position in self.portfolio.positions:
@@ -502,7 +531,8 @@ class PortfolioTrader:
         if dry_run:
             return True
 
-        today = datetime.now().strftime('%Y-%m-%d')
+        # 统一使用指定交易日（若未指定则为“今天”）
+        today = self.trade_date or datetime.now().strftime('%Y-%m-%d')
 
         # 执行卖出
         for trade in sell_trades:
