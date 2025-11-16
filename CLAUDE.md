@@ -16,11 +16,11 @@ Backtesting.py 是一个用于回测交易策略的 Python 库。它提供了一
 本节给出三类策略的“纯基线”配置与可调超参数一览，便于快速复现与迭代。
 
 - MACD（`macd_cross`）纯基线（全部增强与过滤默认关闭）
-  - 滞回（Anti‑Whipsaw）关闭：`enable_hysteresis = False`
-  - 零轴约束关闭：`enable_zero_axis = False`
-  - 卖出确认关闭：`confirm_bars_sell = 0`
-  - 最短持有期关闭：`min_hold_bars = 0`
-  - 持续确认（买入端）关闭：`enable_confirm_filter = False`
+  - 滞回（Anti‑Whipsaw）关闭：`enable-hysteresis = False`
+  - 零轴约束关闭：`enable-zero-axis = False`
+  - 卖出确认关闭：`confirm-bars-sell = 0`
+  - 最短持有期关闭：`min-hold-bars = 0`
+  - 持续确认（买入端）关闭：`enable-confirm-filter = False`
   - 其它过滤器与止损开关默认均为 False
 
 - 运行命令（基线，按需选择是否优化EMA周期）
