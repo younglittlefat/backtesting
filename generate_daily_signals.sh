@@ -57,6 +57,16 @@ ${YELLOW}基本选项:${NC}
   --min-buy-signals <n>        最小买入信号数，少于此数不买入（默认: 1）
   --start-date <YYYYMMDD>      起始日期（格式: YYYYMMDD），优先级高于--lookback-days
   --end-date <YYYYMMDD>        截止日期（格式: YYYYMMDD），默认为当前日期
+${YELLOW}Anti-Whipsaw（贴线反复抑制）:${NC}
+  --enable-hysteresis          启用自适应滞回阈值
+  --hysteresis-mode <std|abs>  滞回模式
+  --hysteresis-k <float>       std模式系数k
+  --hysteresis-window <int>    std模式窗口
+  --hysteresis-abs <float>     abs模式绝对阈值
+  --confirm-bars-sell <int>    卖出确认K线数
+  --min-hold-bars <int>        最短持有期（建仓后N根内忽略相反信号）
+  --enable-zero-axis           启用零轴约束（买在零上/卖在零下）
+  --zero-axis-mode <str>       零轴模式（默认symmetric）
   -h, --help                   显示此帮助信息
 
 ${YELLOW}注意事项:${NC}
@@ -178,6 +188,17 @@ main() {
     START_DATE=""
     END_DATE=""
 
+    # Anti-Whipsaw（可选CLI覆盖）
+    ENABLE_HYSTERESIS_FLAG=0
+    HYSTERESIS_MODE=""
+    HYSTERESIS_K=""
+    HYSTERESIS_WINDOW=""
+    HYSTERESIS_ABS=""
+    CONFIRM_BARS_SELL=""
+    MIN_HOLD_BARS=""
+    ENABLE_ZERO_AXIS_FLAG=0
+    ZERO_AXIS_MODE=""
+
     # 解析命令行参数
     while [[ $# -gt 0 ]]; do
         case $1 in
@@ -264,6 +285,42 @@ main() {
                 ;;
             --end-date)
                 END_DATE="$2"
+                shift 2
+                ;;
+            --enable-hysteresis)
+                ENABLE_HYSTERESIS_FLAG=1
+                shift
+                ;;
+            --hysteresis-mode)
+                HYSTERESIS_MODE="$2"
+                shift 2
+                ;;
+            --hysteresis-k)
+                HYSTERESIS_K="$2"
+                shift 2
+                ;;
+            --hysteresis-window)
+                HYSTERESIS_WINDOW="$2"
+                shift 2
+                ;;
+            --hysteresis-abs)
+                HYSTERESIS_ABS="$2"
+                shift 2
+                ;;
+            --confirm-bars-sell)
+                CONFIRM_BARS_SELL="$2"
+                shift 2
+                ;;
+            --min-hold-bars)
+                MIN_HOLD_BARS="$2"
+                shift 2
+                ;;
+            --enable-zero-axis)
+                ENABLE_ZERO_AXIS_FLAG=1
+                shift
+                ;;
+            --zero-axis-mode)
+                ZERO_AXIS_MODE="$2"
                 shift 2
                 ;;
             -h|--help)
@@ -395,6 +452,35 @@ main() {
         # 添加仓位管理参数
         CMD+=("--max-position-pct" "$MAX_POSITION_PCT")
         CMD+=("--min-buy-signals" "$MIN_BUY_SIGNALS")
+
+        # Anti-Whipsaw 覆盖（可选）
+        if [ $ENABLE_HYSTERESIS_FLAG -eq 1 ]; then
+            CMD+=("--enable-hysteresis")
+        fi
+        if [ -n "$HYSTERESIS_MODE" ]; then
+            CMD+=("--hysteresis-mode" "$HYSTERESIS_MODE")
+        fi
+        if [ -n "$HYSTERESIS_K" ]; then
+            CMD+=("--hysteresis-k" "$HYSTERESIS_K")
+        fi
+        if [ -n "$HYSTERESIS_WINDOW" ]; then
+            CMD+=("--hysteresis-window" "$HYSTERESIS_WINDOW")
+        fi
+        if [ -n "$HYSTERESIS_ABS" ]; then
+            CMD+=("--hysteresis-abs" "$HYSTERESIS_ABS")
+        fi
+        if [ -n "$CONFIRM_BARS_SELL" ]; then
+            CMD+=("--confirm-bars-sell" "$CONFIRM_BARS_SELL")
+        fi
+        if [ -n "$MIN_HOLD_BARS" ]; then
+            CMD+=("--min-hold-bars" "$MIN_HOLD_BARS")
+        fi
+        if [ $ENABLE_ZERO_AXIS_FLAG -eq 1 ]; then
+            CMD+=("--enable-zero-axis")
+        fi
+        if [ -n "$ZERO_AXIS_MODE" ]; then
+            CMD+=("--zero-axis-mode" "$ZERO_AXIS_MODE")
+        fi
 
         # 添加日期参数
         if [ -n "$START_DATE" ]; then

@@ -260,9 +260,9 @@ class KamaCrossStrategy(BaseEnhancedStrategy):
     kama_slow = 30
 
     # Phase 1信号增强参数
-    enable_efficiency_filter = True
+    enable_efficiency_filter = False
     min_efficiency_ratio = 0.3
-    enable_slope_confirmation = True
+    enable_slope_confirmation = False
     min_slope_periods = 3
 
     # Phase 2通用过滤器开关（继承自BaseEnhancedStrategy，可启用）
@@ -277,7 +277,7 @@ class KamaCrossStrategy(BaseEnhancedStrategy):
     adx_threshold = 25
     volume_period = 20
     volume_ratio = 1.2
-    confirm_bars = 2  # 降低阈值避免过度抑制信号
+    confirm_bars = 0  # 默认不启用持续确认（与 enable_confirm_filter=False 保持一致）
 
     # Phase 3止损保护开关（继承自BaseEnhancedStrategy，可启用）
     enable_loss_protection = False

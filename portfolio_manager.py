@@ -16,6 +16,7 @@ from pathlib import Path
 from datetime import datetime
 from typing import Dict, List, Optional, Tuple
 from dataclasses import dataclass, asdict
+from utils.data_loader import load_chinese_ohlcv_data
 
 
 @dataclass
@@ -372,7 +373,10 @@ class PortfolioTrader:
                  max_positions: int = 10,
                  max_position_pct: float = 0.05,
                  min_buy_signals: int = 1,
-                 trade_date: Optional[str] = None):
+                 trade_date: Optional[str] = None,
+                 *,
+                 min_hold_bars: int = 0,
+                 data_dir: Optional[str] = None):
         """
         初始化交易引擎
 
@@ -393,6 +397,43 @@ class PortfolioTrader:
         self.min_buy_signals = min_buy_signals
         # 如果传入交易日则全流程使用该日期（与 --end-date 对齐）
         self.trade_date = trade_date
+        # Anti-Whipsaw: 最短持有期与数据目录
+        self.min_hold_bars = int(min_hold_bars or 0)
+        self.data_dir = data_dir or 'data/csv/daily'
+
+    def _resolve_csv_path(self, ts_code: str) -> Path:
+        """根据数据目录推测CSV位置"""
+        base = Path(self.data_dir)
+        candidates = [
+            base / 'etf' / f'{ts_code}.csv',
+            base / 'fund' / f'{ts_code}.csv',
+            base / 'stock' / f'{ts_code}.csv',
+            base / f'{ts_code}.csv',
+        ]
+        for p in candidates:
+            if p.exists():
+                return p
+        return candidates[0]
+
+    def _count_bars_since(self, ts_code: str, start_date: str, end_date: Optional[str] = None) -> Optional[int]:
+        """
+        计算从 start_date 到 end_date（含）之间的交易bar数量。
+        返回 None 代表无法计算（数据缺失等）。
+        """
+        try:
+            csv_path = self._resolve_csv_path(ts_code)
+            df = load_chinese_ohlcv_data(
+                csv_path,
+                start_date=start_date,
+                end_date=end_date or self.trade_date,
+                verbose=False
+            )
+            if df is None or len(df) == 0:
+                return None
+            # 包含起止两端
+            return int(len(df))
+        except Exception:
+            return None
 
     def generate_trade_plan(self,
                            signals: Dict[str, Dict]) -> Tuple[List[Trade], List[Trade]]:
@@ -417,6 +458,14 @@ class PortfolioTrader:
             signal_data = signals.get(ts_code)
 
             if signal_data and signal_data['signal'] == 'SELL':
+                # Anti-Whipsaw: 最短持有期保护
+                if self.min_hold_bars > 0 and position.entry_date:
+                    bars = self._count_bars_since(ts_code, position.entry_date, today)
+                    if bars is not None and bars < self.min_hold_bars:
+                        # 忽略该卖出（保护期内）
+                        print(f"[过滤] 最短持有期: {ts_code} 已持有{bars}<{self.min_hold_bars} 根，忽略本次卖出")
+                        continue
+
                 # 生成卖出交易
                 price = signal_data['price']
                 shares = position.shares

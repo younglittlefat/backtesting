@@ -57,6 +57,25 @@ def print_backtest_header(
     print("=" * 70)
 
 
+def print_run_params(params: Optional[Dict], verbose: bool = False) -> None:
+    """在详细模式下打印传入 Backtest.run/optimize 的覆盖参数（用于排查是否生效）"""
+    if not verbose:
+        return
+    if not params:
+        print("启用/参数: 未传入覆盖参数（使用策略默认值）")
+        return
+    parts = []
+    for k, v in params.items():
+        if isinstance(v, bool):
+            if v:
+                parts.append(k)
+        else:
+            parts.append(f"{k}={v}")
+    if parts:
+        print("启用/参数(覆盖项): " + ", ".join(parts))
+    else:
+        print("启用/参数: 未传入覆盖参数（使用策略默认值）")
+
 def print_backtest_results(stats: pd.Series, cash: float, verbose: bool = False) -> None:
     """
     打印回测结果

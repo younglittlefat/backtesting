@@ -112,6 +112,28 @@ def _build_macd_filter_params(args: argparse.Namespace) -> Optional[Dict]:
         filter_params['enable_trailing_stop'] = True
         filter_params['trailing_stop_pct'] = args.trailing_stop_pct
 
+    # Anti-Whipsaw（贴线反复抑制）与零轴约束
+    if getattr(args, 'enable_hysteresis', False):
+        filter_params['enable_hysteresis'] = True
+        if getattr(args, 'hysteresis_mode', None) is not None:
+            filter_params['hysteresis_mode'] = args.hysteresis_mode
+        if getattr(args, 'hysteresis_k', None) is not None:
+            filter_params['hysteresis_k'] = args.hysteresis_k
+        if getattr(args, 'hysteresis_window', None) is not None:
+            filter_params['hysteresis_window'] = args.hysteresis_window
+        if getattr(args, 'hysteresis_abs', None) is not None:
+            filter_params['hysteresis_abs'] = args.hysteresis_abs
+    # 卖出确认、最短持有
+    if getattr(args, 'confirm_bars_sell', None) is not None:
+        filter_params['confirm_bars_sell'] = args.confirm_bars_sell
+    if getattr(args, 'min_hold_bars', None) is not None:
+        filter_params['min_hold_bars'] = args.min_hold_bars
+    # 零轴约束
+    if getattr(args, 'enable_zero_axis', False):
+        filter_params['enable_zero_axis'] = True
+        if getattr(args, 'zero_axis_mode', None) is not None:
+            filter_params['zero_axis_mode'] = args.zero_axis_mode
+
     return filter_params if filter_params else None
 
 
@@ -127,7 +149,7 @@ def _build_kama_filter_params(args: argparse.Namespace) -> Optional[Dict]:
     """
     filter_params = {}
 
-    # KAMA过滤器开关及参数
+    # KAMA过滤器开关及参数（通用）
     if args.enable_adx_filter:
         filter_params['enable_adx_filter'] = True
         filter_params['adx_period'] = args.adx_period
@@ -154,5 +176,21 @@ def _build_kama_filter_params(args: argparse.Namespace) -> Optional[Dict]:
 
     if args.debug_loss_protection:
         filter_params['debug_loss_protection'] = True
+
+    # KAMA策略特有参数（核心 & 特有过滤器）
+    if getattr(args, 'kama_period', None) is not None:
+        filter_params['kama_period'] = args.kama_period
+    if getattr(args, 'kama_fast', None) is not None:
+        filter_params['kama_fast'] = args.kama_fast
+    if getattr(args, 'kama_slow', None) is not None:
+        filter_params['kama_slow'] = args.kama_slow
+    if getattr(args, 'enable_efficiency_filter', False):
+        filter_params['enable_efficiency_filter'] = True
+    if getattr(args, 'min_efficiency_ratio', None) is not None:
+        filter_params['min_efficiency_ratio'] = args.min_efficiency_ratio
+    if getattr(args, 'enable_slope_confirmation', False):
+        filter_params['enable_slope_confirmation'] = True
+    if getattr(args, 'min_slope_periods', None) is not None:
+        filter_params['min_slope_periods'] = args.min_slope_periods
 
     return filter_params if filter_params else None

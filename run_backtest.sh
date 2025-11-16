@@ -52,6 +52,7 @@ ${YELLOW}选项:${NC}
   --keep-negative              保留收益率为负的标的结果文件（默认会删除）
   --verbose                    输出详细日志（默认仅显示汇总）
   --save-params <file>         保存优化参数到配置文件（仅在--optimize时有效）
+  --load-params <file>         从配置文件加载策略与运行时参数（与实盘一致，推荐）
 
 ${YELLOW}过滤器选项（适用于所有策略）:${NC}
   --enable-adx-filter          启用ADX趋势强度过滤器 ⭐推荐
@@ -70,6 +71,27 @@ ${YELLOW}过滤器选项（适用于所有策略）:${NC}
   --pause-bars <value>         暂停交易K线数 (默认: 10，推荐值)
   --trailing-stop-pct <value>  跟踪止损百分比 (默认: 0.05，即5%)
   --debug-loss-protection      启用止损保护调试日志
+
+${YELLOW}Anti-Whipsaw（贴线反复抑制）:${NC}
+  --enable-hysteresis          启用自适应滞回阈值
+  --hysteresis-mode <std|abs>  滞回模式
+  --hysteresis-k <float>       std模式系数k
+  --hysteresis-window <int>    std模式窗口
+  --hysteresis-abs <float>     abs模式绝对阈值
+  --confirm-bars-sell <int>    卖出确认K线数
+  --min-hold-bars <int>        最短持有期（建仓后N根内忽略相反信号）
+  --enable-zero-axis           启用零轴约束（买在零上/卖在零下）
+  --zero-axis-mode <str>       零轴模式（默认symmetric）
+  提示：以上选项同时支持下划线写法（例如 --enable_hysteresis）
+
+${YELLOW}KAMA 策略特有参数（仅在 --strategy kama_cross 时有效）:${NC}
+  --kama-period <int>          KAMA计算周期（默认20）
+  --kama-fast <int>            KAMA快速平滑周期（默认2）
+  --kama-slow <int>            KAMA慢速平滑周期（默认30）
+  --enable-efficiency-filter   启用效率比率过滤（默认关闭）
+  --min-efficiency-ratio <f>   最小效率比率阈值（默认0.3）
+  --enable-slope-confirmation  启用KAMA斜率确认（默认关闭）
+  --min-slope-periods <int>    KAMA斜率确认周期（默认3）
 
   -h, --help                   显示此帮助信息
 
@@ -322,6 +344,9 @@ main() {
     SAVE_PARAMS_VALUE=""
     SAVE_PARAMS_ARGS=()
 
+    LOAD_PARAMS_VALUE=""
+    LOAD_PARAMS_ARGS=()
+
     VERBOSE_FLAG=0
 
     # 过滤器参数初始化
@@ -361,6 +386,38 @@ main() {
     TRAILING_STOP_PCT_ARGS=()
 
     DEBUG_LOSS_PROTECTION_FLAG=0
+
+    # Anti-Whipsaw 相关
+    ENABLE_HYSTERESIS_FLAG=0
+    HYSTERESIS_MODE_VALUE=""
+    HYSTERESIS_MODE_ARGS=()
+    HYSTERESIS_K_VALUE=""
+    HYSTERESIS_K_ARGS=()
+    HYSTERESIS_WINDOW_VALUE=""
+    HYSTERESIS_WINDOW_ARGS=()
+    HYSTERESIS_ABS_VALUE=""
+    HYSTERESIS_ABS_ARGS=()
+    CONFIRM_BARS_SELL_VALUE=""
+    CONFIRM_BARS_SELL_ARGS=()
+    MIN_HOLD_BARS_VALUE=""
+    MIN_HOLD_BARS_ARGS=()
+    ENABLE_ZERO_AXIS_FLAG=0
+    ZERO_AXIS_MODE_VALUE=""
+    ZERO_AXIS_MODE_ARGS=()
+
+    # KAMA 特有参数
+    KAMA_PERIOD_VALUE=""
+    KAMA_PERIOD_ARGS=()
+    KAMA_FAST_VALUE=""
+    KAMA_FAST_ARGS=()
+    KAMA_SLOW_VALUE=""
+    KAMA_SLOW_ARGS=()
+    ENABLE_EFFICIENCY_FILTER_FLAG=0
+    MIN_EFFICIENCY_RATIO_VALUE=""
+    MIN_EFFICIENCY_RATIO_ARGS=()
+    ENABLE_SLOPE_CONFIRMATION_FLAG=0
+    MIN_SLOPE_PERIODS_VALUE=""
+    MIN_SLOPE_PERIODS_ARGS=()
 
     # 解析命令行参数
     while [[ $# -gt 0 ]]; do
@@ -523,6 +580,157 @@ main() {
                 DEBUG_LOSS_PROTECTION_FLAG=1
                 shift
                 ;;
+            --enable-hysteresis)
+                ENABLE_HYSTERESIS_FLAG=1
+                shift
+                ;;
+            # 下划线等价参数（兼容习惯性写法）
+            --enable_hysteresis)
+                ENABLE_HYSTERESIS_FLAG=1
+                shift
+                ;;
+            --hysteresis-mode)
+                HYSTERESIS_MODE_VALUE="$2"
+                HYSTERESIS_MODE_ARGS=("--hysteresis-mode" "$2")
+                shift 2
+                ;;
+            --hysteresis_mode)
+                HYSTERESIS_MODE_VALUE="$2"
+                HYSTERESIS_MODE_ARGS=("--hysteresis-mode" "$2")
+                shift 2
+                ;;
+            --hysteresis-k)
+                HYSTERESIS_K_VALUE="$2"
+                HYSTERESIS_K_ARGS=("--hysteresis-k" "$2")
+                shift 2
+                ;;
+            --hysteresis_k)
+                HYSTERESIS_K_VALUE="$2"
+                HYSTERESIS_K_ARGS=("--hysteresis-k" "$2")
+                shift 2
+                ;;
+            --hysteresis-window)
+                HYSTERESIS_WINDOW_VALUE="$2"
+                HYSTERESIS_WINDOW_ARGS=("--hysteresis-window" "$2")
+                shift 2
+                ;;
+            --hysteresis_window)
+                HYSTERESIS_WINDOW_VALUE="$2"
+                HYSTERESIS_WINDOW_ARGS=("--hysteresis-window" "$2")
+                shift 2
+                ;;
+            --hysteresis-abs)
+                HYSTERESIS_ABS_VALUE="$2"
+                HYSTERESIS_ABS_ARGS=("--hysteresis-abs" "$2")
+                shift 2
+                ;;
+            --hysteresis_abs)
+                HYSTERESIS_ABS_VALUE="$2"
+                HYSTERESIS_ABS_ARGS=("--hysteresis-abs" "$2")
+                shift 2
+                ;;
+            --confirm-bars-sell)
+                CONFIRM_BARS_SELL_VALUE="$2"
+                CONFIRM_BARS_SELL_ARGS=("--confirm-bars-sell" "$2")
+                shift 2
+                ;;
+            --confirm_bars_sell)
+                CONFIRM_BARS_SELL_VALUE="$2"
+                CONFIRM_BARS_SELL_ARGS=("--confirm-bars-sell" "$2")
+                shift 2
+                ;;
+            --min-hold-bars)
+                MIN_HOLD_BARS_VALUE="$2"
+                MIN_HOLD_BARS_ARGS=("--min-hold-bars" "$2")
+                shift 2
+                ;;
+            --min_hold_bars)
+                MIN_HOLD_BARS_VALUE="$2"
+                MIN_HOLD_BARS_ARGS=("--min-hold-bars" "$2")
+                shift 2
+                ;;
+            --enable-zero-axis)
+                ENABLE_ZERO_AXIS_FLAG=1
+                shift
+                ;;
+            --enable_zero_axis)
+                ENABLE_ZERO_AXIS_FLAG=1
+                shift
+                ;;
+            --zero-axis-mode)
+                ZERO_AXIS_MODE_VALUE="$2"
+                ZERO_AXIS_MODE_ARGS=("--zero-axis-mode" "$2")
+                shift 2
+                ;;
+            --zero_axis_mode)
+                ZERO_AXIS_MODE_VALUE="$2"
+                ZERO_AXIS_MODE_ARGS=("--zero-axis-mode" "$2")
+                shift 2
+                ;;
+            # KAMA 特有参数
+            --kama-period)
+                KAMA_PERIOD_VALUE="$2"
+                KAMA_PERIOD_ARGS=("--kama-period" "$2")
+                shift 2
+                ;;
+            --kama_period)
+                KAMA_PERIOD_VALUE="$2"
+                KAMA_PERIOD_ARGS=("--kama-period" "$2")
+                shift 2
+                ;;
+            --kama-fast)
+                KAMA_FAST_VALUE="$2"
+                KAMA_FAST_ARGS=("--kama-fast" "$2")
+                shift 2
+                ;;
+            --kama_fast)
+                KAMA_FAST_VALUE="$2"
+                KAMA_FAST_ARGS=("--kama-fast" "$2")
+                shift 2
+                ;;
+            --kama-slow)
+                KAMA_SLOW_VALUE="$2"
+                KAMA_SLOW_ARGS=("--kama-slow" "$2")
+                shift 2
+                ;;
+            --kama_slow)
+                KAMA_SLOW_VALUE="$2"
+                KAMA_SLOW_ARGS=("--kama-slow" "$2")
+                shift 2
+                ;;
+            --enable-efficiency-filter|--enable_efficiency_filter)
+                ENABLE_EFFICIENCY_FILTER_FLAG=1
+                shift
+                ;;
+            --min-efficiency-ratio)
+                MIN_EFFICIENCY_RATIO_VALUE="$2"
+                MIN_EFFICIENCY_RATIO_ARGS=("--min-efficiency-ratio" "$2")
+                shift 2
+                ;;
+            --min_efficiency_ratio)
+                MIN_EFFICIENCY_RATIO_VALUE="$2"
+                MIN_EFFICIENCY_RATIO_ARGS=("--min-efficiency-ratio" "$2")
+                shift 2
+                ;;
+            --enable-slope-confirmation|--enable_slope_confirmation)
+                ENABLE_SLOPE_CONFIRMATION_FLAG=1
+                shift
+                ;;
+            --min-slope-periods)
+                MIN_SLOPE_PERIODS_VALUE="$2"
+                MIN_SLOPE_PERIODS_ARGS=("--min-slope-periods" "$2")
+                shift 2
+                ;;
+            --min_slope_periods)
+                MIN_SLOPE_PERIODS_VALUE="$2"
+                MIN_SLOPE_PERIODS_ARGS=("--min-slope-periods" "$2")
+                shift 2
+                ;;
+            --load-params)
+                LOAD_PARAMS_VALUE="$2"
+                LOAD_PARAMS_ARGS=("--load-params" "$2")
+                shift 2
+                ;;
             -h|--help)
                 show_help
                 exit 0
@@ -614,6 +822,9 @@ main() {
     if [ -n "$SAVE_PARAMS_VALUE" ]; then
         echo -e "${YELLOW}参数保存:${NC} $SAVE_PARAMS_VALUE"
     fi
+    if [ -n "$LOAD_PARAMS_VALUE" ]; then
+        echo -e "${YELLOW}参数加载:${NC} $LOAD_PARAMS_VALUE"
+    fi
     if [ $ENABLE_ADX_FILTER_FLAG -eq 1 ] || [ $ENABLE_VOLUME_FILTER_FLAG -eq 1 ] || [ $ENABLE_SLOPE_FILTER_FLAG -eq 1 ] || [ $ENABLE_CONFIRM_FILTER_FLAG -eq 1 ] || [ $ENABLE_LOSS_PROTECTION_FLAG -eq 1 ]; then
         echo -e "${YELLOW}过滤器配置:${NC}"
         if [ $ENABLE_ADX_FILTER_FLAG -eq 1 ]; then
@@ -671,6 +882,9 @@ main() {
     fi
     if [ ${#DATA_DIR_ARGS[@]} -gt 0 ]; then
         CMD+=("${DATA_DIR_ARGS[@]}")
+    fi
+    if [ ${#LOAD_PARAMS_ARGS[@]} -gt 0 ]; then
+        CMD+=("${LOAD_PARAMS_ARGS[@]}")
     fi
     if [ -n "$AGGREGATE_VALUE" ]; then
         CMD+=("${AGGREGATE_ARGS[@]}")
@@ -745,6 +959,56 @@ main() {
     # 添加调试参数
     if [ $DEBUG_LOSS_PROTECTION_FLAG -eq 1 ]; then
         CMD+=("--debug-loss-protection")
+    fi
+    # Anti-Whipsaw 参数
+    if [ $ENABLE_HYSTERESIS_FLAG -eq 1 ]; then
+        CMD+=("--enable-hysteresis")
+    fi
+    if [ ${#HYSTERESIS_MODE_ARGS[@]} -gt 0 ]; then
+        CMD+=("${HYSTERESIS_MODE_ARGS[@]}")
+    fi
+    if [ ${#HYSTERESIS_K_ARGS[@]} -gt 0 ]; then
+        CMD+=("${HYSTERESIS_K_ARGS[@]}")
+    fi
+    if [ ${#HYSTERESIS_WINDOW_ARGS[@]} -gt 0 ]; then
+        CMD+=("${HYSTERESIS_WINDOW_ARGS[@]}")
+    fi
+    if [ ${#HYSTERESIS_ABS_ARGS[@]} -gt 0 ]; then
+        CMD+=("${HYSTERESIS_ABS_ARGS[@]}")
+    fi
+    if [ ${#CONFIRM_BARS_SELL_ARGS[@]} -gt 0 ]; then
+        CMD+=("${CONFIRM_BARS_SELL_ARGS[@]}")
+    fi
+    if [ ${#MIN_HOLD_BARS_ARGS[@]} -gt 0 ]; then
+        CMD+=("${MIN_HOLD_BARS_ARGS[@]}")
+    fi
+    if [ $ENABLE_ZERO_AXIS_FLAG -eq 1 ]; then
+        CMD+=("--enable-zero-axis")
+    fi
+    if [ ${#ZERO_AXIS_MODE_ARGS[@]} -gt 0 ]; then
+        CMD+=("${ZERO_AXIS_MODE_ARGS[@]}")
+    fi
+    # KAMA 特有参数
+    if [ ${#KAMA_PERIOD_ARGS[@]} -gt 0 ]; then
+        CMD+=("${KAMA_PERIOD_ARGS[@]}")
+    fi
+    if [ ${#KAMA_FAST_ARGS[@]} -gt 0 ]; then
+        CMD+=("${KAMA_FAST_ARGS[@]}")
+    fi
+    if [ ${#KAMA_SLOW_ARGS[@]} -gt 0 ]; then
+        CMD+=("${KAMA_SLOW_ARGS[@]}")
+    fi
+    if [ $ENABLE_EFFICIENCY_FILTER_FLAG -eq 1 ]; then
+        CMD+=("--enable-efficiency-filter")
+    fi
+    if [ ${#MIN_EFFICIENCY_RATIO_ARGS[@]} -gt 0 ]; then
+        CMD+=("${MIN_EFFICIENCY_RATIO_ARGS[@]}")
+    fi
+    if [ $ENABLE_SLOPE_CONFIRMATION_FLAG -eq 1 ]; then
+        CMD+=("--enable-slope-confirmation")
+    fi
+    if [ ${#MIN_SLOPE_PERIODS_ARGS[@]} -gt 0 ]; then
+        CMD+=("${MIN_SLOPE_PERIODS_ARGS[@]}")
     fi
 
     echo -e "${YELLOW}执行命令:${NC} ${CMD[*]}"

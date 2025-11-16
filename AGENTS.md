@@ -22,3 +22,77 @@ Work in Ubuntu 24 under WSL while the repository stays on the Windows drive (`/m
 - `CLAUDE.md` contains extended context on module responsibilities (`backtesting/backtesting.py`, `_stats.py`, `_plotting.py`, `_util.py`) and the data flow from OHLCV inputs through broker execution to visualization.
 - Use the same source to cross-check environment recreation steps and alternative test entry points such as `python -m backtesting.test`.
 - Documentation builds live in `doc/` with `build.sh`; refer there when updating notebooks or pdoc outputs.
+
+## Strategy Baselines & Hyperparameters
+- 纯基线（所有增强/过滤关闭）
+  - `enable_hysteresis=False`、`enable_zero_axis=False`
+  - `confirm_bars_sell=0`、`min_hold_bars=0`
+  - `enable_confirm_filter=False`，其余 `enable_*` 默认均为 False
+- 运行命令（按需是否优化）
+  - 基线（不优化）:
+    ```
+    ./run_backtest.sh \
+      --stock-list results/trend_etf_pool.csv \
+      --strategy macd_cross \
+      --data-dir data/chinese_etf/daily \
+      --output-dir results/exp_macd_base
+    ```
+  - 基线 + 优化（仅优化 EMA 周期）:
+    ```
+    ./run_backtest.sh \
+      --stock-list results/trend_etf_pool.csv \
+      --strategy macd_cross \
+      --optimize \
+      --data-dir data/chinese_etf/daily \
+      --output-dir results/exp_macd_base_opt
+    ```
+- 可调超参（CLI → 策略）
+  - 核心周期：`fast_period`、`slow_period`、`signal_period`（约束：fast<slow）
+  - 过滤器：
+    - `--enable-adx-filter`，`--adx-period`，`--adx-threshold`
+    - `--enable-volume-filter`，`--volume-period`，`--volume-ratio`
+    - `--enable-slope-filter`，`--slope-lookback`
+    - `--enable-confirm-filter`，`--confirm-bars`
+  - 风控：
+    - `--enable-loss-protection`，`--max-consecutive-losses`，`--pause-bars`
+    - `--enable-trailing-stop`，`--trailing-stop-pct`
+  - Anti‑Whipsaw/卖出侧：
+    - `--enable-hysteresis`，`--hysteresis-mode`，`--hysteresis-k`，`--hysteresis-window`，`--hysteresis-abs`
+    - `--confirm-bars-sell`（0 关闭） ，`--min-hold-bars`（0 关闭）
+    - `--enable-zero-axis`，`--zero-axis-mode`
+- 说明
+  - 不传即为默认（纯基线）；支持连字符/下划线别名（如 `--enable-hysteresis`/`--enable_hysteresis`）。
+  - `--verbose` 会打印“覆盖参数”，用于核实开关是否实际生效。
+
+### SMA Cross Enhanced（sma_cross_enhanced）
+- 纯基线
+  - `enable_slope_filter=False`、`enable_adx_filter=False`、`enable_volume_filter=False`、`enable_confirm_filter=False`
+  - `confirm_bars=0`、`enable_loss_protection=False`
+- 命令
+  ```
+  ./run_backtest.sh \
+    --stock-list results/trend_etf_pool.csv \
+    --strategy sma_cross_enhanced \
+    --data-dir data/chinese_etf/daily \
+    --output-dir results/exp_sma_enhanced_base
+  ```
+- 可调项：同“过滤器/风控”，使用相同 CLI；SMA 周期如需优化请在策略/优化器中开放。
+
+### KAMA（kama_cross）
+- 纯基线
+  - `enable_efficiency_filter=False`、`enable_slope_confirmation=False`
+  - `enable_slope_filter=False`、`enable_adx_filter=False`、`enable_volume_filter=False`、`enable_confirm_filter=False`
+  - `confirm_bars=0`、`enable_loss_protection=False`
+- 命令
+  ```
+  ./run_backtest.sh \
+    --stock-list results/trend_etf_pool.csv \
+    --strategy kama_cross \
+    --data-dir data/chinese_etf/daily \
+    --output-dir results/exp_kama_base
+  ```
+- 可调项
+  - 通用过滤器/风控：同上，使用统一 CLI
+  - 策略特有（已暴露到 CLI）：
+    - 核心：`--kama-period`、`--kama-fast`、`--kama-slow`
+    - Phase 1：`--enable-efficiency-filter`（`--min-efficiency-ratio`）、`--enable-slope-confirmation`（`--min-slope-periods`）

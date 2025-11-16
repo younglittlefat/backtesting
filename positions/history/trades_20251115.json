@@ -1,0 +1,26 @@
+{
+  "date": "20251115",
+  "trades": [
+    {
+      "ts_code": "561160.SH",
+      "action": "BUY",
+      "shares": 5400,
+      "price": 0.914,
+      "amount": -4936.58712,
+      "commission": 0.49356000000000005,
+      "date": "2025-11-15",
+      "reason": "MACD金叉买入信号！MACD(12,26,9)线上穿信号线"
+    },
+    {
+      "ts_code": "510210.SH",
+      "action": "BUY",
+      "shares": 4900,
+      "price": 1.005,
+      "amount": -4925.484899999999,
+      "commission": 0.49244999999999994,
+      "date": "2025-11-15",
+      "reason": "MACD金叉买入信号！MACD(12,26,9)线上穿信号线"
+    }
+  ],
+  "timestamp": "2025-11-15 16:51:39"
+}

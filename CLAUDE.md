@@ -11,6 +11,101 @@ Backtesting.py 是一个用于回测交易策略的 Python 库。它提供了一
 - 多种信号过滤器：ADX趋势强度、成交量确认、均线斜率等
 - 灵活的成本模型：支持中国A股/ETF、美股等不同市场的交易成本配置
 
+## 策略基线与超参数
+
+本节给出三类策略的“纯基线”配置与可调超参数一览，便于快速复现与迭代。
+
+- MACD（`macd_cross`）纯基线（全部增强与过滤默认关闭）
+  - 滞回（Anti‑Whipsaw）关闭：`enable_hysteresis = False`
+  - 零轴约束关闭：`enable_zero_axis = False`
+  - 卖出确认关闭：`confirm_bars_sell = 0`
+  - 最短持有期关闭：`min_hold_bars = 0`
+  - 持续确认（买入端）关闭：`enable_confirm_filter = False`
+  - 其它过滤器与止损开关默认均为 False
+
+- 运行命令（基线，按需选择是否优化EMA周期）
+  - 基线（不优化）:
+    ```
+    ./run_backtest.sh \
+      --stock-list results/trend_etf_pool.csv \
+      --strategy macd_cross \
+      --data-dir data/chinese_etf/daily \
+      --output-dir results/exp_macd_base
+    ```
+  - 基线 + 参数优化（仅优化 EMA 周期，保持所有过滤/增强关闭）:
+    ```
+    ./run_backtest.sh \
+      --stock-list results/trend_etf_pool.csv \
+      --strategy macd_cross \
+      --optimize \
+      --data-dir data/chinese_etf/daily \
+      --output-dir results/exp_macd_base_opt
+    ```
+
+- 可调超参数（CLI → 策略）
+  - 核心（EMA 周期）
+    - `fast_period`（默认 12）: -- 无需显式传参；优化时由网格给出
+    - `slow_period`（默认 26）
+    - `signal_period`（默认 9）
+    - 约束：`fast_period < slow_period`
+  - Phase 2 过滤器（默认均关闭）
+    - ADX: `--enable-adx-filter`，`--adx-period <int>`（默认14），`--adx-threshold <float>`（默认25）
+    - 成交量: `--enable-volume-filter`，`--volume-period <int>`（默认20），`--volume-ratio <float>`（默认1.2）
+    - 斜率: `--enable-slope-filter`，`--slope-lookback <int>`（默认5）
+    - 持续确认(买入): `--enable-confirm-filter`，`--confirm-bars <int>`（默认2；仅启用时生效）
+  - Phase 3 风控（默认关闭）
+    - 连续止损保护: `--enable-loss-protection`，`--max-consecutive-losses <int>`（默认3），`--pause-bars <int>`（默认10）
+    - 跟踪止损: `--enable-trailing-stop`，`--trailing-stop-pct <float>`（默认0.05）
+  - Anti‑Whipsaw & 卖出侧控制（默认关闭）
+    - 滞回: `--enable-hysteresis`，可选
+      - `--hysteresis-mode <std|abs>`（默认 std）
+      - `--hysteresis-k <float>`（默认 0.5，仅 std）
+      - `--hysteresis-window <int>`（默认 20，仅 std）
+      - `--hysteresis-abs <float>`（默认 0.001，仅 abs）
+    - 卖出确认: `--confirm-bars-sell <int>`（默认 0 关闭；>0 生效，可设为2）
+    - 最短持有: `--min-hold-bars <int>`（默认 0 关闭；>0 生效，可设为3）
+    - 零轴约束: `--enable-zero-axis`，`--zero-axis-mode <str>`（默认 symmetric）
+  - 说明
+    - 以上开关不传即为默认值（纯基线）。传入时既可使用连字符也可使用下划线别名（例如 `--enable-hysteresis`/`--enable_hysteresis`）。
+    - 在 `--verbose` 模式下，CLI 会打印传入 Backtest.run/optimize 的“覆盖参数”，便于确认哪些超参实际生效。
+
+### SMA Cross Enhanced（`sma_cross_enhanced`）
+- 纯基线（默认全关）
+  - `enable_slope_filter=False`、`enable_adx_filter=False`、`enable_volume_filter=False`、`enable_confirm_filter=False`
+  - `confirm_bars=0`（持续确认默认不生效，可设为3）
+  - `enable_loss_protection=False`
+- 运行命令（不优化）
+  ```
+  ./run_backtest.sh \
+    --stock-list results/trend_etf_pool.csv \
+    --strategy sma_cross_enhanced \
+    --data-dir data/chinese_etf/daily \
+    --output-dir results/exp_sma_enhanced_base
+  ```
+- 可调超参数（CLI → 策略）
+  - 过滤器：`--enable-slope-filter`（`--slope-lookback`），`--enable-adx-filter`（`--adx-period`，`--adx-threshold`），`--enable-volume-filter`（`--volume-period`，`--volume-ratio`），`--enable-confirm-filter`（`--confirm-bars`）
+  - 风控：`--enable-loss-protection`（`--max-consecutive-losses`，`--pause-bars`）
+  - 说明：不传即为纯基线；SMA周期参数在该策略示例中固定（n1=10,n2=20），如需开放优化，请在策略或优化器中添加。
+
+### KAMA（`kama_cross`）
+- 纯基线（默认全关/不生效）
+  - Phase 1 特有开关：`enable_efficiency_filter=False`、`enable_slope_confirmation=False`
+  - 通用过滤器：`enable_slope_filter=False`、`enable_adx_filter=False`、`enable_volume_filter=False`、`enable_confirm_filter=False`、`confirm_bars=0`
+  - 风控：`enable_loss_protection=False`
+- 运行命令（不优化）
+  ```
+  ./run_backtest.sh \
+    --stock-list results/trend_etf_pool.csv \
+    --strategy kama_cross \
+    --data-dir data/chinese_etf/daily \
+    --output-dir results/exp_kama_base
+  ```
+- 可调超参数
+  - 通用过滤器与风控：同上（SMA/MACD），使用相同 CLI
+  - 策略特有（已暴露到 CLI）：
+    - 核心参数：`--kama-period`、`--kama-fast`、`--kama-slow`
+    - Phase 1 过滤：`--enable-efficiency-filter`（`--min-efficiency-ratio`），`--enable-slope-confirmation`（`--min-slope-periods`）
+
 ## 环境配置
 
 **重要**: 本项目必须在名为 `backtesting` 的 conda 环境中运行。你现在是在wsl里的Ubuntu 24系统中运行，但项目在windows的硬盘上（/mnt/d/git/backtesting），请妥善处理脚本调用、传入的路径

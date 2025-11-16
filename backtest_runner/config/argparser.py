@@ -47,6 +47,12 @@ def create_argument_parser() -> argparse.ArgumentParser:
     # === 策略过滤器参数（通用，适用于所有策略）===
     _add_strategy_filter_arguments(parser)
 
+    # === KAMA 策略特有参数（仅在 --strategy kama_cross 时使用）===
+    _add_kama_arguments(parser)
+
+    # === Anti-Whipsaw 参数（适用于MACD系列策略）===
+    _add_anti_whipsaw_arguments(parser)
+
     # === 轮动策略参数 ===
     _add_rotation_arguments(parser)
 
@@ -117,6 +123,12 @@ def _add_basic_arguments(parser: argparse.ArgumentParser) -> None:
         type=str,
         default=None,
         help='保存优化参数到指定配置文件（仅在optimize模式下有效）。',
+    )
+    parser.add_argument(
+        '--load-params',
+        type=str,
+        default=None,
+        help='从配置文件加载策略参数与运行时配置（与实盘一致）。',
     )
 
 
@@ -290,6 +302,32 @@ def _add_strategy_filter_arguments(parser: argparse.ArgumentParser) -> None:
         help='启用止损保护调试日志',
     )
 
+def _add_kama_arguments(parser: argparse.ArgumentParser) -> None:
+    """添加 KAMA 策略特有参数（仅对 kama_cross 策略有效）"""
+    g = parser.add_argument_group('KAMA 策略参数（仅对 kama_cross 策略有效）')
+    # 核心KAMA参数（可选覆盖）
+    g.add_argument('--kama-period', type=int, help='KAMA计算周期（默认20）')
+    g.add_argument('--kama-fast', type=int, help='KAMA快速平滑周期（默认2）')
+    g.add_argument('--kama-slow', type=int, help='KAMA慢速平滑周期（默认30）')
+    # 策略特有过滤器
+    g.add_argument('--enable-efficiency-filter', action='store_true', help='启用效率比率过滤（默认关闭）')
+    g.add_argument('--min-efficiency-ratio', type=float, help='最小效率比率阈值（默认0.3）')
+    g.add_argument('--enable-slope-confirmation', action='store_true', help='启用KAMA斜率确认（默认关闭）')
+    g.add_argument('--min-slope-periods', type=int, help='KAMA斜率确认周期（默认3）')
+
+def _add_anti_whipsaw_arguments(parser: argparse.ArgumentParser) -> None:
+    """添加 Anti-Whipsaw 参数（MACD 贴线反复抑制）"""
+    g = parser.add_argument_group('Anti-Whipsaw（贴线反复抑制，仅对相关策略有效）')
+    g.add_argument('--enable-hysteresis', action='store_true', help='启用自适应滞回阈值')
+    g.add_argument('--hysteresis-mode', choices=['std', 'abs'], help='滞回模式 std/abs')
+    g.add_argument('--hysteresis-k', type=float, help='std模式系数k（阈值=k×std）')
+    g.add_argument('--hysteresis-window', type=int, help='std模式rolling窗口')
+    g.add_argument('--hysteresis-abs', type=float, help='abs模式绝对阈值')
+    g.add_argument('--confirm-bars-sell', type=int, help='卖出确认所需K线数')
+    g.add_argument('--min-hold-bars', type=int, help='最短持有期（建仓后N根内忽略相反信号）')
+    g.add_argument('--enable-zero-axis', action='store_true', help='启用零轴约束（买在零上/卖在零下）')
+    g.add_argument('--zero-axis-mode', type=str, help='零轴约束模式（默认symmetric）')
+
 
 def _add_rotation_arguments(parser: argparse.ArgumentParser) -> None:
     """添加ETF轮动策略参数"""
@@ -341,4 +379,3 @@ def _add_rotation_arguments(parser: argparse.ArgumentParser) -> None:
 
 # Note: MACD特定参数已移除，所有策略现在使用统一的过滤器参数
 # 参见 _add_strategy_filter_arguments() 函数
-

@@ -95,7 +95,7 @@ class SmaCrossEnhanced(BaseEnhancedStrategy):
     adx_threshold = 25
     volume_period = 20
     volume_ratio = 1.2
-    confirm_bars = 3
+    confirm_bars = 0  # 0 表示默认不启用持续确认（与 enable_confirm_filter=False 一致）
 
     # 止损功能开关（Phase 6新增，继承自 BaseEnhancedStrategy）
     enable_loss_protection = False  # 启用连续止损保护（推荐，夏普比率+75%）

@@ -13,6 +13,7 @@ from ..utils.display_utils import (
     resolve_display_name,
     print_backtest_header,
     print_backtest_results,
+    print_run_params,
 )
 
 
@@ -75,6 +76,9 @@ def run_single_backtest(
         end_date=end_date,
         verbose=verbose
     )
+    # 输出即将传入的运行参数（用于排查开关是否生效）
+    if verbose and filter_params:
+        print_run_params(filter_params, verbose=True)
 
     bt = Backtest(
         data,
@@ -175,6 +179,7 @@ def _run_optimization(
             print(f"\n调试: 过滤器参数转换")
             print(f"  原始参数: {filter_params}")
             print(f"  转换后参数: {normalized_filter_params}")
+            print_run_params(normalized_filter_params, verbose=True)
 
     stats = bt.optimize(
         **run_kwargs,
@@ -215,6 +220,8 @@ def _run_backtest(
 
     # 传入过滤器参数
     run_kwargs = filter_params if filter_params else {}
+    if verbose:
+        print_run_params(run_kwargs, verbose=True)
     stats = bt.run(**run_kwargs)
 
     return stats

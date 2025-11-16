@@ -48,6 +48,7 @@ from backtest_runner.utils import (
     print_backtest_summary,
     _safe_stat,
 )
+from utils.strategy_params_manager import StrategyParamsManager
 from utils.data_loader import (
     InstrumentInfo,
     LowVolatilityConfig,
@@ -64,6 +65,26 @@ def main() -> int:
     """命令行入口"""
     parser = create_argument_parser()
     args = parser.parse_args()
+
+    # 可选：从配置文件加载参数（与实盘配置统一）
+    if getattr(args, 'load_params', None):
+        try:
+            params_manager = StrategyParamsManager(args.load_params)
+            loaded_params = params_manager.get_strategy_params(args.strategy)
+            runtime_config = params_manager.get_runtime_config(args.strategy) or {}
+            # 将运行时配置合并到 args（以便 _build_strategy_instance 透传）
+            filters_cfg = runtime_config.get('filters', {})
+            for k, v in filters_cfg.items():
+                setattr(args, k, v)
+            loss_cfg = runtime_config.get('loss_protection', {})
+            for k, v in loss_cfg.items():
+                setattr(args, k, v)
+            aw_cfg = runtime_config.get('anti_whipsaw', {})
+            for k, v in aw_cfg.items():
+                setattr(args, k, v)
+            print(f"从配置加载策略参数: {args.load_params} -> {args.strategy}")
+        except Exception as exc:
+            print(f"⚠️ 加载配置失败（{args.load_params}）：{exc}")
 
     # 参数验证
     if args.instrument_limit is not None and args.instrument_limit <= 0:
@@ -472,6 +493,7 @@ def _save_summary_csv(all_results: List[Dict], args) -> None:
     for result in all_results:
         instrument = result['instrument']
         stats = result['stats']
+        # 原始总收益率（%）
         return_pct = _safe_stat(stats, 'Return [%]')
         sharpe_value = stats['Sharpe Ratio']
         max_dd = _safe_stat(stats, 'Max. Drawdown [%]', default=0.0)
@@ -480,6 +502,20 @@ def _save_summary_csv(all_results: List[Dict], args) -> None:
         start_date = str(stats['Start'])[:10] if 'Start' in stats else '未知'
         end_date = str(stats['End'])[:10] if 'End' in stats else '未知'
 
+        # 计算年化收益率（%）：优先使用回测框架提供的年化；否则用总收益率+起止日推算
+        annual_return_pct = _safe_stat(stats, 'Return (Ann.) [%]')
+        if annual_return_pct is None and return_pct is not None and start_date != '未知' and end_date != '未知':
+            try:
+                sd = pd.to_datetime(start_date, errors='coerce')
+                ed = pd.to_datetime(end_date, errors='coerce')
+                days = (ed - sd).days if pd.notna(sd) and pd.notna(ed) else None
+                if days and days > 0:
+                    base = 1.0 + (return_pct / 100.0)
+                    if base >= 0:
+                        annual_return_pct = (base ** (365.25 / days) - 1.0) * 100.0
+            except Exception:
+                annual_return_pct = None
+
         summary_rows.append({
             '代码': instrument.code,
             '标的名称': resolve_display_name(instrument),
@@ -487,7 +523,9 @@ def _save_summary_csv(all_results: List[Dict], args) -> None:
             '策略': result['strategy'],
             '回测开始日期': start_date,
             '回测结束日期': end_date,
-            '收益率(%)': round(return_pct, 3) if return_pct is not None else None,
+            # 输出年化收益率至“收益率(%)”列；保留总收益率列便于追溯/兼容
+            '收益率(%)': round(annual_return_pct, 3) if annual_return_pct is not None else None,
+            '总收益率(%)': round(return_pct, 3) if return_pct is not None else None,
             '夏普比率': round(sharpe_value, 3) if not pd.isna(sharpe_value) else None,
             '最大回撤(%)': round(max_dd, 3) if max_dd is not None else None,
         })
@@ -498,6 +536,12 @@ def _save_summary_csv(all_results: List[Dict], args) -> None:
     aggregate_path.parent.mkdir(parents=True, exist_ok=True)
     summary_df.to_csv(aggregate_path, index=False, encoding='utf-8-sig')
     print(f"汇总结果已保存: {aggregate_path}")
+    # 生成全局概括CSV
+    try:
+        _save_global_summary_csv(aggregate_path)
+    except Exception as exc:
+        # 全局概括失败不应影响主流程
+        print(f"⚠️ 生成全局概括失败: {exc}")
 
 
 def _run_rotation_mode(args) -> int:
@@ -537,12 +581,114 @@ def _run_rotation_mode(args) -> int:
             return _run_rotation_comparison(args)
         else:
             return _run_single_rotation_strategy(args)
+
+
     except Exception as e:
         print(f"\n错误: {e}")
         if args.verbose:
             import traceback
             traceback.print_exc()
         return 1
+
+
+def _save_global_summary_csv(aggregate_path: Path) -> None:
+    """
+    从刚生成的明细汇总CSV中，计算跨标的的全局概括并保存到同目录。
+    统计指标：
+      - 年化收益率：均值/中位数（%）
+      - 夏普比率：均值/中位数
+      - 最大回撤：均值/中位数（%）
+    """
+    summary_dir = aggregate_path.parent
+    source_file = aggregate_path.name
+
+    df = pd.read_csv(aggregate_path)
+
+    # 尝试获取或计算年化收益率(%)：
+    # 优先读取现成的列；否则由总收益率(%)和回测起止日期推算
+    def _find_first_col(candidates):
+        for c in candidates:
+            if c in df.columns:
+                return c
+        return None
+
+    # 年化收益率列名候选（若已有）
+    ann_ret_col = _find_first_col([
+        '年化收益率(%)', '年化收益率', 'CAGR(%)', 'CAGR', 'annual_return(%)', 'annual_return',
+        'Annual Return [%]', 'Annual Return'
+    ])
+
+    if ann_ret_col:
+        ann_ret_pct = pd.to_numeric(df[ann_ret_col], errors='coerce')
+        # 若单位不是百分比（0.12而非12），尽力识别后转为百分比
+        if ann_ret_pct.dropna().abs().mean() <= 1.0:
+            ann_ret_pct = ann_ret_pct * 100.0
+    elif '收益率(%)' in df.columns and '总收益率(%)' in df.columns:
+        # 新版明细：'收益率(%)' 已为年化，且提供了 '总收益率(%)'
+        ann_ret_pct = pd.to_numeric(df['收益率(%)'], errors='coerce')
+        if ann_ret_pct.dropna().abs().mean() <= 1.0:
+            ann_ret_pct = ann_ret_pct * 100.0
+    else:
+        # 从总收益率(%) + 回测期推算年化收益率(%)
+        total_ret_col = _find_first_col(['收益率(%)', '总收益率(%)', '收益率', 'Total Return [%]', 'Return [%]'])
+        start_col = _find_first_col(['回测开始日期', '开始日期', 'Start'])
+        end_col = _find_first_col(['回测结束日期', '结束日期', 'End'])
+
+        if not total_ret_col or not start_col or not end_col:
+            raise ValueError("缺少推算年化收益率所需的列（收益率/开始日期/结束日期）")
+
+        total_ret_pct = pd.to_numeric(df[total_ret_col], errors='coerce')  # 单位：%
+        start_dt = pd.to_datetime(df[start_col], errors='coerce')
+        end_dt = pd.to_datetime(df[end_col], errors='coerce')
+        days = (end_dt - start_dt).dt.days
+
+        years = days / 365.25
+        # 对于无法计算的行（years<=0或收益率缺失），标记为NaN
+        with pd.option_context('mode.use_inf_as_na', True):
+            base = 1.0 + (total_ret_pct / 100.0)
+            # 避免负无穷/复数等异常，限制base>=0
+            base = base.where(base >= 0.0, other=pd.NA)
+            ann = base.pow(1.0 / years) - 1.0
+            ann = ann.where((years > 0) & base.notna(), other=pd.NA)
+            ann_ret_pct = ann * 100.0
+
+    # 夏普比率列
+    sharpe_col = _find_first_col(['夏普比率', '夏普', 'Sharpe Ratio', 'sharpe'])
+    if not sharpe_col:
+        raise ValueError("未找到夏普比率列（候选：夏普比率/夏普/Sharpe Ratio）")
+    sharpe = pd.to_numeric(df[sharpe_col], errors='coerce')
+
+    # 最大回撤列（保持原符号，单位%）
+    mdd_col = _find_first_col(['最大回撤(%)', '最大回撤', 'Max. Drawdown [%]', 'Max. Drawdown'])
+    if not mdd_col:
+        raise ValueError("未找到最大回撤列（候选：最大回撤(%) / Max. Drawdown [%]）")
+    mdd_pct = pd.to_numeric(df[mdd_col], errors='coerce')
+
+    # 计算聚合统计（忽略NaN）
+    n_instruments = int(len(df))
+    ann_mean = float(round(ann_ret_pct.dropna().mean(), 2)) if ann_ret_pct.dropna().size else None
+    ann_median = float(round(ann_ret_pct.dropna().median(), 2)) if ann_ret_pct.dropna().size else None
+    sharpe_mean = float(round(sharpe.dropna().mean(), 2)) if sharpe.dropna().size else None
+    sharpe_median = float(round(sharpe.dropna().median(), 2)) if sharpe.dropna().size else None
+    mdd_mean = float(round(mdd_pct.dropna().mean(), 2)) if mdd_pct.dropna().size else None
+    mdd_median = float(round(mdd_pct.dropna().median(), 2)) if mdd_pct.dropna().size else None
+
+    # 组装一行结果并保存
+    result = pd.DataFrame([{
+        '标的数量': n_instruments,
+        '年化收益率-均值(%)': ann_mean,
+        '年化收益率-中位数(%)': ann_median,
+        '夏普-均值': sharpe_mean,
+        '夏普-中位数': sharpe_median,
+        '最大回撤-均值(%)': mdd_mean,
+        '最大回撤-中位数(%)': mdd_median,
+        '来源文件': source_file,
+    }])
+
+    out_name = f"global_summary_{datetime.now().strftime('%Y%m%d_%H%M%S')}.csv"
+    out_path = summary_dir / out_name
+    result.to_csv(out_path, index=False, encoding='utf-8-sig')
+    print(f"全局概括已保存: {out_path}")
 
 
 def _run_single_rotation_strategy(args) -> int:
@@ -677,6 +823,14 @@ def _build_strategy_instance(strategy_class, args):
         strategy_params['enable_volume_filter'] = args.enable_volume_filter
     if hasattr(strategy_class, 'enable_confirm_filter') and hasattr(args, 'enable_confirm_filter'):
         strategy_params['enable_confirm_filter'] = args.enable_confirm_filter
+    # Anti-Whipsaw 参数
+    for name in [
+        'enable_hysteresis', 'hysteresis_mode', 'hysteresis_k',
+        'hysteresis_window', 'hysteresis_abs', 'confirm_bars_sell',
+        'min_hold_bars', 'enable_zero_axis', 'zero_axis_mode'
+    ]:
+        if hasattr(strategy_class, name) and hasattr(args, name):
+            strategy_params[name] = getattr(args, name)
 
     # 应用止损保护参数
     if hasattr(strategy_class, 'enable_loss_protection') and hasattr(args, 'enable_loss_protection'):

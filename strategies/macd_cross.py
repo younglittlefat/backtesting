@@ -20,6 +20,7 @@ import pandas as pd
 import random
 from backtesting import Strategy
 from backtesting.lib import crossover
+import numpy as np
 
 # 添加项目根目录到路径（用于直接运行）
 if __name__ == '__main__':
@@ -264,6 +265,26 @@ class MacdCross(Strategy):
     enable_divergence = False
     divergence_lookback = 20
 
+    # === Anti-Whipsaw: 新增功能（自适应滞回、卖出确认、最短持有、零轴约束） ===
+    # 自适应滞回阈值（用于交叉确认，避免贴线反复）
+    enable_hysteresis = False         # 总开关（默认关闭，需显式 --enable-hysteresis 开启）
+    hysteresis_mode = 'std'           # 'std' or 'abs'
+    hysteresis_k = 0.5                # k * rolling_std(hist, window)
+    hysteresis_window = 20            # rolling std 窗口
+    hysteresis_abs = 0.001            # 绝对阈值模式的 epsilon
+
+    # 卖出确认（对称于买入确认，弱死叉不立即卖；0 表示不做卖出确认）
+    confirm_bars_sell = 0
+
+    # 最短持有期（建仓后 N 根内忽略相反信号；0 表示不限制）
+    min_hold_bars = 0
+
+    # 零轴约束（买入需两线在零轴上方，卖出需两线在零轴下方）
+    enable_zero_axis = False
+    zero_axis_mode = 'symmetric'
+    # 日志开关（过滤信号）
+    debug_signal_filter = False
+
     def init(self):
         """
         初始化策略
@@ -322,6 +343,10 @@ class MacdCross(Strategy):
                 self.entry_price = 0
                 self.current_bar = 0
                 self.total_trades = 0
+        # Anti-Whipsaw 需要的计数器：统一初始化并在 next() 中始终递增
+        if not hasattr(self, 'current_bar'):
+            self.current_bar = 0
+        self.entry_bar = -1  # 建仓所在bar（用于最短持有期）
 
     def _apply_filters(self, signal_type):
         """
@@ -353,15 +378,91 @@ class MacdCross(Strategy):
 
         return True
 
+    # === Anti-Whipsaw: 工具方法 ===
+    def _log_filter_reject(self, signal_type: str, reason: str):
+        """在交叉被过滤时打印一条简洁的日志"""
+        if getattr(self, 'debug_signal_filter', False):
+            print(f"[过滤] {signal_type.upper()} 被拦截: {reason} (Bar {self.current_bar})")
+
+    def _zero_axis_ok(self, signal_type: str) -> bool:
+        if not self.enable_zero_axis:
+            return True
+        macd_now = self.macd_line[-1]
+        sig_now = self.signal_line[-1]
+        if self.zero_axis_mode == 'symmetric':
+            if signal_type == 'buy':
+                return macd_now > 0 and sig_now > 0
+            else:
+                return macd_now < 0 and sig_now < 0
+        # 预留其他模式
+        return True
+
+    def _hysteresis_ok(self, signal_type: str) -> bool:
+        if not self.enable_hysteresis:
+            return True
+
+        hist_now = self.macd_line[-1] - self.signal_line[-1]
+        # 方向一致性：买入需 hist>0；卖出需 hist<0
+        if signal_type == 'buy' and not (hist_now > 0):
+            return False
+        if signal_type == 'sell' and not (hist_now < 0):
+            return False
+
+        if self.hysteresis_mode == 'std':
+            win = max(5, int(self.hysteresis_window))
+            if len(self.histogram) < win:
+                self._log_filter_reject(signal_type, f"滞回未通过: 数据不足(win={win})")
+                return False  # 数据不足，不触发，避免噪声
+            # 使用近 win 根柱状图估计阈值
+            tail = np.array(self.histogram[-win:], dtype=float)
+            thr = float(np.nanstd(tail)) * float(self.hysteresis_k)
+            thr = max(thr, 0.0)
+            ok = abs(hist_now) > thr
+            if not ok:
+                self._log_filter_reject(signal_type, f"滞回未通过: |Hist|={abs(hist_now):.6f} <= 阈值{thr:.6f} (std,k={self.hysteresis_k},win={win})")
+            return ok
+        else:
+            # 绝对阈值模式
+            thr = float(self.hysteresis_abs)
+            ok = abs(hist_now) > thr
+            if not ok:
+                self._log_filter_reject(signal_type, f"滞回未通过: |Hist|={abs(hist_now):.6f} <= 阈值{thr:.6f} (abs)")
+            return ok
+
+    def _sell_confirmation_ok(self) -> bool:
+        n = int(self.confirm_bars_sell)
+        if n <= 1:
+            return True
+        if len(self.macd_line) < n or len(self.signal_line) < n:
+            self._log_filter_reject('sell', f"卖出确认未通过: 数据不足(n={n})")
+            return False
+        # 过去 n 根均满足 MACD < Signal
+        for i in range(1, self.confirm_bars_sell + 1):
+            if not (self.macd_line[-i] < self.signal_line[-i]):
+                self._log_filter_reject('sell', f"卖出确认未通过: 第{-i}根未满足 MACD<Signal")
+                return False
+        return True
+
+    def _min_hold_ok_to_exit(self) -> bool:
+        n = int(self.min_hold_bars)
+        if n <= 0:
+            return True
+        if self.entry_bar < 0:
+            return True
+        held = self.current_bar - self.entry_bar
+        ok = held >= n
+        if not ok:
+            self._log_filter_reject('sell', f"最短持有期未达: 已持有{held} < 要求{n}")
+        return ok
+
     def next(self):
         """
         每个交易日调用一次
 
         根据MACD金叉死叉信号和过滤器决定买入或卖出
         """
-        # Phase 3: 检查止损状态
-        if self.enable_loss_protection or self.enable_trailing_stop:
-            self.current_bar += 1
+        # 始终递增bar计数（供最短持有等使用）
+        self.current_bar += 1
 
         # 连续止损保护：检查是否在暂停期
         if self.enable_loss_protection:
@@ -416,6 +517,12 @@ class MacdCross(Strategy):
             if not self._apply_filters('buy'):
                 return  # 信号被过滤，不交易
 
+            # Anti-Whipsaw: 零轴约束 + 滞回阈值
+            if not self._zero_axis_ok('buy'):
+                return
+            if not self._hysteresis_ok('buy'):
+                return
+
             # Phase 4: 检查增强信号（后续实现）
 
             # 如果有仓位，先平仓
@@ -434,12 +541,24 @@ class MacdCross(Strategy):
                 self.stop_loss_price = self.highest_price * (1 - self.trailing_stop_pct)
                 if self.debug_loss_protection:
                     print(f"[跟踪止损] Bar {self.current_bar}: 开多仓 入场={self.entry_price:.2f} 初始止损={self.stop_loss_price:.2f}")
+            # 记录建仓bar
+            self.entry_bar = self.current_bar
 
         # MACD死叉 - 卖出信号
         elif crossover(self.signal_line, self.macd_line):
             # Phase 2: 应用过滤器
             if not self._apply_filters('sell'):
                 return  # 信号被过滤，不交易
+
+            # Anti-Whipsaw: 零轴约束 + 滞回阈值 + 卖出确认 + 最短持有期
+            if not self._zero_axis_ok('sell'):
+                return
+            if not self._hysteresis_ok('sell'):
+                return
+            if not self._sell_confirmation_ok():
+                return
+            if not self._min_hold_ok_to_exit():
+                return
 
             # Phase 4: 检查增强信号（后续实现）
 
@@ -459,6 +578,8 @@ class MacdCross(Strategy):
                 self.stop_loss_price = self.highest_price * (1 + self.trailing_stop_pct)
                 if self.debug_loss_protection:
                     print(f"[跟踪止损] Bar {self.current_bar}: 开空仓 入场={self.entry_price:.2f} 初始止损={self.stop_loss_price:.2f}")
+            # 记录建仓bar
+            self.entry_bar = self.current_bar
 
     def _close_position_with_loss_tracking(self):
         """
@@ -468,6 +589,8 @@ class MacdCross(Strategy):
         """
         if not self.enable_loss_protection or not self.position:
             self.position.close()
+            # 重置建仓bar
+            self.entry_bar = -1
             return
 
         # 计算盈亏
@@ -478,6 +601,8 @@ class MacdCross(Strategy):
         # 平仓
         self.position.close()
         self.total_trades += 1
+        # 重置建仓bar
+        self.entry_bar = -1
 
         # 计算实际盈亏比例
         pnl_pct = 0
