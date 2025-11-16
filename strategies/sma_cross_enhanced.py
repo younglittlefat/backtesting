@@ -195,31 +195,66 @@ class SmaCrossEnhanced(BaseEnhancedStrategy):
                     print(f"[止损保护] Bar {self.current_bar}: 暂停期内 (暂停至Bar {self.paused_until_bar})")
                 return  # 暂停期内不交易
 
-        # 短期均线上穿长期均线 -> 买入信号（金叉）
-        if crossover(self.sma1, self.sma2):
-            # 应用过滤器
+        # 计算基础交叉信号
+        buy_cross = crossover(self.sma1, self.sma2)   # 金叉
+        sell_cross = crossover(self.sma2, self.sma1)  # 死叉
+
+        # 持续确认逻辑（与 KAMA 一致的修复思路）：
+        # - 启用且 confirm_bars>1 时，要求：
+        #   (a) 最近 n 根均满足 短均线 > 长均线；
+        #   (b) 最近 n 根内出现过一次“短均线从下到上穿越长均线”的事件。
+        # - 否则沿用“金叉当根入场”。
+        entry_signal = False
+        if self.enable_confirm_filter and self.confirm_bars and self.confirm_bars > 1:
+            n = int(self.confirm_bars)
+            # 条件(a)：最近 n 根短均线持续在长均线上方
+            consecutive_above = True
+            for i in range(1, n + 1):
+                s = self.sma1[-i]
+                l = self.sma2[-i]
+                if pd.isna(s) or pd.isna(l) or s <= l:
+                    consecutive_above = False
+                    break
+            # 条件(b)：最近 n 根内出现过一次“上穿”
+            recent_cross = False
+            for i in range(1, n + 1):
+                prev_s = self.sma1[-(i + 1)]
+                prev_l = self.sma2[-(i + 1)]
+                cur_s = self.sma1[-i]
+                cur_l = self.sma2[-i]
+                if (not pd.isna(prev_s) and not pd.isna(prev_l) and
+                        not pd.isna(cur_s) and not pd.isna(cur_l) and
+                        prev_s <= prev_l and cur_s > cur_l):
+                    recent_cross = True
+                    break
+            entry_signal = consecutive_above and recent_cross
+        else:
+            entry_signal = buy_cross
+
+        # 入场：在“确认完成”的当根再应用其它过滤器并下单
+        if entry_signal:
             if self._apply_filters('buy'):
-                # 如果有空头仓位，先平仓
-                if self.position:
-                    self._close_position_with_loss_tracking()
-                # 买入 - 使用90%的可用资金，避免保证金不足
-                self.buy(size=0.90)
-                # 记录入场价格
-                if self.enable_loss_protection:
-                    self.entry_price = self.data.Close[-1]
+                # 仅当当前为空仓或持有空头时才执行多头入场；若为空头则先反手平仓
+                if (not self.position) or self.position.is_short:
+                    if self.position and self.position.is_short:
+                        self._close_position_with_loss_tracking()
+                    self.buy(size=0.90)  # 使用90%资金，避免保证金不足
+                    if self.enable_loss_protection:
+                        self.entry_price = self.data.Close[-1]
 
         # 短期均线下穿长期均线 -> 卖出信号（死叉）
-        elif crossover(self.sma2, self.sma1):
+        elif sell_cross:
             # 应用过滤器
             if self._apply_filters('sell'):
-                # 如果有多头仓位，先平仓
-                if self.position:
-                    self._close_position_with_loss_tracking()
-                # 卖出（做空）- 使用90%的可用资金
-                self.sell(size=0.90)
-                # 记录入场价格
-                if self.enable_loss_protection:
-                    self.entry_price = self.data.Close[-1]
+                # 仅当当前为空仓或持有多头时才执行空头入场；若为多头则先反手平仓
+                if (not self.position) or self.position.is_long:
+                    if self.position and self.position.is_long:
+                        self._close_position_with_loss_tracking()
+                    # 卖出（做空）- 使用90%的可用资金
+                    self.sell(size=0.90)
+                    # 记录入场价格
+                    if self.enable_loss_protection:
+                        self.entry_price = self.data.Close[-1]
 
     def _close_position_with_loss_tracking(self):
         """

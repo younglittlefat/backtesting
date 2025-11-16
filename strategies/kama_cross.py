@@ -375,24 +375,65 @@ class KamaCrossStrategy(BaseEnhancedStrategy):
         # 卖出信号：价格从上方跌破KAMA线
         sell_signal = crossover(self.kama, self.data.Close)
 
-        # Phase 1: KAMA特有过滤器
+        # Phase 1: KAMA特有过滤器与基础有效性开关
         signal_valid = True
 
-        # 1. 效率比率过滤器
-        if self.enable_efficiency_filter and buy_signal:
-            current_er = self.efficiency_ratio[-1]
-            if pd.isna(current_er) or current_er < self.min_efficiency_ratio:
-                signal_valid = False
+        # 1) 效率比率过滤器
+        # 说明：当启用“持续确认”时，实际建仓通常发生在金叉之后的第N根K线上。
+        # 因此应在“触发入场”的当根重新检查过滤条件，而不是仅在发生金叉的当根检查。
+        if self.enable_efficiency_filter:
+            if buy_signal or self.enable_confirm_filter:
+                current_er = self.efficiency_ratio[-1]
+                if pd.isna(current_er) or current_er < self.min_efficiency_ratio:
+                    signal_valid = False
 
-        # 2. KAMA斜率确认过滤器
-        if self.enable_slope_confirmation and buy_signal:
-            current_slope = self.kama_slope[-1]
-            if pd.isna(current_slope) or current_slope <= 0:
-                signal_valid = False
+        # 2) KAMA斜率确认过滤器（同上，入场当根需满足条件）
+        if self.enable_slope_confirmation:
+            if buy_signal or self.enable_confirm_filter:
+                current_slope = self.kama_slope[-1]
+                if pd.isna(current_slope) or current_slope <= 0:
+                    signal_valid = False
 
-        # Phase 2: 通用过滤器集成
-        if signal_valid and buy_signal:
-            # 3. 价格斜率过滤器（使用收盘价作为"短均线"，KAMA作为"长均线"）
+        # -------------------------
+        # 持续确认逻辑（修复：原实现仅在金叉当根检查，导致 confirm_bars>1 永不入场）
+        # 现在定义“入场候选信号”为：
+        #   - 未启用持续确认：金叉当根
+        #   - 启用持续确认：过去 confirm_bars 根内发生过一次金叉，且最近 confirm_bars 根都满足 Close>KAMA
+        # 这样会在金叉后的第 confirm_bars 根才入场，符合“持续确认”的预期语义。
+        # -------------------------
+        entry_signal = False
+        if self.enable_confirm_filter and self.confirm_bars and self.confirm_bars > 1:
+            n = int(self.confirm_bars)
+            # 连续 n 根收盘价在 KAMA 之上（包含当前这根）
+            consecutive_above = True
+            for i in range(1, n + 1):
+                c = self.data.Close[-i]
+                k = self.kama[-i]
+                if pd.isna(c) or pd.isna(k) or c <= k:
+                    consecutive_above = False
+                    break
+            # 最近 n 根内是否出现过一次“上穿”（金叉）
+            recent_cross = False
+            # 检查[-n, -1]这 n 根内是否有一次从下到上
+            # 条件：上一根在下方，这一根在上方
+            for i in range(1, n + 1):
+                prev_c = self.data.Close[-(i + 1)]
+                prev_k = self.kama[-(i + 1)]
+                cur_c = self.data.Close[-i]
+                cur_k = self.kama[-i]
+                if (not pd.isna(prev_c) and not pd.isna(prev_k) and
+                        not pd.isna(cur_c) and not pd.isna(cur_k) and
+                        prev_c <= prev_k and cur_c > cur_k):
+                    recent_cross = True
+                    break
+            entry_signal = consecutive_above and recent_cross
+        else:
+            # 未启用持续确认或 confirm_bars<=1，沿用“金叉当根入场”
+            entry_signal = buy_signal
+
+        # Phase 2: 通用过滤器集成（入场当根检查）
+        if signal_valid and entry_signal:
+            # 3) 价格斜率过滤器（使用收盘价作为短均线，KAMA作为长均线）
             if self.slope_filter.enabled:
                 if not self.slope_filter.filter_signal(
                     self, 'buy',
@@ -401,27 +442,18 @@ class KamaCrossStrategy(BaseEnhancedStrategy):
                 ):
                     signal_valid = False
 
-            # 4. ADX趋势强度过滤器
+            # 4) ADX趋势强度过滤器
             if self.adx_filter.enabled:
                 if not self.adx_filter.filter_signal(self, 'buy'):
                     signal_valid = False
 
-            # 5. 成交量确认过滤器
+            # 5) 成交量确认过滤器
             if self.volume_filter.enabled:
                 if not self.volume_filter.filter_signal(self, 'buy'):
                     signal_valid = False
 
-            # 6. 持续确认过滤器（检查价格持续在KAMA上方）
-            if self.confirm_filter.enabled:
-                if not self.confirm_filter.filter_signal(
-                    self, 'buy',
-                    sma_short=self.data.Close,
-                    sma_long=self.kama
-                ):
-                    signal_valid = False
-
         # 执行交易决策
-        if buy_signal and signal_valid and not self.position:
+        if entry_signal and signal_valid and not self.position:
             self.buy()
             # 记录入场价格
             if self.enable_loss_protection:
@@ -499,6 +531,20 @@ class KamaCrossStrategy(BaseEnhancedStrategy):
             "min_slope_periods": {"type": "int", "default": 3, "range": [2, 10]},
         }
         return schema
+
+
+# Optimization configuration for Backtest.optimize()
+# Backtest runner will import these at module level instead of assuming n1/n2.
+# Keep the search space modest to avoid very long runs by default.
+OPTIMIZE_PARAMS = {
+    # KAMA core parameters
+    "kama_period": range(10, 31, 5),   # 10, 15, 20, 25, 30
+    "kama_fast": range(2, 7, 1),       # 2..6
+    "kama_slow": range(20, 61, 10),    # 20, 30, 40, 50, 60
+    # Strategy-specific filters can be toggled via CLI; we don't sweep them here by default.
+}
+# Constraints: fastest smoothing period must be strictly less than slowest.
+CONSTRAINTS = lambda p: (p.kama_fast < p.kama_slow)
 
 
 if __name__ == '__main__':

@@ -347,6 +347,12 @@ class MacdCross(Strategy):
         if not hasattr(self, 'current_bar'):
             self.current_bar = 0
         self.entry_bar = -1  # 建仓所在bar（用于最短持有期）
+        # 买入确认（多根）所需的状态（当 confirm_bars>1 时使用）
+        self._awaiting_buy_confirm = False
+        self._buy_confirm_count = 0
+        # 卖出确认（多根）所需的状态（当 confirm_bars_sell>1 时使用）
+        self._awaiting_sell_confirm = False
+        self._sell_confirm_count = 0
 
     def _apply_filters(self, signal_type):
         """
@@ -464,6 +470,87 @@ class MacdCross(Strategy):
         # 始终递增bar计数（供最短持有等使用）
         self.current_bar += 1
 
+        # 如果开启了买入多根确认（confirm_bars>1），在这里处理“延迟确认”的状态机：
+        # 逻辑：出现金叉当根不立即买入，而是要求连续 n 根 MACD>Signal，满足后再执行买入。
+        if self.enable_confirm_filter and int(self.confirm_bars) > 1:
+            if self._awaiting_buy_confirm:
+                # 在等待确认期间，若仍保持 MACD>Signal，则累计；否则取消等待
+                if self.macd_line[-1] > self.signal_line[-1]:
+                    self._buy_confirm_count += 1
+                else:
+                    # 失去上方关系，取消等待
+                    self._awaiting_buy_confirm = False
+                    self._buy_confirm_count = 0
+                # 到达确认根数，尝试执行买入（再次通过其余过滤器）
+                if self._awaiting_buy_confirm and self._buy_confirm_count >= int(self.confirm_bars):
+                    # 其余过滤器：ADX/量能/斜率、零轴、滞回
+                    if not self._apply_filters('buy'):
+                        # 未通过则放弃本次确认，等待下一次金叉再重新计数
+                        self._awaiting_buy_confirm = False
+                        self._buy_confirm_count = 0
+                    elif not self._zero_axis_ok('buy') or not self._hysteresis_ok('buy'):
+                        # 约束未通过，放弃确认
+                        self._awaiting_buy_confirm = False
+                        self._buy_confirm_count = 0
+                    else:
+                        # 确认通过：执行买入流程
+                        if self.position:
+                            self._close_position_with_loss_tracking()
+                        self.buy(size=0.90)
+                        if self.enable_loss_protection or self.enable_trailing_stop:
+                            self.entry_price = self.data.Close[-1]
+                        if self.enable_trailing_stop:
+                            self.highest_price = self.data.Close[-1]
+                            self.stop_loss_price = self.highest_price * (1 - self.trailing_stop_pct)
+                            if self.debug_loss_protection:
+                                print(f"[跟踪止损] Bar {self.current_bar}: 开多仓 入场={self.entry_price:.2f} 初始止损={self.stop_loss_price:.2f}")
+                        self.entry_bar = self.current_bar
+                        # 重置状态
+                        self._awaiting_buy_confirm = False
+                        self._buy_confirm_count = 0
+                        # 本bar已完成交易，直接返回
+                        return
+        # 如果开启了卖出多根确认（confirm_bars_sell>1），在这里处理“延迟确认”的状态机：
+        # 逻辑：出现死叉当根不立即卖出，而是要求连续 n 根 MACD<Signal，满足后再执行卖出。
+        if int(self.confirm_bars_sell) > 1:
+            if self._awaiting_sell_confirm:
+                if self.macd_line[-1] < self.signal_line[-1]:
+                    self._sell_confirm_count += 1
+                else:
+                    # 失去下方关系，取消等待
+                    self._awaiting_sell_confirm = False
+                    self._sell_confirm_count = 0
+                # 到达确认根数，尝试执行卖出（再次通过其余过滤器）
+                if self._awaiting_sell_confirm and self._sell_confirm_count >= int(self.confirm_bars_sell):
+                    # 若持有仓位，先检查最短持有期
+                    if self.position and not self._min_hold_ok_to_exit():
+                        # 继续等待，直到满足持有期或形态失效
+                        return
+                    # 其余过滤器：ADX/量能/斜率、零轴、滞回
+                    if not self._apply_filters('sell'):
+                        self._awaiting_sell_confirm = False
+                        self._sell_confirm_count = 0
+                    elif not self._zero_axis_ok('sell') or not self._hysteresis_ok('sell'):
+                        self._awaiting_sell_confirm = False
+                        self._sell_confirm_count = 0
+                    else:
+                        # 执行卖出流程（可平多并开空）
+                        if self.position:
+                            self._close_position_with_loss_tracking()
+                        self.sell(size=0.90)
+                        if self.enable_loss_protection or self.enable_trailing_stop:
+                            self.entry_price = self.data.Close[-1]
+                        if self.enable_trailing_stop:
+                            self.highest_price = self.data.Close[-1]
+                            self.stop_loss_price = self.highest_price * (1 + self.trailing_stop_pct)
+                            if self.debug_loss_protection:
+                                print(f"[跟踪止损] Bar {self.current_bar}: 开空仓 入场={self.entry_price:.2f} 初始止损={self.stop_loss_price:.2f}")
+                        self.entry_bar = self.current_bar
+                        # 重置状态
+                        self._awaiting_sell_confirm = False
+                        self._sell_confirm_count = 0
+                        return
+
         # 连续止损保护：检查是否在暂停期
         if self.enable_loss_protection:
             # 检查是否在暂停期 - 添加随机采样日志（5%概率）
@@ -513,7 +600,13 @@ class MacdCross(Strategy):
 
         # MACD金叉 - 买入信号
         if crossover(self.macd_line, self.signal_line):
-            # Phase 2: 应用过滤器
+            # 如开启多根确认（confirm_bars>1），进入等待状态，不立即买入
+            if self.enable_confirm_filter and int(self.confirm_bars) > 1:
+                self._awaiting_buy_confirm = True
+                # 第1根已满足（当前这根）
+                self._buy_confirm_count = 1
+                return
+            # Phase 2: 应用过滤器（单根确认或未启用确认过滤）
             if not self._apply_filters('buy'):
                 return  # 信号被过滤，不交易
 
@@ -546,6 +639,11 @@ class MacdCross(Strategy):
 
         # MACD死叉 - 卖出信号
         elif crossover(self.signal_line, self.macd_line):
+            # 如开启卖出多根确认（confirm_bars_sell>1），进入等待状态，不立即卖出
+            if int(self.confirm_bars_sell) > 1:
+                self._awaiting_sell_confirm = True
+                self._sell_confirm_count = 1
+                return
             # Phase 2: 应用过滤器
             if not self._apply_filters('sell'):
                 return  # 信号被过滤，不交易

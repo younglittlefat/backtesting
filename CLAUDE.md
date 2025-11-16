@@ -90,7 +90,7 @@ Backtesting.py 是一个用于回测交易策略的 Python 库。它提供了一
 ### KAMA（`kama_cross`）
 - 纯基线（默认全关/不生效）
   - Phase 1 特有开关：`enable_efficiency_filter=False`、`enable_slope_confirmation=False`
-  - 通用过滤器：`enable_slope_filter=False`、`enable_adx_filter=False`、`enable_volume_filter=False`、`enable_confirm_filter=False`、`confirm_bars=0`
+  - 通用过滤器：`enable-slope-filter=False`、`enable-adx-filter=False`、`enable-volume-filter=False`、`enable-confirm-filter=False`、`confirm-bars=0`
   - 风控：`enable_loss_protection=False`
 - 运行命令（不优化）
   ```
