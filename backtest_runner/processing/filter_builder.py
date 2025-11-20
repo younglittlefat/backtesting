@@ -64,6 +64,11 @@ def _build_sma_filter_params(args: argparse.Namespace) -> Optional[Dict]:
         filter_params['max_consecutive_losses'] = args.max_consecutive_losses
         filter_params['pause_bars'] = args.pause_bars
 
+    if args.enable_atr_stop:
+        filter_params['enable_atr_stop'] = True
+        filter_params['atr_period'] = args.atr_period
+        filter_params['atr_multiplier'] = args.atr_multiplier
+
     return filter_params if filter_params else None
 
 
@@ -111,6 +116,12 @@ def _build_macd_filter_params(args: argparse.Namespace) -> Optional[Dict]:
     if args.enable_trailing_stop:
         filter_params['enable_trailing_stop'] = True
         filter_params['trailing_stop_pct'] = args.trailing_stop_pct
+
+    # ATR自适应止损参数
+    if args.enable_atr_stop:
+        filter_params['enable_atr_stop'] = True
+        filter_params['atr_period'] = args.atr_period
+        filter_params['atr_multiplier'] = args.atr_multiplier
 
     # Anti-Whipsaw（贴线反复抑制）与零轴约束
     if getattr(args, 'enable_hysteresis', False):
@@ -176,6 +187,17 @@ def _build_kama_filter_params(args: argparse.Namespace) -> Optional[Dict]:
 
     if args.debug_loss_protection:
         filter_params['debug_loss_protection'] = True
+
+    # KAMA跟踪止损参数（向后兼容）
+    if args.enable_trailing_stop:
+        filter_params['enable_trailing_stop'] = True
+        filter_params['trailing_stop_pct'] = args.trailing_stop_pct
+
+    # ATR 自适应止损参数
+    if args.enable_atr_stop:
+        filter_params['enable_atr_stop'] = True
+        filter_params['atr_period'] = args.atr_period
+        filter_params['atr_multiplier'] = args.atr_multiplier
 
     # KAMA策略特有参数（核心 & 特有过滤器）
     if getattr(args, 'kama_period', None) is not None:

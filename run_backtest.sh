@@ -61,6 +61,7 @@ ${YELLOW}过滤器选项（适用于所有策略）:${NC}
   --enable-confirm-filter      启用持续确认过滤器
   --enable-loss-protection     启用连续止损保护 ⭐⭐⭐强烈推荐（夏普比率+75%, 最大回撤-34%）
   --enable-trailing-stop       启用跟踪止损
+  --enable-atr-stop            启用ATR自适应跟踪止损 ⭐⭐⭐⭐推荐（波动性自适应，夏普比率+10-15%）
   --adx-threshold <value>      ADX阈值 (默认: 25)
   --adx-period <value>         ADX计算周期 (默认: 14)
   --volume-ratio <value>       成交量放大倍数 (默认: 1.2)
@@ -70,6 +71,8 @@ ${YELLOW}过滤器选项（适用于所有策略）:${NC}
   --max-consecutive-losses <value>  连续亏损次数阈值 (默认: 3，推荐值)
   --pause-bars <value>         暂停交易K线数 (默认: 10，推荐值)
   --trailing-stop-pct <value>  跟踪止损百分比 (默认: 0.05，即5%)
+  --atr-period <value>         ATR计算周期 (默认: 14，推荐值)
+  --atr-multiplier <value>     ATR止损距离倍数 (默认: 2.5，推荐2.0-3.0)
   --debug-loss-protection      启用止损保护调试日志
 
 ${YELLOW}Anti-Whipsaw（贴线反复抑制）:${NC}
@@ -116,6 +119,20 @@ ${YELLOW}示例:${NC}
   $0 --stock-list results/trend_etf_pool.csv -t sma_cross_enhanced -o \
      --enable-adx-filter --enable-volume-filter --enable-slope-filter \
      --enable-loss-protection --data-dir data/chinese_etf/daily
+
+  ${GREEN}# ATR自适应止损（推荐，波动性自适应，夏普比率+10-15%）${NC}
+  $0 --stock-list results/trend_etf_pool.csv -t kama_cross --enable-atr-stop \
+     --data-dir data/chinese_etf/daily
+
+  ${GREEN}# ATR自适应止损 + 自定义参数${NC}
+  $0 --stock-list results/trend_etf_pool.csv -t sma_cross_enhanced \
+     --enable-atr-stop --atr-period 14 --atr-multiplier 2.5 \
+     --data-dir data/chinese_etf/daily
+
+  ${GREEN}# 组合止损：ATR + 连续保护（最佳配置）${NC}
+  $0 --stock-list results/trend_etf_pool.csv -t sma_cross_enhanced -o \
+     --enable-atr-stop --enable-loss-protection \
+     --data-dir data/chinese_etf/daily
 
   ${GREEN}# MACD策略：基础回测${NC}
   $0 --stock-list results/trend_etf_pool.csv -t macd_cross \
@@ -385,6 +402,15 @@ main() {
     TRAILING_STOP_PCT_VALUE="0.05"
     TRAILING_STOP_PCT_ARGS=()
 
+    # ATR自适应止损相关
+    ENABLE_ATR_STOP_FLAG=0
+
+    ATR_PERIOD_VALUE="14"
+    ATR_PERIOD_ARGS=()
+
+    ATR_MULTIPLIER_VALUE="2.5"
+    ATR_MULTIPLIER_ARGS=()
+
     DEBUG_LOSS_PROTECTION_FLAG=0
 
     # Anti-Whipsaw 相关
@@ -574,6 +600,20 @@ main() {
             --trailing-stop-pct)
                 TRAILING_STOP_PCT_VALUE="$2"
                 TRAILING_STOP_PCT_ARGS=("--trailing-stop-pct" "$2")
+                shift 2
+                ;;
+            --enable-atr-stop)
+                ENABLE_ATR_STOP_FLAG=1
+                shift
+                ;;
+            --atr-period)
+                ATR_PERIOD_VALUE="$2"
+                ATR_PERIOD_ARGS=("--atr-period" "$2")
+                shift 2
+                ;;
+            --atr-multiplier)
+                ATR_MULTIPLIER_VALUE="$2"
+                ATR_MULTIPLIER_ARGS=("--atr-multiplier" "$2")
                 shift 2
                 ;;
             --debug-loss-protection)
@@ -954,6 +994,17 @@ main() {
     fi
     if [ ${#TRAILING_STOP_PCT_ARGS[@]} -gt 0 ]; then
         CMD+=("${TRAILING_STOP_PCT_ARGS[@]}")
+    fi
+
+    # 添加ATR自适应止损参数
+    if [ $ENABLE_ATR_STOP_FLAG -eq 1 ]; then
+        CMD+=("--enable-atr-stop")
+    fi
+    if [ ${#ATR_PERIOD_ARGS[@]} -gt 0 ]; then
+        CMD+=("${ATR_PERIOD_ARGS[@]}")
+    fi
+    if [ ${#ATR_MULTIPLIER_ARGS[@]} -gt 0 ]; then
+        CMD+=("${ATR_MULTIPLIER_ARGS[@]}")
     fi
 
     # 添加调试参数

@@ -31,6 +31,7 @@ from strategies.filters import (
     SlopeFilter, ADXFilter, VolumeFilter,
     ConfirmationFilter
 )
+from strategies.indicators import ATR
 
 
 def SMA(values, n):
@@ -138,6 +139,19 @@ class SmaCrossEnhanced(BaseEnhancedStrategy):
             confirm_bars=self.confirm_bars
         )
 
+        # ATR 自适应止损
+        self.atr_indicator = None
+        self.atr_trailing_stop = 0.0
+        self.atr_stop_hits = 0
+        if self.enable_atr_stop:
+            self.atr_indicator = self.I(
+                ATR,
+                self.data.High,
+                self.data.Low,
+                self.data.Close,
+                self.atr_period
+            )
+
         # 初始化止损保护状态（Phase 6新增）
         if self.enable_loss_protection:
             self.entry_price = 0  # 入场价格
@@ -195,6 +209,24 @@ class SmaCrossEnhanced(BaseEnhancedStrategy):
                     print(f"[止损保护] Bar {self.current_bar}: 暂停期内 (暂停至Bar {self.paused_until_bar})")
                 return  # 暂停期内不交易
 
+        current_price = self.data.Close[-1]
+
+        # ATR 自适应止损优先执行，避免与交叉信号冲突
+        if self.enable_atr_stop and self.position:
+            self._update_atr_trailing_stop(current_price)
+            stop_price = self.atr_trailing_stop
+            if stop_price:
+                if self.position.is_long and current_price <= stop_price:
+                    self.atr_stop_hits += 1
+                    self._close_position_with_loss_tracking()
+                    self.atr_trailing_stop = 0.0
+                    return
+                if self.position.is_short and current_price >= stop_price:
+                    self.atr_stop_hits += 1
+                    self._close_position_with_loss_tracking()
+                    self.atr_trailing_stop = 0.0
+                    return
+
         # 计算基础交叉信号
         buy_cross = crossover(self.sma1, self.sma2)   # 金叉
         sell_cross = crossover(self.sma2, self.sma1)  # 死叉
@@ -241,6 +273,9 @@ class SmaCrossEnhanced(BaseEnhancedStrategy):
                     self.buy(size=0.90)  # 使用90%资金，避免保证金不足
                     if self.enable_loss_protection:
                         self.entry_price = self.data.Close[-1]
+                    if self.enable_atr_stop:
+                        self.atr_trailing_stop = 0.0
+                        self._update_atr_trailing_stop(current_price)
 
         # 短期均线下穿长期均线 -> 卖出信号（死叉）
         elif sell_cross:
@@ -255,6 +290,9 @@ class SmaCrossEnhanced(BaseEnhancedStrategy):
                     # 记录入场价格
                     if self.enable_loss_protection:
                         self.entry_price = self.data.Close[-1]
+                    if self.enable_atr_stop:
+                        self.atr_trailing_stop = 0.0
+                        self._update_atr_trailing_stop(current_price)
 
     def _close_position_with_loss_tracking(self):
         """
@@ -262,8 +300,12 @@ class SmaCrossEnhanced(BaseEnhancedStrategy):
 
         如果启用了止损保护，会跟踪连续亏损次数，并在达到阈值后暂停交易
         """
-        if not self.enable_loss_protection or not self.position:
+        if not self.position:
+            return
+
+        if not self.enable_loss_protection:
             self.position.close()
+            self.atr_trailing_stop = 0.0
             return
 
         # 计算盈亏
@@ -308,6 +350,32 @@ class SmaCrossEnhanced(BaseEnhancedStrategy):
 
         # 重置入场价格
         self.entry_price = 0
+        # 清空 ATR 止损
+        self.atr_trailing_stop = 0.0
+
+    def _update_atr_trailing_stop(self, current_price: float):
+        """
+        根据当前仓位方向更新 ATR 动态止损线。
+        """
+        if not self.enable_atr_stop or self.atr_indicator is None or not self.position:
+            return
+
+        current_atr = self.atr_indicator[-1]
+        if pd.isna(current_atr):
+            return
+
+        if self.position.is_long:
+            stop_candidate = current_price - (current_atr * self.atr_multiplier)
+            if not self.atr_trailing_stop:
+                self.atr_trailing_stop = stop_candidate
+            else:
+                self.atr_trailing_stop = max(self.atr_trailing_stop, stop_candidate)
+        else:
+            stop_candidate = current_price + (current_atr * self.atr_multiplier)
+            if not self.atr_trailing_stop:
+                self.atr_trailing_stop = stop_candidate
+            else:
+                self.atr_trailing_stop = min(self.atr_trailing_stop, stop_candidate)
 
 
 # 参数优化配置 - 基础参数

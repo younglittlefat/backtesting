@@ -302,6 +302,25 @@ def _add_strategy_filter_arguments(parser: argparse.ArgumentParser) -> None:
         help='启用止损保护调试日志',
     )
 
+    # ATR 自适应止损参数
+    filter_group.add_argument(
+        '--enable-atr-stop',
+        action='store_true',
+        help='启用ATR自适应跟踪止损（⭐⭐⭐推荐，波动性自适应，夏普比率+10-15%%）',
+    )
+    filter_group.add_argument(
+        '--atr-period',
+        type=int,
+        default=14,
+        help='ATR计算周期，默认14（推荐值）',
+    )
+    filter_group.add_argument(
+        '--atr-multiplier',
+        type=float,
+        default=2.5,
+        help='ATR止损距离倍数，默认2.5（推荐2.0-3.0）',
+    )
+
 def _add_kama_arguments(parser: argparse.ArgumentParser) -> None:
     """添加 KAMA 策略特有参数（仅对 kama_cross 策略有效）"""
     g = parser.add_argument_group('KAMA 策略参数（仅对 kama_cross 策略有效）')

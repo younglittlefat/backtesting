@@ -49,6 +49,7 @@ from strategies.filters import (
     SlopeFilter, ADXFilter, VolumeFilter,
     ConfirmationFilter
 )
+from strategies.indicators import ATR
 
 
 def calculate_kama(prices, period=20, fastest_period=2, slowest_period=30):
@@ -339,6 +340,20 @@ class KamaCrossStrategy(BaseEnhancedStrategy):
             confirm_bars=self.confirm_bars
         )
 
+        # ATR自适应止损指标
+        self.atr_indicator = None
+        self.atr_trailing_stop = 0.0
+        self.atr_stop_hits = 0
+        if self.enable_atr_stop:
+            self.atr_indicator = self.I(
+                ATR,
+                self.data.High,
+                self.data.Low,
+                self.data.Close,
+                self.atr_period,
+                name='ATR'
+            )
+
         # 初始化止损保护状态（Phase 3功能）
         self.entry_price = 0  # 入场价格
         self.consecutive_losses = 0  # 连续亏损计数
@@ -364,6 +379,15 @@ class KamaCrossStrategy(BaseEnhancedStrategy):
         # 获取当前数据
         current_price = self.data.Close[-1]
         current_kama = self.kama[-1]
+
+        # ATR 自适应止损（优先执行，避免与主信号冲突）
+        if self.enable_atr_stop and self.position:
+            self._update_atr_trailing_stop(current_price)
+            if self.atr_trailing_stop and current_price <= self.atr_trailing_stop:
+                self.atr_stop_hits += 1
+                self._close_position_with_loss_tracking()
+                self.atr_trailing_stop = 0
+                return
 
         # 检查数据有效性
         if pd.isna(current_kama):
@@ -460,6 +484,9 @@ class KamaCrossStrategy(BaseEnhancedStrategy):
                 self.entry_price = self.data.Close[-1]
                 if self.debug_loss_protection:
                     print(f"[KAMA止损保护] Bar {self.current_bar}: 买入 @ {self.entry_price:.4f}")
+            if self.enable_atr_stop:
+                self.atr_trailing_stop = 0.0
+                self._update_atr_trailing_stop(current_price)
         elif sell_signal and self.position:
             self._close_position_with_loss_tracking()
 
@@ -503,6 +530,8 @@ class KamaCrossStrategy(BaseEnhancedStrategy):
 
         # 重置入场价格
         self.entry_price = 0
+        # 重置ATR止损
+        self.atr_trailing_stop = 0.0
 
     def get_runtime_config(self):
         """扩展运行时配置，添加KAMA特有参数"""
@@ -531,6 +560,23 @@ class KamaCrossStrategy(BaseEnhancedStrategy):
             "min_slope_periods": {"type": "int", "default": 3, "range": [2, 10]},
         }
         return schema
+
+    def _update_atr_trailing_stop(self, current_price: float) -> None:
+        """
+        根据当前ATR更新动态止损线，只允许止损线抬升，避免回退。
+        """
+        if not self.enable_atr_stop or self.atr_indicator is None:
+            return
+
+        current_atr = self.atr_indicator[-1]
+        if pd.isna(current_atr):
+            return
+
+        stop_candidate = current_price - (current_atr * self.atr_multiplier)
+        if not self.atr_trailing_stop:
+            self.atr_trailing_stop = stop_candidate
+        else:
+            self.atr_trailing_stop = max(self.atr_trailing_stop, stop_candidate)
 
 
 # Optimization configuration for Backtest.optimize()

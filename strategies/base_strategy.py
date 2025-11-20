@@ -127,6 +127,19 @@ class BaseEnhancedStrategy(Strategy, RuntimeConfigurable):
     max_consecutive_losses = 3
     pause_bars = 10
 
+    # ATR自适应止损开关（子类可覆盖）
+    enable_atr_stop = False
+
+    # ATR止损参数（子类可覆盖，基于需求文档推荐值）
+    atr_period = 14          # ATR计算周期，推荐14天
+    atr_multiplier = 2.5     # ATR倍数，推荐2.5（中期趋势跟踪）
+
+    # 传统跟踪止损开关（向后兼容）
+    enable_trailing_stop = False
+
+    # 传统跟踪止损参数（向后兼容）
+    trailing_stop_pct = 0.05  # 5%固定百分比
+
     def get_runtime_config(self) -> Dict[str, Any]:
         """
         默认实现：导出所有运行时参数
@@ -156,6 +169,13 @@ class BaseEnhancedStrategy(Strategy, RuntimeConfigurable):
                 "enable_loss_protection": self.enable_loss_protection,
                 "max_consecutive_losses": self.max_consecutive_losses,
                 "pause_bars": self.pause_bars,
+            },
+            "stop_loss": {
+                "enable_atr_stop": self.enable_atr_stop,
+                "atr_period": self.atr_period,
+                "atr_multiplier": self.atr_multiplier,
+                "enable_trailing_stop": self.enable_trailing_stop,
+                "trailing_stop_pct": self.trailing_stop_pct,
             }
         }
 
@@ -182,6 +202,13 @@ class BaseEnhancedStrategy(Strategy, RuntimeConfigurable):
                 "enable_loss_protection": {"type": "bool", "default": False},
                 "max_consecutive_losses": {"type": "int", "default": 3, "range": [1, 10]},
                 "pause_bars": {"type": "int", "default": 10, "range": [1, 50]},
+            },
+            "stop_loss": {
+                "enable_atr_stop": {"type": "bool", "default": False},
+                "atr_period": {"type": "int", "default": 14, "range": [7, 30]},
+                "atr_multiplier": {"type": "float", "default": 2.5, "range": [1.5, 5.0]},
+                "enable_trailing_stop": {"type": "bool", "default": False},
+                "trailing_stop_pct": {"type": "float", "default": 0.05, "range": [0.01, 0.20]},
             }
         }
 
@@ -219,6 +246,13 @@ def get_strategy_runtime_config(strategy_instance):
                 "enable_loss_protection": False,
                 "max_consecutive_losses": 3,
                 "pause_bars": 10,
+            },
+            "stop_loss": {
+                "enable_atr_stop": False,
+                "atr_period": 14,
+                "atr_multiplier": 2.5,
+                "enable_trailing_stop": False,
+                "trailing_stop_pct": 0.05,
             }
         }
 

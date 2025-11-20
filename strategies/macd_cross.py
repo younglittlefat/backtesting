@@ -28,6 +28,7 @@ if __name__ == '__main__':
     sys.path.insert(0, str(project_root))
 
 from strategies.filters import ADXFilter, VolumeFilter
+from strategies.indicators import ATR
 
 
 def MACD(close, fast_period=12, slow_period=26, signal_period=9):
@@ -255,6 +256,10 @@ class MacdCross(Strategy):
     # 跟踪止损
     enable_trailing_stop = False
     trailing_stop_pct = 0.05  # 默认5%
+    # ATR 自适应止损
+    enable_atr_stop = False
+    atr_period = 14
+    atr_multiplier = 2.5
 
     # 调试开关
     debug_loss_protection = False  # 启用止损保护调试日志
@@ -343,6 +348,18 @@ class MacdCross(Strategy):
                 self.entry_price = 0
                 self.current_bar = 0
                 self.total_trades = 0
+        # ATR 自适应止损初始化
+        self.atr_indicator = None
+        self.atr_trailing_stop = 0.0
+        self.atr_stop_hits = 0
+        if self.enable_atr_stop:
+            self.atr_indicator = self.I(
+                ATR,
+                self.data.High,
+                self.data.Low,
+                self.data.Close,
+                self.atr_period
+            )
         # Anti-Whipsaw 需要的计数器：统一初始化并在 next() 中始终递增
         if not hasattr(self, 'current_bar'):
             self.current_bar = 0
@@ -469,6 +486,27 @@ class MacdCross(Strategy):
         """
         # 始终递增bar计数（供最短持有等使用）
         self.current_bar += 1
+        current_price = self.data.Close[-1]
+
+        # ATR 自适应止损优先处理，避免和金叉死叉冲突
+        if self.enable_atr_stop and self.position:
+            self._update_atr_trailing_stop(current_price)
+            stop_price = self.atr_trailing_stop
+            if stop_price:
+                if self.position.is_long and current_price <= stop_price:
+                    if self.debug_loss_protection:
+                        print(f"[ATR止损] Bar {self.current_bar}: ⚠️ 多头触发 ATR 止损 {current_price:.2f} <= {stop_price:.2f}")
+                    self.atr_stop_hits += 1
+                    self._close_position_with_loss_tracking()
+                    self.atr_trailing_stop = 0.0
+                    return
+                if self.position.is_short and current_price >= stop_price:
+                    if self.debug_loss_protection:
+                        print(f"[ATR止损] Bar {self.current_bar}: ⚠️ 空头触发 ATR 止损 {current_price:.2f} >= {stop_price:.2f}")
+                    self.atr_stop_hits += 1
+                    self._close_position_with_loss_tracking()
+                    self.atr_trailing_stop = 0.0
+                    return
 
         # 如果开启了买入多根确认（confirm_bars>1），在这里处理“延迟确认”的状态机：
         # 逻辑：出现金叉当根不立即买入，而是要求连续 n 根 MACD>Signal，满足后再执行买入。
@@ -504,6 +542,9 @@ class MacdCross(Strategy):
                             self.stop_loss_price = self.highest_price * (1 - self.trailing_stop_pct)
                             if self.debug_loss_protection:
                                 print(f"[跟踪止损] Bar {self.current_bar}: 开多仓 入场={self.entry_price:.2f} 初始止损={self.stop_loss_price:.2f}")
+                        if self.enable_atr_stop:
+                            self.atr_trailing_stop = 0.0
+                            self._update_atr_trailing_stop(current_price)
                         self.entry_bar = self.current_bar
                         # 重置状态
                         self._awaiting_buy_confirm = False
@@ -545,6 +586,9 @@ class MacdCross(Strategy):
                             self.stop_loss_price = self.highest_price * (1 + self.trailing_stop_pct)
                             if self.debug_loss_protection:
                                 print(f"[跟踪止损] Bar {self.current_bar}: 开空仓 入场={self.entry_price:.2f} 初始止损={self.stop_loss_price:.2f}")
+                        if self.enable_atr_stop:
+                            self.atr_trailing_stop = 0.0
+                            self._update_atr_trailing_stop(current_price)
                         self.entry_bar = self.current_bar
                         # 重置状态
                         self._awaiting_sell_confirm = False
@@ -562,7 +606,6 @@ class MacdCross(Strategy):
 
         # 跟踪止损：检查持仓的止损触发
         if self.enable_trailing_stop and self.position:
-            current_price = self.data.Close[-1]
 
             # 做多仓位的跟踪止损
             if self.position.is_long:
@@ -634,6 +677,9 @@ class MacdCross(Strategy):
                 self.stop_loss_price = self.highest_price * (1 - self.trailing_stop_pct)
                 if self.debug_loss_protection:
                     print(f"[跟踪止损] Bar {self.current_bar}: 开多仓 入场={self.entry_price:.2f} 初始止损={self.stop_loss_price:.2f}")
+            if self.enable_atr_stop:
+                self.atr_trailing_stop = 0.0
+                self._update_atr_trailing_stop(current_price)
             # 记录建仓bar
             self.entry_bar = self.current_bar
 
@@ -676,6 +722,9 @@ class MacdCross(Strategy):
                 self.stop_loss_price = self.highest_price * (1 + self.trailing_stop_pct)
                 if self.debug_loss_protection:
                     print(f"[跟踪止损] Bar {self.current_bar}: 开空仓 入场={self.entry_price:.2f} 初始止损={self.stop_loss_price:.2f}")
+            if self.enable_atr_stop:
+                self.atr_trailing_stop = 0.0
+                self._update_atr_trailing_stop(current_price)
             # 记录建仓bar
             self.entry_bar = self.current_bar
 
@@ -685,10 +734,14 @@ class MacdCross(Strategy):
 
         如果启用了止损保护，会跟踪连续亏损次数，并在达到阈值后暂停交易
         """
-        if not self.enable_loss_protection or not self.position:
+        if not self.position:
+            return
+
+        if not self.enable_loss_protection:
             self.position.close()
             # 重置建仓bar
             self.entry_bar = -1
+            self.atr_trailing_stop = 0.0
             return
 
         # 计算盈亏
@@ -735,6 +788,32 @@ class MacdCross(Strategy):
 
         # 重置入场价格
         self.entry_price = 0
+        # 清空 ATR 止损
+        self.atr_trailing_stop = 0.0
+
+    def _update_atr_trailing_stop(self, current_price: float) -> None:
+        """
+        更新 ATR 动态止损线（多头只抬升，空头只下移）。
+        """
+        if not self.enable_atr_stop or self.atr_indicator is None or not self.position:
+            return
+
+        current_atr = self.atr_indicator[-1]
+        if pd.isna(current_atr):
+            return
+
+        if self.position.is_long:
+            stop_candidate = current_price - (current_atr * self.atr_multiplier)
+            if not self.atr_trailing_stop:
+                self.atr_trailing_stop = stop_candidate
+            else:
+                self.atr_trailing_stop = max(self.atr_trailing_stop, stop_candidate)
+        else:
+            stop_candidate = current_price + (current_atr * self.atr_multiplier)
+            if not self.atr_trailing_stop:
+                self.atr_trailing_stop = stop_candidate
+            else:
+                self.atr_trailing_stop = min(self.atr_trailing_stop, stop_candidate)
 
 
 # 参数优化配置 - Phase 1基础参数
