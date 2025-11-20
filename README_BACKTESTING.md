@@ -9,7 +9,7 @@ python scripts/fetch_tushare_data_v2.py --fetch_dividend --data_type fund
 python scripts/export_mysql_to_csv.py --data_type etf --output_dir data/chinese_etf --export_daily --export_basic --start_date 20211107 --end_date 20251112
 
 ## ETF标的预筛选
-python -m etf_selector.main --data-dir data/chinese_etf --output results/trend_etf_pool.csv --target-size 20 --min-turnover 100000 --min-volatility 0.15 --max-volatility 0.80 --adx-percentile 70 --momentum-min-positive
+python -m etf_selector.main --data-dir data/chinese_etf --output results/trend_etf_pool.csv --target-size 20 --min-turnover 50000 --momentum-min-positive
 
 ## 根据筛选标的回测得出最佳超参
 ### 策略1：双均线+止损
