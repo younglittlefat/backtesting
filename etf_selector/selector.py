@@ -16,10 +16,24 @@ import pandas as pd
 
 from .config import FilterConfig, IndustryKeywords
 from .data_loader import ETFDataLoader
-from .indicators import calculate_rolling_adx_mean, calculate_volatility, calculate_momentum
+from .indicators import (
+    calculate_rolling_adx_mean,
+    calculate_volatility,
+    calculate_momentum,
+    calculate_excess_return,
+    calculate_trend_r2,
+    calculate_volume_trend,
+)
 from .backtest_engine import calculate_backtest_metrics
 from .unbiased_indicators import calculate_all_unbiased_indicators
-from .scoring import UnbiasedScorer, ScoringWeights, calculate_etf_scores
+from .scoring import (
+    UnbiasedScorer,
+    ScoringWeights,
+    calculate_etf_scores,
+    LegacyUnbiasedScorer,
+    LegacyScoringWeights,
+    calculate_legacy_etf_scores
+)
 
 
 class TrendETFSelector:
@@ -232,6 +246,30 @@ class TrendETFSelector:
 
         metrics_list = []
         basic_info = self.data_loader.load_basic_info(fund_type=None)  # 加载全部以获取名称
+        benchmark_close = None
+
+        if self.config.enable_unbiased_scoring and self.config.benchmark_ts_code:
+            try:
+                benchmark_data = self.data_loader.load_etf_daily(
+                    self.config.benchmark_ts_code,
+                    start_date=start_date,
+                    end_date=end_date,
+                    use_adj=True
+                )
+                if 'adj_close' in benchmark_data.columns:
+                    benchmark_close = benchmark_data['adj_close']
+                elif 'close' in benchmark_data.columns:
+                    benchmark_close = benchmark_data['close']
+            except Exception as e:
+                if verbose:
+                    warnings.warn(f"加载基准 {self.config.benchmark_ts_code} 数据失败，超额收益将跳过: {e}")
+                benchmark_close = None
+
+        def combine_trend_quality(values: List[float]) -> float:
+            valid_values = [v for v in values if not (pd.isna(v) or np.isnan(v))]
+            if len(valid_values) == 0:
+                return np.nan
+            return float(np.mean(valid_values))
 
         for i, ts_code in enumerate(etf_codes):
             if verbose and (i + 1) % 100 == 0:
@@ -242,11 +280,15 @@ class TrendETFSelector:
                 data = self.data_loader.load_etf_daily(
                     ts_code, start_date=start_date, end_date=end_date, use_adj=True
                 )
+                price_series = data['adj_close']
 
                 # 数据长度检查（需要足够的数据计算指标）
                 min_data_length = max(
                     self.config.ma_long + 10,  # 双均线需要的最小长度
                     self.config.adx_period + self.config.adx_lookback_days // 4,  # ADX需要的最小长度
+                    self.config.trend_quality_window + 5,
+                    self.config.excess_return_long_window + 5,
+                    self.config.volume_long_window + 5,
                     100  # 至少100天
                 )
 
@@ -312,6 +354,32 @@ class TrendETFSelector:
                             'liquidity_score': np.nan
                         }
 
+                # 6. 相对强弱与趋势质量
+                excess_return_20d = calculate_excess_return(
+                    price_series,
+                    benchmark_close,
+                    period=self.config.excess_return_short_window
+                )
+                excess_return_60d = calculate_excess_return(
+                    price_series,
+                    benchmark_close,
+                    period=self.config.excess_return_long_window
+                )
+                trend_quality_r2 = calculate_trend_r2(
+                    price_series,
+                    window=self.config.trend_quality_window
+                )
+                volume_trend = calculate_volume_trend(
+                    data['volume'],
+                    short_window=self.config.volume_short_window,
+                    long_window=self.config.volume_long_window
+                )
+                trend_quality = combine_trend_quality([
+                    trend_quality_r2,
+                    unbiased_indicators.get('trend_consistency', np.nan),
+                    unbiased_indicators.get('price_efficiency', np.nan)
+                ])
+
                 # 应用筛选条件
                 # 波动率范围检查（可选）
                 if not self.config.skip_stage2_range_filtering:
@@ -344,6 +412,12 @@ class TrendETFSelector:
                     'trend_consistency': unbiased_indicators.get('trend_consistency', np.nan),
                     'price_efficiency': unbiased_indicators.get('price_efficiency', np.nan),
                     'liquidity_score': unbiased_indicators.get('liquidity_score', np.nan),
+                    # 新增优化后的评分输入
+                    'excess_return_20d': excess_return_20d,
+                    'excess_return_60d': excess_return_60d,
+                    'trend_quality': trend_quality,
+                    'trend_quality_r2': trend_quality_r2,
+                    'volume_trend': volume_trend,
                 })
 
             except Exception as e:
@@ -391,28 +465,65 @@ class TrendETFSelector:
         else:
             # 使用无偏评分系统排序
             if self.config.enable_unbiased_scoring:
-                # 创建评分器
-                scoring_weights = ScoringWeights(
-                    primary_weight=self.config.primary_weight,
-                    adx_weight=self.config.adx_score_weight,
-                    trend_consistency_weight=self.config.trend_consistency_weight,
-                    price_efficiency_weight=self.config.price_efficiency_weight,
-                    liquidity_weight=self.config.liquidity_score_weight,
-                    secondary_weight=self.config.secondary_weight,
-                    momentum_3m_weight=self.config.momentum_3m_score_weight,
-                    momentum_12m_weight=self.config.momentum_12m_score_weight
-                )
-                scorer = UnbiasedScorer(scoring_weights)
+                if self.config.use_optimized_score:
+                    # 创建评分器（优化版）
+                    scoring_weights = ScoringWeights(
+                        core_trend_weight=self.config.core_trend_weight,
+                        trend_quality_weight=self.config.trend_quality_weight,
+                        strength_weight=self.config.strength_weight,
+                        volume_weight=self.config.volume_weight,
+                        excess_return_20d_weight=self.config.excess_return_20d_weight,
+                        excess_return_60d_weight=self.config.excess_return_60d_weight
+                    )
+                    scorer = UnbiasedScorer(scoring_weights)
 
-                # 计算综合评分并排序
-                df = calculate_etf_scores(
-                    df,
-                    scorer=scorer,
-                    normalize_method='percentile'  # 使用百分位标准化
-                )
+                    df = calculate_etf_scores(
+                        df,
+                        scorer=scorer,
+                        normalize_method='percentile'
+                    )
 
-                if verbose:
-                    print(f"  🎯 启用无偏评分系统：主要指标{self.config.primary_weight:.0%} + 次要指标{self.config.secondary_weight:.0%}")
+                    if verbose:
+                        print(
+                            "  🎯 启用无偏评分系统（优化版）："
+                            f"超额收益{self.config.core_trend_weight:.0%} + "
+                            f"趋势质量{self.config.trend_quality_weight:.0%} + "
+                            f"ADX{self.config.strength_weight:.0%} + "
+                            f"资金动能{self.config.volume_weight:.0%}"
+                        )
+                else:
+                    # 创建评分器（旧版）
+                    scoring_weights = LegacyScoringWeights(
+                        primary_weight=self.config.primary_weight,
+                        secondary_weight=self.config.secondary_weight,
+                        adx_weight=self.config.adx_score_weight,
+                        trend_consistency_weight=self.config.trend_consistency_weight,
+                        price_efficiency_weight=self.config.price_efficiency_weight,
+                        liquidity_weight=self.config.liquidity_score_weight,
+                        momentum_3m_weight=self.config.momentum_3m_score_weight,
+                        momentum_12m_weight=self.config.momentum_12m_score_weight
+                    )
+                    scorer = LegacyUnbiasedScorer(scoring_weights)
+
+                    df = calculate_legacy_etf_scores(
+                        df,
+                        scorer=scorer,
+                        normalize_method='percentile'
+                    )
+
+                    if verbose:
+                        print(
+                            "  🎯 启用无偏评分系统（旧版）：主要"
+                            f"{self.config.primary_weight:.0%} + 动量{self.config.secondary_weight:.0%} "
+                            f"(ADX/TC/效率/流动性: "
+                            f"{self.config.adx_score_weight:.0%}/"
+                            f"{self.config.trend_consistency_weight:.0%}/"
+                            f"{self.config.price_efficiency_weight:.0%}/"
+                            f"{self.config.liquidity_score_weight:.0%}; "
+                            f"3M/12M动量: "
+                            f"{self.config.momentum_3m_score_weight:.0%}/"
+                            f"{self.config.momentum_12m_score_weight:.0%})"
+                        )
             else:
                 # 回退到原有的动量排序（仅当禁用无偏评分时）
                 sort_columns = ['adx_mean', 'momentum_12m', 'momentum_3m']
@@ -434,10 +545,38 @@ class TrendETFSelector:
 
                 # 显示无偏指标统计
                 if self.config.enable_unbiased_scoring and 'final_score' in df.columns:
-                    print(f"  📊 趋势一致性: {df['trend_consistency'].min():.2f} ~ {df['trend_consistency'].max():.2f}")
-                    print(f"  📊 价格效率: {df['price_efficiency'].min():.2f} ~ {df['price_efficiency'].max():.2f}")
-                    print(f"  📊 综合评分: {df['final_score'].min():.2f} ~ {df['final_score'].max():.2f}")
-                    print(f"  📊 已将动量指标权重降至{self.config.secondary_weight:.0%}，减少选择性偏差")
+                    if self.config.use_optimized_score:
+                        print(f"  📊 趋势一致性: {df['trend_consistency'].min():.2f} ~ {df['trend_consistency'].max():.2f}")
+                        print(f"  📊 价格效率: {df['price_efficiency'].min():.2f} ~ {df['price_efficiency'].max():.2f}")
+                        print(f"  📊 趋势质量(R^2融合): {df['trend_quality'].min():.2f} ~ {df['trend_quality'].max():.2f}")
+                        print(f"  📊 成交量趋势(20/60): {df['volume_trend'].min():.2f} ~ {df['volume_trend'].max():.2f}")
+                        print(f"  📊 超额收益20日: {df['excess_return_20d'].min():.2%} ~ {df['excess_return_20d'].max():.2%}")
+                        print(f"  📊 超额收益60日: {df['excess_return_60d'].min():.2%} ~ {df['excess_return_60d'].max():.2%}")
+                        print(f"  📊 综合评分: {df['final_score'].min():.2f} ~ {df['final_score'].max():.2f}")
+                        print(
+                            f"  📊 评分权重: 超额收益{self.config.core_trend_weight:.0%}/"
+                            f"质量{self.config.trend_quality_weight:.0%}/"
+                            f"ADX{self.config.strength_weight:.0%}/"
+                            f"资金{self.config.volume_weight:.0%}"
+                        )
+                    else:
+                        print(f"  📊 趋势一致性: {df['trend_consistency'].min():.2f} ~ {df['trend_consistency'].max():.2f}")
+                        print(f"  📊 价格效率: {df['price_efficiency'].min():.2f} ~ {df['price_efficiency'].max():.2f}")
+                        print(f"  📊 动量3M: {df['momentum_3m'].min():.2%} ~ {df['momentum_3m'].max():.2%}")
+                        print(f"  📊 动量12M: {df['momentum_12m'].min():.2%} ~ {df['momentum_12m'].max():.2%}")
+                        print(f"  📊 综合评分: {df['final_score'].min():.2f} ~ {df['final_score'].max():.2f}")
+                        print(
+                            f"  📊 评分权重: 主要{self.config.primary_weight:.0%}"
+                            f"(ADX/TC/效率/流动性:"
+                            f"{self.config.adx_score_weight:.0%}/"
+                            f"{self.config.trend_consistency_weight:.0%}/"
+                            f"{self.config.price_efficiency_weight:.0%}/"
+                            f"{self.config.liquidity_score_weight:.0%}) + "
+                            f"动量{self.config.secondary_weight:.0%}"
+                            f"(3M/12M:"
+                            f"{self.config.momentum_3m_score_weight:.0%}/"
+                            f"{self.config.momentum_12m_score_weight:.0%})"
+                        )
 
                 if use_ma_filter:
                     print(

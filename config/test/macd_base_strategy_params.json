@@ -18,8 +18,8 @@
   },
   "macd_cross": {
     "optimized": true,
-    "optimization_date": "2025-11-20 22:00:15",
-    "optimization_period": null,
+    "optimization_date": "2025-11-23 10:41:33",
+    "optimization_period": "20220102 至 20240102",
     "stock_pool": "全局稳健优化 (共20只标的)",
     "params": {
       "fast_period": 12,
@@ -27,26 +27,26 @@
       "slow_period": 26
     },
     "performance": {
-      "sharpe_ratio": 1.2210380044161813,
-      "annual_return": 47.38153151155393,
-      "max_drawdown": -9.907187946449614,
-      "return_pct": 60.15408026242801,
-      "median_sharpe": 0.946925626241097,
-      "avg_sharpe": 0.888686904416223,
+      "sharpe_ratio": 1.164080583715571,
+      "annual_return": 95.37098064682164,
+      "max_drawdown": -18.75245909508051,
+      "return_pct": 262.90269044355153,
+      "median_sharpe": 0.7278286979616871,
+      "avg_sharpe": 0.6929621021910221,
       "win_rate": 1.0,
-      "sharpe_std": 0.2456378477461811,
-      "robustness_score": 1.5441718354209577
+      "sharpe_std": 0.3017875509101211,
+      "robustness_score": 1.298403459664565
     },
-    "notes": "全局稳健参数优化 (综合评分=1.5442)\n参数: fast_period=12, signal_period=9, slow_period=26\n中位数夏普=0.9469, 平均夏普=0.8887, 胜率=100.0%, 稳定性(标准差)=0.2456",
+    "notes": "全局稳健参数优化 (综合评分=1.2984)\n参数: fast_period=12, signal_period=9, slow_period=26\n中位数夏普=0.7278, 平均夏普=0.6930, 胜率=100.0%, 稳定性(标准差)=0.3018",
     "runtime_config": {
       "filters": {
         "enable_slope_filter": false,
-        "enable_adx_filter": true,
+        "enable_adx_filter": false,
         "enable_volume_filter": false,
-        "enable_confirm_filter": false,
+        "enable_confirm_filter": true,
         "slope_lookback": 5,
         "adx_period": 14,
-        "adx_threshold": 25.0,
+        "adx_threshold": 25,
         "volume_period": 20,
         "volume_ratio": 1.2,
         "confirm_bars": 2

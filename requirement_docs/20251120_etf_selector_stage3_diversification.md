@@ -436,3 +436,15 @@ def calculate_optimized_score(df, benchmark_df):
 
 1.  **立刻做 (P0 & P2)**：把动量计算从“绝对”改为“**相对沪深300的超额**”，并把时间重心从 12M 移到 **2M-3M**。这能让你避开大盘下跌时的“假抗跌”，并抓住 A 股的轮动节奏。
 2.  **接着做 (P1)**：用 **$R^2$** 替代纯动量来衡量质量。这能大幅提高你持仓的夏普比率，让你拿得住单子。
+
+### 实施进展（2025-XX-XX，Q2落地）
+- 已将 `final_score` 重构为四个子项并上线代码（etf_selector）：核心趋势 40%（20/60 日超额收益，基准默认 510300.SH）、趋势质量 35%（60 日 log 价 R^2 融合趋势一致性/价格效率）、趋势强度 15%（ADX）、资金动能 10%（20/60 均量比）。标准化方式保持百分位，与 Q&A2 建议一致。
+- 新增指标：`calculate_excess_return()` 支持无基准回退；`calculate_trend_r2()` 回归 R^2；`calculate_volume_trend()` 量能斜率。配置新增 `benchmark_ts_code`、超额窗口、质量窗口、权重可配。
+- 实测命令（完成）：  
+  `python -m etf_selector.main --data-dir data/chinese_etf --output results/trend_etf_pool.csv --target-size 20 --min-turnover 50000 --momentum-min-positive`  
+  结果：stage1 364 → stage2 364 → 最终 20；平均相关性 0.406；`final_score` 范围 0.13~0.96，超额收益/质量/量能指标均打印在日志。
+- 单元覆盖：`pytest etf_selector/tests/test_scoring.py` 通过，包含 R^2 高分验证、权重合成、超额收益基准/回退校验。
+- CLI 切换新旧打分（便于对比）：  
+  - 默认旧公式：`python -m etf_selector.main --data-dir data/chinese_etf --output results/trend_etf_pool.csv --target-size 20 --min-turnover 50000 --momentum-min-positive`（legacy：ADX+趋势一致性+价格效率+流动性 + 3M/12M 动量）。  
+  - 启用新公式：在命令后加 `--score-mode optimized`（超额收益/趋势质量/ADX/资金动能权重 40/35/15/10）。  
+  区别：仅切换二级综合评分公式，其他流程（去重、分散、阈值）不变，输出/日志会体现所选模式。

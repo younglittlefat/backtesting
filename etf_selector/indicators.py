@@ -162,3 +162,90 @@ def calculate_rolling_adx_mean(
         adx_mean = adx.tail(window).mean()
 
     return float(adx_mean)
+
+
+def calculate_trend_r2(
+    close: pd.Series,
+    window: int = 60,
+    min_periods: Optional[int] = None
+) -> float:
+    """计算价格在指定窗口内对时间的回归R^2，衡量趋势的平滑程度。"""
+    if min_periods is None:
+        min_periods = int(window * 0.8)
+
+    if len(close) < min_periods:
+        return np.nan
+
+    window_close = close.dropna().tail(window)
+    if len(window_close) < min_periods:
+        return np.nan
+
+    log_prices = np.log(window_close.values)
+    x = np.arange(len(log_prices))
+
+    # 线性回归拟合
+    slope, intercept = np.polyfit(x, log_prices, 1)
+    fitted = slope * x + intercept
+
+    # 计算R^2
+    ss_res = np.sum((log_prices - fitted) ** 2)
+    ss_tot = np.sum((log_prices - np.mean(log_prices)) ** 2)
+    if ss_tot == 0:
+        return np.nan
+
+    r_squared = 1 - ss_res / ss_tot
+    return float(np.clip(r_squared, 0.0, 1.0))
+
+
+def calculate_excess_return(
+    close: pd.Series,
+    benchmark_close: Optional[pd.Series],
+    period: int
+) -> float:
+    """计算相对于基准的超额收益率。"""
+    if period <= 0:
+        return np.nan
+
+    def _simple_return(series: pd.Series) -> float:
+        series = series.dropna()
+        if len(series) <= period:
+            return np.nan
+        return float(series.iloc[-1] / series.iloc[-period - 1] - 1)
+
+    if benchmark_close is None:
+        return _simple_return(close)
+
+    aligned = pd.concat(
+        [close.rename('asset'), benchmark_close.rename('benchmark')],
+        axis=1,
+        join='inner'
+    ).dropna()
+
+    if len(aligned) <= period:
+        return _simple_return(close)
+
+    asset_return = aligned['asset'].iloc[-1] / aligned['asset'].iloc[-period - 1] - 1
+    benchmark_return = aligned['benchmark'].iloc[-1] / aligned['benchmark'].iloc[-period - 1] - 1
+    return float(asset_return - benchmark_return)
+
+
+def calculate_volume_trend(
+    volume: pd.Series,
+    short_window: int = 20,
+    long_window: int = 60,
+    min_periods: Optional[int] = None
+) -> float:
+    """计算成交量趋势（短均量与长均量之比）。"""
+    if min_periods is None:
+        min_periods = min(short_window, long_window)
+
+    if len(volume) < min_periods or long_window <= 0 or short_window <= 0:
+        return np.nan
+
+    short_mean = volume.tail(short_window).mean()
+    long_mean = volume.tail(long_window).mean()
+
+    if long_mean is None or long_mean <= 0:
+        return np.nan
+
+    return float(short_mean / long_mean)

@@ -42,23 +42,38 @@ class FilterConfig:
 
     # 新增：无偏指标配置（去偏差优化）
     enable_unbiased_scoring: bool = True  # 是否启用无偏评分系统
+    use_optimized_score: bool = False  # 是否启用优化后的综合评分（否则使用旧版）
+    benchmark_ts_code: str = '510300.SH'  # 基准指数或ETF，计算超额收益
     trend_consistency_window: int = 63  # 趋势一致性计算窗口（3个月）
     price_efficiency_window: int = 252  # 价格效率计算窗口（1年）
     liquidity_score_window: int = 30  # 流动性评分计算窗口
 
-    # 评分权重配置
-    primary_weight: float = 0.80  # 主要指标（无偏）总权重
-    secondary_weight: float = 0.20  # 次要指标（动量）总权重
+    # 相对强弱与趋势质量窗口
+    excess_return_short_window: int = 20  # 短期超额收益窗口
+    excess_return_long_window: int = 60  # 中期超额收益窗口
+    trend_quality_window: int = 60  # 趋势质量R^2窗口
+    volume_short_window: int = 20  # 成交量短均
+    volume_long_window: int = 60  # 成交量长均
 
-    # 主要指标权重分配（相对于primary_weight）
-    adx_score_weight: float = 0.40  # ADX趋势强度
-    trend_consistency_weight: float = 0.30  # 趋势一致性
-    price_efficiency_weight: float = 0.20  # 价格效率
-    liquidity_score_weight: float = 0.10  # 流动性评分
+    # 评分权重配置（Q&A2优化版）
+    core_trend_weight: float = 0.40  # 核心趋势（超额收益）权重
+    trend_quality_weight: float = 0.35  # 趋势质量权重
+    strength_weight: float = 0.15  # ADX趋势强度权重
+    volume_weight: float = 0.10  # 资金动能权重
 
-    # 次要指标权重分配（相对于secondary_weight）
-    momentum_3m_score_weight: float = 0.30  # 3个月动量
-    momentum_12m_score_weight: float = 0.70  # 12个月动量
+    # 核心趋势子权重
+    excess_return_20d_weight: float = 0.40  # 20日超额收益权重
+    excess_return_60d_weight: float = 0.60  # 60日超额收益权重
+
+    # 兼容旧版权重字段（已弃用，保留以确保旧脚本可运行）
+    primary_weight: float = 0.80
+    secondary_weight: float = 0.20
+    adx_score_weight: float = 0.40
+    trend_consistency_weight: float = 0.30
+    price_efficiency_weight: float = 0.20
+    liquidity_score_weight: float = 0.10
+    momentum_3m_score_weight: float = 0.30
+    momentum_12m_score_weight: float = 0.70
 
     # 数据路径
     data_dir: str = 'data/csv'

@@ -136,6 +136,10 @@ def parse_arguments():
         '--disable-unbiased-scoring', action='store_true',
         help='禁用无偏评分系统，回退到传统排序方式'
     )
+    parser.add_argument(
+        '--score-mode', type=str, choices=['optimized', 'legacy'], default='legacy',
+        help='综合评分模式：optimized（新公式）或 legacy（默认，旧版权重与动量配比）'
+    )
 
     # 去重参数
     parser.add_argument(
@@ -251,6 +255,8 @@ def load_config(config_path: str = None, args: argparse.Namespace = None) -> Fil
             config.enable_unbiased_scoring = False
         elif getattr(args, 'enable_unbiased_scoring', False):
             config.enable_unbiased_scoring = True
+        if hasattr(args, 'score_mode'):
+            config.use_optimized_score = args.score_mode == 'optimized'
 
         # 处理二级筛选模式
         if getattr(args, 'skip_stage2_filtering', False):
@@ -282,7 +288,8 @@ def print_config_summary(config: FilterConfig, args: argparse.Namespace):
     print(f"  🌊 波动率范围: {config.min_volatility*100:.0f}% - {config.max_volatility*100:.0f}%")
     print(f"  🚀 动量要求: {'仅要求>0' if config.momentum_min_positive else '排名筛选'}")
     print(f"  📏 双均线过滤: {'启用' if config.enable_ma_backtest_filter else '禁用'}")
-    print(f"  🎯 无偏评分系统: {'启用 (动量权重20%)' if config.enable_unbiased_scoring else '禁用 (传统排序)'}")
+    score_mode = "优化版（超额/质量/ADX/量能）" if config.use_optimized_score else "旧版（ADX+趋势一致性+效率+流动性+3M/12M动量）"
+    print(f"  🎯 无偏评分系统: {'启用 - ' + score_mode if config.enable_unbiased_scoring else '禁用 (传统排序)'}")
     print(f"  🔗 最大相关性: {args.max_correlation}")
     print(f"  📈 双均线参数: MA({config.ma_short}, {config.ma_long})")
     print()
