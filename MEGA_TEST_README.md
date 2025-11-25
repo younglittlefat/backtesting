@@ -1,8 +1,8 @@
-# MACD策略贪心筛选超参组合测试工具
+# MACD/KAMA策略贪心筛选超参组合测试工具
 
 ## 概述
 
-此工具集用于通过**贪心筛选策略**自动执行MACD策略的超参数组合测试，大幅减少实验次数（预计50-200个实验 vs 1024个完整因子设计）。
+此工具集用于通过**贪心筛选策略**自动执行MACD / KAMA策略的超参数组合测试，大幅减少实验次数（预计50-200个实验 vs 1024个完整因子设计）。
 
 **核心思想**: 递归剪枝，只保留"严格递增"的优秀组合。
 
@@ -14,7 +14,7 @@
 
 ## 快速参考
 
-### 三步开始
+### 三步开始（MACD版）
 
 ```bash
 # 1. 执行贪心筛选（预计4-67小时，50-200个实验）
@@ -29,12 +29,27 @@ python3 scripts/analyze_greedy_results.py \
   --all
 ```
 
+### 三步开始（KAMA版）
+
+```bash
+# 1. 执行贪心筛选（预计4-67小时，50-200个实验）
+./mega_test_kama_greedy.sh
+
+# 2. 仅收集结果（如果实验已完成，想重新生成CSV）
+./mega_test_kama_greedy.sh --collect-only results/mega_test_kama_greedy_<timestamp>
+
+# 3. 生成分析报告
+python3 scripts/analyze_greedy_results.py \
+  --output-dir results/mega_test_kama_greedy_<timestamp> \
+  --all
+```
+
 ### 核心算法
 
 | 阶段 | 测试数 | 筛选条件 | 输出 |
 |------|--------|---------|------|
 | **阶段0** | 1 | - | baseline.json |
-| **阶段1** | 10 | sharpe_mean > base **OR** sharpe_median > base | candidates_k1.json |
+| **阶段1** | 10 (MACD) / 9 (KAMA) | sharpe_mean > base **OR** sharpe_median > base | candidates_k1.json |
 | **阶段k** | C(m,k) | sharpe_mean > max(子组合) **AND** sharpe_median > max(子组合) | candidates_k{k}.json |
 | **终止** | - | 无候选通过严格递增条件 | 最优组合池 |
 
@@ -62,6 +77,14 @@ results/mega_test_macd_greedy_<timestamp>/
 - **文件**: `mega_test_macd_greedy.sh`
 - **功能**:
   - 递归执行阶段0到阶段k的实验
+  - 每个阶段结束后自动筛选优秀候选
+  - 生成阶段分析报告
+  - 支持中断续传
+
+### 1.1 KAMA贪心筛选主脚本
+- **文件**: `mega_test_kama_greedy.sh`
+- **功能**:
+  - 递归执行阶段0到阶段k的KAMA实验（阶段1测试9个开关组合）
   - 每个阶段结束后自动筛选优秀候选
   - 生成阶段分析报告
   - 支持中断续传
@@ -98,9 +121,9 @@ results/mega_test_macd_greedy_<timestamp>/
 
 ## 核心超参数
 
-测试的**10个核心超参数**：
+### MACD版（10个核心超参）
 
-### 布尔开关（8个）
+**布尔开关（8个）**
 1. **enable-hysteresis**: 自适应滞回阈值（抑制贴线反复）
 2. **enable-zero-axis**: 零轴约束（买在零上/卖在零下）
 3. **enable-confirm-filter**: 持续确认过滤器（启用时自动配合confirm-bars=2）
@@ -110,9 +133,22 @@ results/mega_test_macd_greedy_<timestamp>/
 7. **enable-volume-filter**: 成交量确认过滤器
 8. **enable-atr-stop**: ATR自适应跟踪止损 ⭐⭐推荐
 
-### 独立数值参数（2个）
+**独立数值参数（2个）**
 9. **confirm-bars-sell**: 卖出确认K线数（启用时固定值=2）
 10. **min-hold-bars**: 最短持有期（启用时固定值=3）
+
+### KAMA版（9个核心开关）
+
+**布尔开关（9个）**
+1. **enable-efficiency-filter**: 效率比率过滤（默认阈值0.3）
+2. **enable-slope-confirmation**: KAMA斜率确认（默认回溯3根）
+3. **enable-slope-filter**: 价格斜率过滤（默认回溯5）
+4. **enable-adx-filter**: ADX趋势强度过滤器
+5. **enable-volume-filter**: 成交量确认过滤器
+6. **enable-confirm-filter**: 持续确认过滤器（confirm-bars=2）
+7. **enable-loss-protection**: 连续止损保护
+8. **enable-trailing-stop**: 跟踪止损
+9. **enable-atr-stop**: ATR自适应跟踪止损
 
 ## 贪心筛选算法
 
@@ -285,11 +321,13 @@ EOF
 
 ```bash
 ./mega_test_macd_greedy.sh
+# 或
+./mega_test_kama_greedy.sh
 ```
 
 脚本会：
 1. **阶段0**: 测试Baseline（1个实验）
-2. **阶段1**: 测试10个单变量，筛选通过OR逻辑的候选
+2. **阶段1**: MACD版测试10个单变量，KAMA版测试9个单变量，筛选通过OR逻辑的候选
 3. **阶段k**: 从前一阶段候选生成k变量组合，筛选满足严格递增的候选
 4. **自动终止**: 当某阶段无候选通过筛选时停止
 
@@ -374,14 +412,14 @@ python3 scripts/analyze_greedy_results.py \
 
 ## 实验配置
 
-### 固定参数（所有实验共享）
+### 固定参数（所有实验共享，KAMA与MACD保持一致）
 
 ```bash
 # 数据配置
 POOL_PATH="results/trend_etf_pool_2019_2022_optimized.csv"
 DATA_DIR="data/chinese_etf/daily"
-START_DATE="20220102"
-END_DATE="20240102"
+START_DATE="20240102"
+END_DATE="20251120"
 
 # ADX过滤器参数（当enable-adx-filter启用时生效）
 ADX_PERIOD=14
@@ -413,11 +451,10 @@ ZERO_AXIS_MODE="symmetric"
 # 持续确认参数（当enable-confirm-filter启用时生效）
 CONFIRM_BARS=2
 
-# 卖出确认参数（当confirm-bars-sell在组合中时生效）
-CONFIRM_BARS_SELL_VALUE=2
-
-# 最短持有期（当min-hold-bars在组合中时生效）
-MIN_HOLD_BARS_VALUE=3
+# KAMA特有默认参数（当对应开关启用时生效）
+MIN_EFFICIENCY_RATIO=0.3
+MIN_SLOPE_PERIODS=3
+SLOPE_LOOKBACK=5
 ```
 
 ### 修改配置
@@ -532,71 +569,6 @@ ls results/mega_test_macd_greedy_<timestamp>/backtests/
   results/mega_test_macd_greedy_<timestamp>/backtests \
   results/mega_test_macd_greedy_<timestamp>/mega_test_greedy_summary.csv
 ```
-
-## 故障排除
-
-### 1. Python依赖缺失
-
-**错误**: `No module named 'pandas'`
-
-**解决**: 激活backtesting环境：
-```bash
-conda activate backtesting
-pip install pandas  # 如果还未安装
-```
-
-### 2. 脚本权限错误
-
-**错误**: `Permission denied`
-
-**解决**: 添加执行权限：
-```bash
-chmod +x mega_test_macd_greedy.sh
-chmod +x scripts/manage_candidates.py
-chmod +x scripts/analyze_greedy_results.py
-chmod +x verify_greedy_system.sh
-```
-
-### 3. 某个阶段无候选通过
-
-**现象**: 阶段k终止，日志显示"无候选通过筛选"
-
-**分析**: 这是正常的终止条件，说明：
-- 已找到最优的k-1变量组合
-- 继续增加变量无法带来性能提升
-
-**操作**: 查看阶段k-1的候选池，其中包含最优配置
-
-### 4. Baseline实验失败
-
-**错误**: 阶段0 Baseline实验失败
-
-**原因**:
-- 数据文件不存在
-- 配置路径错误
-- run_backtest.sh脚本问题
-
-**解决**:
-1. 检查 `POOL_PATH` 和 `DATA_DIR` 是否正确
-2. 手动运行一次Baseline实验验证配置：
-   ```bash
-   ./run_backtest.sh \
-     --stock-list results/trend_etf_pool_2019_2022_optimized.csv \
-     --strategy macd_cross \
-     --optimize \
-     --data-dir data/chinese_etf/daily
-   ```
-
-### 5. 结果收集失败
-
-**错误**: 无法找到`global_summary_*.csv`
-
-**原因**: 某些实验可能执行失败
-
-**解决**:
-- 检查具体实验目录的日志
-- 手动重新运行失败的实验
-- 确保所有实验都成功生成summary文件
 
 ## 后续分析建议
 

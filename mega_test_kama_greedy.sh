@@ -1,6 +1,6 @@
 #!/bin/bash
 ################################################################################
-# MACD策略贪心筛选超参组合测试脚本
+# KAMA策略贪心筛选超参组合测试脚本
 #
 # 功能：
 # - 通过递归剪枝大幅减少实验次数（预计50-200个实验 vs 1024个完整因子设计）
@@ -15,8 +15,8 @@
 # 4. 终止条件：某阶段无任何组合满足严格递增条件
 #
 # 用法：
-#   ./mega_test_macd_greedy.sh                    # 执行完整实验流程
-#   ./mega_test_macd_greedy.sh --collect-only <实验目录>  # 仅收集已有结果
+#   ./mega_test_kama_greedy.sh                    # 执行完整实验流程
+#   ./mega_test_kama_greedy.sh --collect-only <实验目录>  # 仅收集已有结果
 #
 # 作者: Claude Code
 # 日期: 2025-11-23
@@ -30,12 +30,12 @@
 EXPERIMENT_TYPE="mega_test_greedy"
 
 # 基础路径配置
-POOL_PATH="results/trend_etf_pool_2021_2023_optimized.csv"
+POOL_PATH="results/trend_etf_pool_2019_2022_optimized.csv"
 DATA_DIR="data/chinese_etf/daily"
-TEMP_PARAMS_PATH="config/test/macd_base_strategy_params.json"
-OUTPUT_BASE_DIR="results/mega_test_macd_greedy_$(date +%Y%m%d_%H%M%S)"
-START_DATE="20240102"
-END_DATE="20251120"
+TEMP_PARAMS_PATH="config/test/kama_base_strategy_params.json"
+OUTPUT_BASE_DIR="results/mega_test_kama_greedy_$(date +%Y%m%d_%H%M%S)"
+START_DATE="20220102"
+END_DATE="20240102"
 
 # 候选池和报告路径
 CANDIDATES_DIR="${OUTPUT_BASE_DIR}/candidates"
@@ -49,18 +49,17 @@ RESULT_CSV="${OUTPUT_BASE_DIR}/mega_test_greedy_summary.csv"
 METADATA_FILE="${OUTPUT_BASE_DIR}/.experiment_metadata.json"
 
 # ============================================================================
-# 定义10个核心超参开关
+# 定义核心超参开关（KAMA专用+通用过滤/止损）
 # ============================================================================
 declare -a CORE_OPTIONS=(
-    "enable-hysteresis"
-    "enable-zero-axis"
-    "enable-confirm-filter"
-    "confirm-bars-sell"
-    "min-hold-bars"
-    "enable-loss-protection"
-    "enable-trailing-stop"
+    "enable-efficiency-filter"
+    "enable-slope-confirmation"
+    "enable-slope-filter"
     "enable-adx-filter"
     "enable-volume-filter"
+    "enable-confirm-filter"
+    "enable-loss-protection"
+    "enable-trailing-stop"
     "enable-atr-stop"
 )
 
@@ -71,18 +70,15 @@ ADX_PERIOD=14
 ADX_THRESHOLD=25.0
 VOLUME_PERIOD=20
 VOLUME_RATIO=1.2
+SLOPE_LOOKBACK=5
+CONFIRM_BARS=2
 MAX_CONSECUTIVE_LOSSES=3
 PAUSE_BARS=10
 TRAILING_STOP_PCT=0.05
 ATR_PERIOD=14
 ATR_MULTIPLIER=2.5
-HYSTERESIS_MODE="std"
-HYSTERESIS_K=0.5
-HYSTERESIS_WINDOW=20
-ZERO_AXIS_MODE="symmetric"
-CONFIRM_BARS=2
-CONFIRM_BARS_SELL_VALUE=2
-MIN_HOLD_BARS_VALUE=3
+MIN_EFFICIENCY_RATIO=0.3
+MIN_SLOPE_PERIODS=3
 
 # ============================================================================
 # 颜色定义
@@ -137,7 +133,7 @@ create_metadata() {
   "experiment_version": "1.0",
   "created_at": "$(date -Iseconds)",
   "script": "$(basename $0)",
-  "description": "MACD策略贪心筛选超参组合测试",
+  "description": "KAMA策略贪心筛选超参组合测试",
   "config": {
     "pool_path": "$POOL_PATH",
     "data_dir": "$DATA_DIR",
@@ -155,7 +151,7 @@ EOF
 }
 
 # ============================================================================
-# 实验执行函数（与mega_test_macd_full.sh相同）
+# 实验执行函数（流程参考MACD贪心版）
 # ============================================================================
 
 run_single_experiment() {
@@ -169,7 +165,7 @@ run_single_experiment() {
     # 构建命令行
     local cmd="./run_backtest.sh"
     cmd="$cmd --stock-list \"$POOL_PATH\""
-    cmd="$cmd --strategy macd_cross"
+    cmd="$cmd --strategy kama_cross"
     cmd="$cmd --optimize"
     cmd="$cmd --data-dir \"$DATA_DIR\""
     cmd="$cmd --save-params \"$TEMP_PARAMS_PATH\""
@@ -180,13 +176,7 @@ run_single_experiment() {
     # 添加选项开关
     if [ -n "$options_str" ]; then
         for opt in $options_str; do
-            if [ "$opt" = "confirm-bars-sell" ]; then
-                cmd="$cmd --confirm-bars-sell $CONFIRM_BARS_SELL_VALUE"
-            elif [ "$opt" = "min-hold-bars" ]; then
-                cmd="$cmd --min-hold-bars $MIN_HOLD_BARS_VALUE"
-            else
-                cmd="$cmd --${opt}"
-            fi
+            cmd="$cmd --${opt}"
         done
     fi
 
@@ -197,6 +187,10 @@ run_single_experiment() {
 
     if [[ " $options_str " =~ " enable-volume-filter " ]]; then
         cmd="$cmd --volume-period $VOLUME_PERIOD --volume-ratio $VOLUME_RATIO"
+    fi
+
+    if [[ " $options_str " =~ " enable-slope-filter " ]]; then
+        cmd="$cmd --slope-lookback $SLOPE_LOOKBACK"
     fi
 
     if [[ " $options_str " =~ " enable-loss-protection " ]]; then
@@ -211,19 +205,16 @@ run_single_experiment() {
         cmd="$cmd --atr-period $ATR_PERIOD --atr-multiplier $ATR_MULTIPLIER"
     fi
 
-    if [[ " $options_str " =~ " enable-hysteresis " ]]; then
-        cmd="$cmd --hysteresis-mode $HYSTERESIS_MODE"
-        if [ "$HYSTERESIS_MODE" = "std" ]; then
-            cmd="$cmd --hysteresis-k $HYSTERESIS_K --hysteresis-window $HYSTERESIS_WINDOW"
-        fi
-    fi
-
-    if [[ " $options_str " =~ " enable-zero-axis " ]]; then
-        cmd="$cmd --zero-axis-mode $ZERO_AXIS_MODE"
-    fi
-
     if [[ " $options_str " =~ " enable-confirm-filter " ]]; then
         cmd="$cmd --confirm-bars $CONFIRM_BARS"
+    fi
+
+    if [[ " $options_str " =~ " enable-efficiency-filter " ]]; then
+        cmd="$cmd --min-efficiency-ratio $MIN_EFFICIENCY_RATIO"
+    fi
+
+    if [[ " $options_str " =~ " enable-slope-confirmation " ]]; then
+        cmd="$cmd --min-slope-periods $MIN_SLOPE_PERIODS"
     fi
 
     # 执行命令
@@ -245,7 +236,7 @@ run_single_experiment() {
 # ============================================================================
 
 run_stage0_baseline() {
-    print_stage "阶段0：Baseline测试（无任何选项的纯MACD策略）"
+    print_stage "阶段0：Baseline测试（无任何选项的纯KAMA策略）"
 
     local baseline_name="baseline"
     run_single_experiment "$baseline_name" ""
@@ -348,7 +339,7 @@ PYTHON_EXTRACT_BASELINE
 # ============================================================================
 
 run_stage1_single_var() {
-    print_stage "阶段1：单变量筛选（测试10个独立选项）"
+    print_stage "阶段1：单变量筛选（测试${#CORE_OPTIONS[@]}个独立选项）"
 
     local success_count=0
     local fail_count=0
@@ -864,7 +855,7 @@ main() {
             print_error "用法: $0 --collect-only <实验目录>"
             echo ""
             echo "示例:"
-            echo "  $0 --collect-only results/mega_test_macd_greedy_20251123_143022"
+            echo "  $0 --collect-only results/mega_test_kama_greedy_20251123_143022"
             exit 1
         fi
         collect_only_mode "$2"
@@ -872,7 +863,7 @@ main() {
     fi
 
     # 正常执行模式
-    print_header "MACD策略贪心筛选超参组合测试"
+    print_header "KAMA策略贪心筛选超参组合测试"
 
     # 创建目录
     mkdir -p "$OUTPUT_BASE_DIR"

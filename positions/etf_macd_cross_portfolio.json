@@ -1,41 +1,5 @@
 {
-  "cash": 66453.39202000001,
-  "positions": [
-    {
-      "ts_code": "520600.SH",
-      "shares": 3700,
-      "entry_price": 1.344,
-      "entry_date": "2025-11-11",
-      "cost": 4973.794559999999
-    },
-    {
-      "ts_code": "516160.SH",
-      "shares": 1600,
-      "entry_price": 3.039,
-      "entry_date": "2025-11-12",
-      "cost": 4863.372480000001
-    },
-    {
-      "ts_code": "159366.SZ",
-      "shares": 3200,
-      "entry_price": 1.545,
-      "entry_date": "2025-11-12",
-      "cost": 4944.988799999999
-    },
-    {
-      "ts_code": "561160.SH",
-      "shares": 4900,
-      "entry_price": 0.914,
-      "entry_date": "2025-11-13",
-      "cost": 4479.495720000001
-    },
-    {
-      "ts_code": "510210.SH",
-      "shares": 4400,
-      "entry_price": 1.005,
-      "entry_date": "2025-11-13",
-      "cost": 4422.8844
-    }
-  ],
-  "last_update": "2025-11-15 17:15:05"
+  "cash": 1000000.0,
+  "positions": [],
+  "last_update": "2025-11-24 23:40:43"
 }

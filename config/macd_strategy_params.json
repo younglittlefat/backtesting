@@ -18,8 +18,8 @@
   },
   "macd_cross": {
     "optimized": true,
-    "optimization_date": "2025-11-09 22:40:54",
-    "optimization_period": null,
+    "optimization_date": "2025-11-24 23:35:08",
+    "optimization_period": "20240102 至 20251120",
     "stock_pool": "全局稳健优化 (共20只标的)",
     "params": {
       "fast_period": 12,
@@ -27,26 +27,26 @@
       "slow_period": 26
     },
     "performance": {
-      "sharpe_ratio": 1.1723619910061105,
-      "annual_return": 145.3029637472361,
-      "max_drawdown": -21.75382985342654,
-      "return_pct": 64.62718531999133,
-      "median_sharpe": 0.7563067758695752,
-      "avg_sharpe": 0.7136500264899104,
-      "win_rate": 0.95,
-      "sharpe_std": 0.3084023473748941,
-      "robustness_score": 1.2827581107006667
+      "sharpe_ratio": 1.0512837545809035,
+      "annual_return": 109.83334390772742,
+      "max_drawdown": -28.10502933311181,
+      "return_pct": 282.3310542423283,
+      "median_sharpe": 0.8158855081885422,
+      "avg_sharpe": 0.754085992940305,
+      "win_rate": 1.0,
+      "sharpe_std": 0.22024672395771724,
+      "robustness_score": 1.5642162741926038
     },
-    "notes": "全局稳健参数优化 (综合评分=1.2828)\n参数: fast_period=12, signal_period=9, slow_period=26\n中位数夏普=0.7563, 平均夏普=0.7137, 胜率=95.0%, 稳定性(标准差)=0.3084",
+    "notes": "全局稳健参数优化 (综合评分=1.5642)\n参数: fast_period=12, signal_period=9, slow_period=26\n中位数夏普=0.8159, 平均夏普=0.7541, 胜率=100.0%, 稳定性(标准差)=0.2202",
     "runtime_config": {
       "filters": {
         "enable_slope_filter": false,
-        "enable_adx_filter": false,
+        "enable_adx_filter": true,
         "enable_volume_filter": false,
         "enable_confirm_filter": false,
         "slope_lookback": 5,
         "adx_period": 14,
-        "adx_threshold": 25,
+        "adx_threshold": 25.0,
         "volume_period": 20,
         "volume_ratio": 1.2,
         "confirm_bars": 2
@@ -55,17 +55,6 @@
         "enable_loss_protection": true,
         "max_consecutive_losses": 3,
         "pause_bars": 10
-      },
-      "anti_whipsaw": {
-        "enable_hysteresis": true,
-        "hysteresis_mode": "std",
-        "hysteresis_k": 0.5,
-        "hysteresis_window": 20,
-        "hysteresis_abs": 0.001,
-        "confirm_bars_sell": 2,
-        "min_hold_bars": 3,
-        "enable_zero_axis": true,
-        "zero_axis_mode": "symmetric"
       }
     }
   }

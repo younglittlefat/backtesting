@@ -18,29 +18,29 @@
   },
   "kama_cross": {
     "optimized": true,
-    "optimization_date": "2025-11-17 09:24:30",
-    "optimization_period": null,
-    "stock_pool": "全局稳健优化 (共5只标的)",
+    "optimization_date": "2025-11-23 23:35:03",
+    "optimization_period": "20220102 至 20240102",
+    "stock_pool": "全局稳健优化 (共20只标的)",
     "params": {
       "kama_fast": 2,
       "kama_period": 20,
       "kama_slow": 30
     },
     "performance": {
-      "sharpe_ratio": 0.8915721150408812,
-      "annual_return": 56.26044229707372,
-      "max_drawdown": -30.388019775567223,
-      "return_pct": 266.9643016426179,
-      "median_sharpe": 0.694560964128562,
-      "avg_sharpe": 0.7340547052897265,
-      "win_rate": 1.0,
-      "sharpe_std": 0.10423426662320172,
-      "robustness_score": 1.6551792302965138
+      "sharpe_ratio": 1.210739903376931,
+      "annual_return": 21.553430147717467,
+      "max_drawdown": -13.01614952812854,
+      "return_pct": 45.59392644344331,
+      "median_sharpe": 0.6159666823312979,
+      "avg_sharpe": 0.5593739628381418,
+      "win_rate": 0.9,
+      "sharpe_std": 0.36669080200172816,
+      "robustness_score": 1.097604228060665
     },
-    "notes": "全局稳健参数优化 (综合评分=1.6552)\n参数: kama_fast=2, kama_period=20, kama_slow=30\n中位数夏普=0.6946, 平均夏普=0.7341, 胜率=100.0%, 稳定性(标准差)=0.1042",
+    "notes": "全局稳健参数优化 (综合评分=1.0976)\n参数: kama_fast=2, kama_period=20, kama_slow=30\n中位数夏普=0.6160, 平均夏普=0.5594, 胜率=90.0%, 稳定性(标准差)=0.3667",
     "runtime_config": {
       "filters": {
-        "enable_slope_filter": false,
+        "enable_slope_filter": true,
         "enable_adx_filter": false,
         "enable_volume_filter": false,
         "enable_confirm_filter": false,
@@ -52,7 +52,7 @@
         "confirm_bars": 0
       },
       "loss_protection": {
-        "enable_loss_protection": false,
+        "enable_loss_protection": true,
         "max_consecutive_losses": 3,
         "pause_bars": 10
       }
