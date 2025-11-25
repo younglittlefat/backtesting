@@ -65,8 +65,28 @@ run_step "导出近两年ETF日线到 $EXPORT_DIR" \
     --data_type etf --output_dir "$EXPORT_DIR" --export_daily --export_basic \
     --start_date "$START_TWO_YEARS_AGO" --end_date "$TODAY"
 
-# 3) 生成最新信号（分析模式）
-run_step "生成最新交易信号（analyze）" \
+# 3) 生成KAMA信号（分析模式）
+run_step "生成KAMA交易信号（analyze）" \
+    ./generate_daily_signals.sh --analyze \
+    --strategy kama_cross \
+    --stock-list results/trend_etf_pool_2019_2021_optimized.csv \
+    --portfolio-file positions/etf_kama_cross_portfolio.json \
+    --load-params config/kama_strategy_params.json \
+    --data-dir data/chinese_etf/daily \
+    --end-date "$TODAY"
+
+# 4) 执行KAMA调仓（执行模式）
+run_step "执行KAMA调仓（execute）" \
+    ./generate_daily_signals.sh --execute \
+    --strategy kama_cross \
+    --stock-list results/trend_etf_pool_2019_2021_optimized.csv \
+    --portfolio-file positions/etf_kama_cross_portfolio.json \
+    --load-params config/kama_strategy_params.json \
+    --data-dir data/chinese_etf/daily \
+    --end-date "$TODAY"
+
+# 5) 生成MACD信号（分析模式）
+run_step "生成MACD交易信号（analyze）" \
     ./generate_daily_signals.sh --analyze \
     --strategy macd_cross \
     --stock-list results/trend_etf_pool_2019_2021_optimized.csv \
@@ -75,8 +95,8 @@ run_step "生成最新交易信号（analyze）" \
     --data-dir data/chinese_etf/daily \
     --end-date "$TODAY"
 
-# 4) 执行调仓（执行模式）
-run_step "执行今日调仓（execute）" \
+# 6) 执行MACD调仓（执行模式）
+run_step "执行MACD调仓（execute）" \
     ./generate_daily_signals.sh --execute \
     --strategy macd_cross \
     --stock-list results/trend_etf_pool_2019_2021_optimized.csv \
@@ -85,7 +105,7 @@ run_step "执行今日调仓（execute）" \
     --data-dir data/chinese_etf/daily \
     --end-date "$TODAY"
 
-# 5) 发送飞书通知（包含持仓与调仓摘要，必须带关键词“肥叔叔的交易”）
+# 7) 发送飞书通知（包含持仓与调仓摘要，必须带关键词“肥叔叔的交易”）
 FEISHU_WEBHOOK="https://open.feishu.cn/open-apis/bot/v2/hook/9e035bdf-0d61-4620-98ea-b915168f3c24"
 log INFO "开始: 发送飞书通知"
 export LOG_FILE FEISHU_WEBHOOK
@@ -114,12 +134,13 @@ if not log_path.exists():
     raise SystemExit(f"日志不存在: {log_path}")
 
 content = log_path.read_text(encoding="utf-8", errors="ignore")
+import re  # 需在使用前导入
+# 去除ANSI颜色码，便于正则提取
+content_clean = re.sub(r"\x1b\[[0-9;]*m", "", content)
 today_str = datetime.now().strftime("%Y-%m-%d %H:%M:%S (Asia/Shanghai)")
 
-import re
-
 def find(pattern: str, default: str = "") -> str:
-    m = re.search(pattern, content)
+    m = re.search(pattern, content_clean)
     return m.group(1).strip() if m else default
 
 latest_price = find(r"最新价格日期:\s*([^\n]+)", "未知")
@@ -131,8 +152,20 @@ buy_warn = find(r"(买入信号数量（[^）]+）[^\n]*)", "")
 sell_count = find(r"卖出操作\s*\((\d+)\)", "0")
 buy_count = find(r"买入操作\s*\((\d+)\)", "0")
 
-no_trade = "✅ 无需交易" in content
+no_trade = "✅ 无需交易" in content_clean
 trade_desc = "无需交易" if no_trade else f"买入 {buy_count} 笔 / 卖出 {sell_count} 笔"
+
+# 分策略买卖计数（提取每个策略最后一次日志块）
+def extract_strategy_counts(strategy: str):
+    matches = re.findall(rf"策略名称:\s*{strategy}(.*?)(?:\n策略名称:|\Z)", content_clean, re.S)
+    if not matches:
+        return None, None
+    block = matches[-1]
+    buy_m = re.search(r"买入操作\s*\((\d+)\)", block)
+    sell_m = re.search(r"卖出操作\s*\((\d+)\)", block)
+    buy = int(buy_m.group(1)) if buy_m else (0 if "✅ 无需交易" in block else None)
+    sell = int(sell_m.group(1)) if sell_m else (0 if "✅ 无需交易" in block else None)
+    return buy, sell
 
 message_lines = [
     "【肥叔叔的交易】每日信号",
@@ -144,6 +177,15 @@ message_lines = [
 
 if buy_warn:
     message_lines.append(f"备注: {buy_warn}")
+
+# 附加策略分项
+for strategy in ["kama_cross", "macd_cross"]:
+    buy_cnt, sell_cnt = extract_strategy_counts(strategy)
+    if buy_cnt is not None or sell_cnt is not None:
+        message_lines.append(
+            f"{strategy.upper()}: 买入 {buy_cnt if buy_cnt is not None else '?'} 笔 / "
+            f"卖出 {sell_cnt if sell_cnt is not None else '?'} 笔 (详见日志)"
+        )
 
 message_lines.append(f"日志: {log_path}")
 message = "\n".join(message_lines)

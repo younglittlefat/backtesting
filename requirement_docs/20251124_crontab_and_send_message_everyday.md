@@ -63,6 +63,7 @@ if __name__ == "__main__":
 
 ## 完成情况
 - 已实现自动化脚本 `scripts/daily_cron_signals.sh`：按顺序执行“拉取当天ETF→清空并导出近两年数据→生成/执行MACD信号→精简飞书推送”，日志全量写入 `logs/`，推送包含关键词“肥叔叔的交易”且返回 code=0。
+- 已在同一日程中增加 KAMA 策略信号（kama_cross），并在飞书推送中附加分策略成交统计（KAMA_CROSS / MACD_CROSS 的买入/卖出笔数，来自日志最后一次记录）。
 - 已配置 crontab（用户 zijunliu）每天东八区 19:00 触发；曾做过临时分钟级测试验证 end-to-end。
 - 飞书推送已精简：仅包含时间、数据日/窗口、持仓概览、交易结论、必要备注和日志路径，避免长篇明细；完整明细仍保存在日志。
 - 提供连通性测试脚本 `scripts/test_feishu_webhook.py`，可快速验证 Webhook。

@@ -261,6 +261,12 @@ def save_best_params(
                 'slope_lookback', 'adx_period', 'adx_threshold',
                 'volume_period', 'volume_ratio', 'confirm_bars'
             ]
+            # KAMA策略特有过滤/确认参数需要一并落盘，否则 runtime_config 丢失
+            if strategy_name == 'kama_cross':
+                filter_param_names.extend([
+                    'enable_slope_confirmation', 'min_slope_periods',
+                    'enable_efficiency_filter', 'min_efficiency_ratio',
+                ])
 
             # 止损保护参数列表
             loss_protection_param_names = [

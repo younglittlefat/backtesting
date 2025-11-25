@@ -1,0 +1,65 @@
+{
+  "sma_cross": {
+    "optimized": false,
+    "optimization_date": null,
+    "optimization_period": null,
+    "stock_pool": null,
+    "params": {
+      "n1": 10,
+      "n2": 20
+    },
+    "performance": {
+      "sharpe_ratio": null,
+      "annual_return": null,
+      "max_drawdown": null,
+      "return_pct": null
+    },
+    "notes": "默认参数配置"
+  },
+  "kama_cross": {
+    "optimized": true,
+    "optimization_date": "2025-11-26 00:14:25",
+    "optimization_period": "20240102 至 20251120",
+    "stock_pool": "全局稳健优化 (共20只标的)",
+    "params": {
+      "kama_fast": 2,
+      "kama_period": 20,
+      "kama_slow": 30
+    },
+    "performance": {
+      "sharpe_ratio": 1.608435752676194,
+      "annual_return": 57.73361137477009,
+      "max_drawdown": -10.60107139974178,
+      "return_pct": 128.11226512983995,
+      "median_sharpe": 0.9705768485745647,
+      "avg_sharpe": 0.9528780632949884,
+      "win_rate": 1.0,
+      "sharpe_std": 0.27134375149190826,
+      "robustness_score": 1.4926228165218383
+    },
+    "notes": "全局稳健参数优化 (综合评分=1.4926)\n参数: kama_fast=2, kama_period=20, kama_slow=30\n中位数夏普=0.9706, 平均夏普=0.9529, 胜率=100.0%, 稳定性(标准差)=0.2713",
+    "runtime_config": {
+      "filters": {
+        "enable_slope_filter": true,
+        "enable_adx_filter": false,
+        "enable_volume_filter": false,
+        "enable_confirm_filter": false,
+        "slope_lookback": 5,
+        "adx_period": 14,
+        "adx_threshold": 25,
+        "volume_period": 20,
+        "volume_ratio": 1.2,
+        "confirm_bars": 0,
+        "enable_slope_confirmation": true,
+        "min_slope_periods": 3,
+        "enable_efficiency_filter": false,
+        "min_efficiency_ratio": 0.3
+      },
+      "loss_protection": {
+        "enable_loss_protection": false,
+        "max_consecutive_losses": 3,
+        "pause_bars": 10
+      }
+    }
+  }
+}
