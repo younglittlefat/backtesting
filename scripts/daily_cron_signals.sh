@@ -72,7 +72,7 @@ run_step "生成KAMA交易信号（analyze）" \
     --stock-list results/trend_etf_pool_2019_2021_optimized.csv \
     --portfolio-file positions/etf_kama_cross_portfolio.json \
     --load-params config/kama_strategy_params.json \
-    --data-dir data/chinese_etf/daily \
+    --data-dir data/online_chinese_etf/daily \
     --end-date "$TODAY"
 
 # 4) 执行KAMA调仓（执行模式）
@@ -82,7 +82,7 @@ run_step "执行KAMA调仓（execute）" \
     --stock-list results/trend_etf_pool_2019_2021_optimized.csv \
     --portfolio-file positions/etf_kama_cross_portfolio.json \
     --load-params config/kama_strategy_params.json \
-    --data-dir data/chinese_etf/daily \
+    --data-dir data/online_chinese_etf/daily \
     --end-date "$TODAY"
 
 # 5) 生成MACD信号（分析模式）
@@ -92,7 +92,7 @@ run_step "生成MACD交易信号（analyze）" \
     --stock-list results/trend_etf_pool_2019_2021_optimized.csv \
     --portfolio-file positions/etf_macd_cross_portfolio.json \
     --load-params config/macd_strategy_params.json \
-    --data-dir data/chinese_etf/daily \
+    --data-dir data/online_chinese_etf/daily \
     --end-date "$TODAY"
 
 # 6) 执行MACD调仓（执行模式）
@@ -102,7 +102,7 @@ run_step "执行MACD调仓（execute）" \
     --stock-list results/trend_etf_pool_2019_2021_optimized.csv \
     --portfolio-file positions/etf_macd_cross_portfolio.json \
     --load-params config/macd_strategy_params.json \
-    --data-dir data/chinese_etf/daily \
+    --data-dir data/online_chinese_etf/daily \
     --end-date "$TODAY"
 
 # 7) 发送飞书通知（包含持仓与调仓摘要，必须带关键词“肥叔叔的交易”）
@@ -148,24 +148,60 @@ lookback_start = find(r"Lookback起始:\s*([^\n]+)", "未知")
 cash_line = find(r"可用现金:\s*([^\n]+)", "未知")
 asset_line = find(r"总资产:\s*([^\n]+)", "")
 hold_count = find(r"持仓明细\s*\((\d+/\d+)\)", "?/?")
-buy_warn = find(r"(买入信号数量（[^）]+）[^\n]*)", "")
-sell_count = find(r"卖出操作\s*\((\d+)\)", "0")
-buy_count = find(r"买入操作\s*\((\d+)\)", "0")
 
-no_trade = "✅ 无需交易" in content_clean
-trade_desc = "无需交易" if no_trade else f"买入 {buy_count} 笔 / 卖出 {sell_count} 笔"
+# 提取策略执行块（execute模式的最后一次）
+def extract_strategy_block(strategy: str) -> str:
+    """提取指定策略的execute模式日志块"""
+    # 匹配 execute 模式的策略块
+    pattern = rf"工作模式:\s*execute.*?策略名称:\s*{strategy}(.*?)(?:执行完成！|$)"
+    matches = re.findall(pattern, content_clean, re.S)
+    return matches[-1] if matches else ""
 
-# 分策略买卖计数（提取每个策略最后一次日志块）
-def extract_strategy_counts(strategy: str):
-    matches = re.findall(rf"策略名称:\s*{strategy}(.*?)(?:\n策略名称:|\Z)", content_clean, re.S)
-    if not matches:
-        return None, None
-    block = matches[-1]
-    buy_m = re.search(r"买入操作\s*\((\d+)\)", block)
-    sell_m = re.search(r"卖出操作\s*\((\d+)\)", block)
-    buy = int(buy_m.group(1)) if buy_m else (0 if "✅ 无需交易" in block else None)
-    sell = int(sell_m.group(1)) if sell_m else (0 if "✅ 无需交易" in block else None)
-    return buy, sell
+def extract_trade_details(block: str, trade_type: str) -> list:
+    """从日志块中提取交易详情列表"""
+    trades = []
+    # 使用多行匹配提取交易详情
+    # 买入用"预计成本"，卖出用"预计收益"
+    if trade_type == "买入":
+        trade_pattern = r"\[(\d+)\]\s+(\d+\.\w+)\s*\n\s+操作:\s*买入\s*\n\s+价格:\s*([^\n]+)\s*\n\s+数量:\s*([^\n]+)\s*\n\s+预计成本:\s*([^\n]+)\s*\n\s+原因:\s*([^\n]+)"
+    else:
+        trade_pattern = r"\[(\d+)\]\s+(\d+\.\w+)\s*\n\s+操作:\s*卖出\s*\n\s+价格:\s*([^\n]+)\s*\n\s+数量:\s*([^\n]+)\s*\n\s+预计收益:\s*([^\n]+)\s*\n\s+原因:\s*([^\n]+)"
+
+    for m in re.finditer(trade_pattern, block):
+        trades.append({
+            "idx": m.group(1),
+            "code": m.group(2),
+            "action": trade_type,
+            "price": m.group(3).strip(),
+            "quantity": m.group(4).strip(),
+            "amount": m.group(5).strip(),
+            "reason": m.group(6).strip()
+        })
+    return trades
+
+def format_trade_detail(trade: dict) -> str:
+    """格式化单笔交易详情"""
+    return (
+        f"  [{trade['idx']}] {trade['code']}\n"
+        f"      {trade['action']} | {trade['price']} | {trade['quantity']}\n"
+        f"      金额: {trade['amount']}\n"
+        f"      原因: {trade['reason']}"
+    )
+
+# 先提取所有策略的交易，再汇总统计
+all_strategy_trades = {}
+for strategy in ["kama_cross", "macd_cross"]:
+    block = extract_strategy_block(strategy)
+    if block:
+        all_strategy_trades[strategy] = {
+            "buy": extract_trade_details(block, "买入"),
+            "sell": extract_trade_details(block, "卖出")
+        }
+
+# 计算所有策略的总买入/卖出笔数
+total_buy = sum(len(t["buy"]) for t in all_strategy_trades.values())
+total_sell = sum(len(t["sell"]) for t in all_strategy_trades.values())
+trade_desc = "无需交易" if (total_buy == 0 and total_sell == 0) else f"买入 {total_buy} 笔 / 卖出 {total_sell} 笔"
 
 message_lines = [
     "【肥叔叔的交易】每日信号",
@@ -175,17 +211,33 @@ message_lines = [
     f"今日交易: {trade_desc}",
 ]
 
-if buy_warn:
-    message_lines.append(f"备注: {buy_warn}")
-
-# 附加策略分项
+# 附加每个策略的详细交易信息
 for strategy in ["kama_cross", "macd_cross"]:
-    buy_cnt, sell_cnt = extract_strategy_counts(strategy)
-    if buy_cnt is not None or sell_cnt is not None:
-        message_lines.append(
-            f"{strategy.upper()}: 买入 {buy_cnt if buy_cnt is not None else '?'} 笔 / "
-            f"卖出 {sell_cnt if sell_cnt is not None else '?'} 笔 (详见日志)"
-        )
+    if strategy not in all_strategy_trades:
+        continue
+
+    trades = all_strategy_trades[strategy]
+    buy_trades = trades["buy"]
+    sell_trades = trades["sell"]
+
+    # 策略标题
+    strategy_name = strategy.upper().replace("_", " ")
+    message_lines.append(f"\n{'='*30}")
+    message_lines.append(f"{strategy_name}")
+    message_lines.append(f"{'='*30}")
+
+    if sell_trades:
+        message_lines.append(f"📉 卖出 ({len(sell_trades)}笔)")
+        for t in sell_trades:
+            message_lines.append(format_trade_detail(t))
+
+    if buy_trades:
+        message_lines.append(f"📈 买入 ({len(buy_trades)}笔)")
+        for t in buy_trades:
+            message_lines.append(format_trade_detail(t))
+
+    if not buy_trades and not sell_trades:
+        message_lines.append("✅ 无需交易")
 
 message_lines.append(f"日志: {log_path}")
 message = "\n".join(message_lines)

@@ -18,7 +18,7 @@
   },
   "macd_cross": {
     "optimized": true,
-    "optimization_date": "2025-11-24 23:35:08",
+    "optimization_date": "2025-11-26 21:58:58",
     "optimization_period": "20240102 至 20251120",
     "stock_pool": "全局稳健优化 (共20只标的)",
     "params": {
@@ -55,6 +55,26 @@
         "enable_loss_protection": true,
         "max_consecutive_losses": 3,
         "pause_bars": 10
+      },
+      "anti_whipsaw": {
+        "enable_hysteresis": false,
+        "hysteresis_mode": "std",
+        "hysteresis_k": 0.5,
+        "hysteresis_window": 20,
+        "hysteresis_abs": 0.001,
+        "confirm_bars_sell": 2,
+        "min_hold_bars": 0,
+        "enable_zero_axis": false,
+        "zero_axis_mode": "symmetric"
+      },
+      "trailing_stop": {
+        "enable_trailing_stop": false,
+        "trailing_stop_pct": 0.05
+      },
+      "atr_stop": {
+        "enable_atr_stop": false,
+        "atr_period": 14,
+        "atr_multiplier": 2.5
       }
     }
   }
