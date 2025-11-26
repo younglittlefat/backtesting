@@ -262,14 +262,14 @@ class SignalGenerator:
                 result['signal_strength'] = signal_strength
 
                 # 判断信号
-                # 读取 Anti-Whipsaw 参数（带默认）
-                enable_hysteresis = bool(self.strategy_params.get('enable_hysteresis', True))
+                # 读取 Anti-Whipsaw 参数（默认值与策略类一致，全部关闭）
+                enable_hysteresis = bool(self.strategy_params.get('enable_hysteresis', False))
                 hysteresis_mode = self.strategy_params.get('hysteresis_mode', 'std')
                 hysteresis_k = float(self.strategy_params.get('hysteresis_k', 0.5))
                 hysteresis_window = int(self.strategy_params.get('hysteresis_window', 20))
                 hysteresis_abs = float(self.strategy_params.get('hysteresis_abs', 0.001))
-                confirm_bars_sell = int(self.strategy_params.get('confirm_bars_sell', 2))
-                enable_zero_axis = bool(self.strategy_params.get('enable_zero_axis', True))
+                confirm_bars_sell = int(self.strategy_params.get('confirm_bars_sell', 0))
+                enable_zero_axis = bool(self.strategy_params.get('enable_zero_axis', False))
 
                 def zero_axis_ok(sig_type: str) -> bool:
                     if not enable_zero_axis:
@@ -631,14 +631,14 @@ class SignalGenerator:
                 signal_strength = macd_line - signal_line  # MACD柱状图值
                 result['signal_strength'] = signal_strength
 
-                # 读取 Anti-Whipsaw 参数（带默认）
-                enable_hysteresis = bool(self.strategy_params.get('enable_hysteresis', True))
+                # 读取 Anti-Whipsaw 参数（默认值与策略类一致，全部关闭）
+                enable_hysteresis = bool(self.strategy_params.get('enable_hysteresis', False))
                 hysteresis_mode = self.strategy_params.get('hysteresis_mode', 'std')
                 hysteresis_k = float(self.strategy_params.get('hysteresis_k', 0.5))
                 hysteresis_window = int(self.strategy_params.get('hysteresis_window', 20))
                 hysteresis_abs = float(self.strategy_params.get('hysteresis_abs', 0.001))
-                confirm_bars_sell = int(self.strategy_params.get('confirm_bars_sell', 2))
-                enable_zero_axis = bool(self.strategy_params.get('enable_zero_axis', True))
+                confirm_bars_sell = int(self.strategy_params.get('confirm_bars_sell', 0))
+                enable_zero_axis = bool(self.strategy_params.get('enable_zero_axis', False))
 
                 def zero_axis_ok(sig_type: str) -> bool:
                     if not enable_zero_axis:
@@ -1416,6 +1416,20 @@ def main():
                             flags.append("zero_axis=ON")
                         if flags:
                             print("  防贴线: " + ", ".join(flags))
+
+                    # 合并跟踪止损配置
+                    if 'trailing_stop' in runtime_config:
+                        strategy_params.update(runtime_config['trailing_stop'])
+                        ts = runtime_config['trailing_stop']
+                        if ts.get('enable_trailing_stop'):
+                            print(f"  跟踪止损: ON (止损比例={ts.get('trailing_stop_pct', 0.05):.1%})")
+
+                    # 合并ATR自适应止损配置
+                    if 'atr_stop' in runtime_config:
+                        strategy_params.update(runtime_config['atr_stop'])
+                        atr = runtime_config['atr_stop']
+                        if atr.get('enable_atr_stop'):
+                            print(f"  ATR止损: ON (周期={atr.get('atr_period', 14)}, 倍数={atr.get('atr_multiplier', 2.5)})")
                 else:
                     print("  ⚠️ 配置文件中没有运行时配置，使用默认值")
 

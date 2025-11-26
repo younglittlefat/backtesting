@@ -82,6 +82,14 @@ def main() -> int:
             aw_cfg = runtime_config.get('anti_whipsaw', {})
             for k, v in aw_cfg.items():
                 setattr(args, k, v)
+            # 新增：加载跟踪止损配置
+            ts_cfg = runtime_config.get('trailing_stop', {})
+            for k, v in ts_cfg.items():
+                setattr(args, k, v)
+            # 新增：加载ATR自适应止损配置
+            atr_cfg = runtime_config.get('atr_stop', {})
+            for k, v in atr_cfg.items():
+                setattr(args, k, v)
             print(f"从配置加载策略参数: {args.load_params} -> {args.strategy}")
         except Exception as exc:
             print(f"⚠️ 加载配置失败（{args.load_params}）：{exc}")

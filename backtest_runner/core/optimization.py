@@ -252,7 +252,10 @@ def save_best_params(
             # 构建运行时配置字典
             runtime_config = {
                 "filters": {},
-                "loss_protection": {}
+                "loss_protection": {},
+                "anti_whipsaw": {},  # Anti-Whipsaw配置
+                "trailing_stop": {},  # 新增：跟踪止损配置
+                "atr_stop": {}  # 新增：ATR自适应止损配置
             }
 
             # 过滤器参数列表
@@ -273,6 +276,24 @@ def save_best_params(
                 'enable_loss_protection', 'max_consecutive_losses', 'pause_bars'
             ]
 
+            # Anti-Whipsaw参数列表（MACD策略特有）
+            anti_whipsaw_param_names = [
+                'enable_hysteresis', 'hysteresis_mode', 'hysteresis_k',
+                'hysteresis_window', 'hysteresis_abs',
+                'confirm_bars_sell', 'min_hold_bars',
+                'enable_zero_axis', 'zero_axis_mode'
+            ]
+
+            # 跟踪止损参数列表（所有策略通用）
+            trailing_stop_param_names = [
+                'enable_trailing_stop', 'trailing_stop_pct'
+            ]
+
+            # ATR自适应止损参数列表（所有策略通用）
+            atr_stop_param_names = [
+                'enable_atr_stop', 'atr_period', 'atr_multiplier'
+            ]
+
             # 从all_params或类属性中获取值
             for param_name in filter_param_names:
                 if param_name in all_params:
@@ -285,6 +306,28 @@ def save_best_params(
                     runtime_config['loss_protection'][param_name] = all_params[param_name]
                 elif hasattr(strategy_class, param_name):
                     runtime_config['loss_protection'][param_name] = getattr(strategy_class, param_name)
+
+            # Anti-Whipsaw参数（仅对MACD策略生效）
+            if strategy_name == 'macd_cross':
+                for param_name in anti_whipsaw_param_names:
+                    if param_name in all_params:
+                        runtime_config['anti_whipsaw'][param_name] = all_params[param_name]
+                    elif hasattr(strategy_class, param_name):
+                        runtime_config['anti_whipsaw'][param_name] = getattr(strategy_class, param_name)
+
+            # 跟踪止损参数（所有策略通用）
+            for param_name in trailing_stop_param_names:
+                if param_name in all_params:
+                    runtime_config['trailing_stop'][param_name] = all_params[param_name]
+                elif hasattr(strategy_class, param_name):
+                    runtime_config['trailing_stop'][param_name] = getattr(strategy_class, param_name)
+
+            # ATR自适应止损参数（所有策略通用）
+            for param_name in atr_stop_param_names:
+                if param_name in all_params:
+                    runtime_config['atr_stop'][param_name] = all_params[param_name]
+                elif hasattr(strategy_class, param_name):
+                    runtime_config['atr_stop'][param_name] = getattr(strategy_class, param_name)
 
             if verbose and runtime_config:
                 print(f"✓ 已提取运行时配置")
