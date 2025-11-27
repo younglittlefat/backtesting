@@ -31,7 +31,7 @@ from backtesting import Backtest
 from backtesting.lib import crossover
 from utils.data_loader import load_chinese_ohlcv_data, load_dual_price_data
 from utils.strategy_params_manager import StrategyParamsManager
-from portfolio_manager import Portfolio, PortfolioTrader, TradeLogger, Trade
+from portfolio_manager import Portfolio, PortfolioTrader, TradeLogger, Trade, SnapshotManager
 
 # 过滤掉关于未平仓交易的UserWarning
 warnings.filterwarnings('ignore', message='.*Some trades remain open.*')
@@ -1211,6 +1211,10 @@ def main():
                            help='分析模式（生成交易建议但不执行）')
     mode_group.add_argument('--execute', action='store_true',
                            help='执行模式（执行交易并更新持仓）')
+    mode_group.add_argument('--restore', type=str, metavar='YYYYMMDD',
+                           help='恢复持仓到指定日期的快照')
+    mode_group.add_argument('--list-snapshots', action='store_true',
+                           help='列出所有可用的持仓快照')
 
     # 基本参数
     parser.add_argument('--stock-list',
@@ -1332,6 +1336,110 @@ def main():
                 current_prices[pos.ts_code] = pos.entry_price
 
         print_portfolio_status(portfolio, current_prices, args.positions)
+        return
+
+    # ========== 模式: 列出快照 ==========
+    if args.list_snapshots:
+        if not args.portfolio_file:
+            print("错误: 列出快照模式必须指定 --portfolio-file")
+            sys.exit(1)
+
+        history_dir = Path(args.portfolio_file).parent / 'history'
+        snapshot_manager = SnapshotManager(str(history_dir))
+        portfolio_name = Path(args.portfolio_file).stem
+
+        snapshots = snapshot_manager.list_snapshots(portfolio_name)
+
+        print("=" * 80)
+        print(f"📸 可用快照列表 ({portfolio_name})")
+        print("=" * 80)
+
+        if not snapshots:
+            print("  (暂无快照)")
+        else:
+            print(f"{'日期':<12} {'时间':<20} {'类型':<12} {'现金':>15} {'持仓数':>8}")
+            print("-" * 80)
+            for s in snapshots:
+                print(f"{s['date']:<12} {s['timestamp']:<20} {s['snapshot_type']:<12} "
+                      f"¥{s['cash']:>12,.2f} {s['position_count']:>8}")
+
+        print("=" * 80)
+        print(f"共 {len(snapshots)} 个快照")
+        return
+
+    # ========== 模式: 恢复快照 ==========
+    if args.restore:
+        if not args.portfolio_file:
+            print("错误: 恢复模式必须指定 --portfolio-file")
+            sys.exit(1)
+
+        history_dir = Path(args.portfolio_file).parent / 'history'
+        snapshot_manager = SnapshotManager(str(history_dir))
+        portfolio_name = Path(args.portfolio_file).stem
+
+        # 加载快照预览
+        snapshot_data = snapshot_manager.load_snapshot(args.restore, portfolio_name)
+        if not snapshot_data:
+            print(f"错误: 未找到日期 {args.restore} 的快照")
+            print("使用 --list-snapshots 查看可用快照")
+            sys.exit(1)
+
+        # 显示快照信息
+        portfolio_preview = snapshot_data.get('portfolio', {})
+        positions_preview = portfolio_preview.get('positions', [])
+
+        print("=" * 80)
+        print(f"📸 快照预览 (日期: {args.restore})")
+        print("=" * 80)
+        print(f"  快照时间: {snapshot_data.get('timestamp', '未知')}")
+        print(f"  快照类型: {snapshot_data.get('snapshot_type', '未知')}")
+        print(f"  可用现金: ¥{portfolio_preview.get('cash', 0):,.2f}")
+        print(f"  持仓数量: {len(positions_preview)}")
+
+        if positions_preview:
+            print("")
+            print("  持仓明细:")
+            for pos in positions_preview:
+                print(f"    - {pos['ts_code']}: {pos['shares']}股 @¥{pos['entry_price']:.3f}")
+
+        print("=" * 80)
+        print("")
+
+        # 二次确认
+        print("⚠️  警告: 恢复操作将覆盖当前持仓文件！")
+        print(f"  目标文件: {args.portfolio_file}")
+        print("")
+
+        if not args.yes:
+            try:
+                confirm = input("是否确认恢复？(yes/no): ").strip().lower()
+                if confirm != 'yes':
+                    print("已取消恢复。")
+                    return
+            except EOFError:
+                print("")
+                print("❌ 错误: 无法读取用户输入（非交互式环境）")
+                print("提示: 请使用 --yes 参数自动确认")
+                return
+        else:
+            print("使用 --yes 参数，自动确认恢复...")
+
+        # 执行恢复
+        portfolio = snapshot_manager.restore_snapshot(
+            args.restore,
+            args.portfolio_file,
+            portfolio_name
+        )
+
+        print("")
+        print("=" * 80)
+        print("✓ 持仓已恢复")
+        print("=" * 80)
+        print(f"  恢复日期: {args.restore}")
+        print(f"  可用现金: ¥{portfolio.cash:,.2f}")
+        print(f"  持仓数量: {len(portfolio.positions)}")
+        print(f"  持仓文件: {args.portfolio_file}")
+        print("=" * 80)
         return
 
     # ========== 模式3 & 4：分析和执行模式 ==========
@@ -1579,6 +1687,21 @@ def main():
             else:
                 print("使用 --yes 参数，自动确认执行...")
                 print("")
+
+            # ===== 执行前自动保存快照 =====
+            history_dir = Path(args.portfolio_file).parent / 'history'
+            snapshot_manager = SnapshotManager(str(history_dir))
+            portfolio_name = Path(args.portfolio_file).stem
+            trade_date_compact = generator.end_date.replace('-', '')
+
+            snapshot_path = snapshot_manager.save_snapshot(
+                portfolio,
+                date=trade_date_compact,
+                portfolio_name=portfolio_name,
+                snapshot_type='pre_execute'
+            )
+            print(f"📸 已保存执行前快照: {snapshot_path}")
+            print("")
 
             # 执行交易
             print("")

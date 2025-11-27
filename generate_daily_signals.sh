@@ -33,11 +33,13 @@ ${BLUE}每日交易信号生成系统${NC} - 分析股票池并生成买入/卖�
 ${YELLOW}使用方法:${NC}
   $0 [选项]
 
-${YELLOW}工作模式（四选一）:${NC}
+${YELLOW}工作模式（六选一）:${NC}
   --init <资金>                初始化持仓文件（指定初始资金）
   --status                     查看当前持仓状态
   --analyze                    分析模式（生成交易建议但不执行）⭐ 推荐日常使用
   --execute                    执行模式（执行交易并更新持仓，自动确认）
+  --list-snapshots             列出所有可用的持仓快照
+  --restore <YYYYMMDD>         恢复持仓到指定日期的快照
 
 ${YELLOW}基本选项:${NC}
   --stock-list <csv_file>      股票列表CSV文件（必需，需包含ts_code列）
@@ -168,6 +170,7 @@ main() {
     # 工作模式
     MODE=""
     INIT_CASH=""
+    RESTORE_DATE=""
 
     # 默认参数
     STOCK_LIST=""
@@ -218,6 +221,15 @@ main() {
             --execute)
                 MODE="execute"
                 shift
+                ;;
+            --list-snapshots)
+                MODE="list-snapshots"
+                shift
+                ;;
+            --restore)
+                MODE="restore"
+                RESTORE_DATE="$2"
+                shift 2
                 ;;
             --stock-list)
                 STOCK_LIST="$2"
@@ -408,6 +420,25 @@ main() {
         if [ -n "$END_DATE" ]; then
             CMD+=("--end-date" "$END_DATE")
         fi
+    elif [ "$MODE" = "list-snapshots" ]; then
+        if [ -z "$PORTFOLIO_FILE" ]; then
+            echo -e "${RED}错误: 列出快照模式必须指定 --portfolio-file${NC}"
+            exit 1
+        fi
+        CMD+=("--list-snapshots")
+        CMD+=("--portfolio-file" "$PORTFOLIO_FILE")
+    elif [ "$MODE" = "restore" ]; then
+        if [ -z "$PORTFOLIO_FILE" ]; then
+            echo -e "${RED}错误: 恢复模式必须指定 --portfolio-file${NC}"
+            exit 1
+        fi
+        if [ -z "$RESTORE_DATE" ]; then
+            echo -e "${RED}错误: 恢复模式必须指定恢复日期${NC}"
+            exit 1
+        fi
+        CMD+=("--restore" "$RESTORE_DATE")
+        CMD+=("--portfolio-file" "$PORTFOLIO_FILE")
+        CMD+=("--yes")  # 自动确认恢复
     elif [ "$MODE" = "analyze" ] || [ "$MODE" = "execute" ]; then
         if [ -z "$PORTFOLIO_FILE" ]; then
             echo -e "${RED}错误: 分析/执行模式必须指定 --portfolio-file${NC}"

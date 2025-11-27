@@ -145,9 +145,6 @@ def find(pattern: str, default: str = "") -> str:
 
 latest_price = find(r"最新价格日期:\s*([^\n]+)", "未知")
 lookback_start = find(r"Lookback起始:\s*([^\n]+)", "未知")
-cash_line = find(r"可用现金:\s*([^\n]+)", "未知")
-asset_line = find(r"总资产:\s*([^\n]+)", "")
-hold_count = find(r"持仓明细\s*\((\d+/\d+)\)", "?/?")
 
 # 提取策略执行块（execute模式的最后一次）
 def extract_strategy_block(strategy: str) -> str:
@@ -156,6 +153,20 @@ def extract_strategy_block(strategy: str) -> str:
     pattern = rf"工作模式:\s*execute.*?策略名称:\s*{strategy}(.*?)(?:执行完成！|$)"
     matches = re.findall(pattern, content_clean, re.S)
     return matches[-1] if matches else ""
+
+def extract_portfolio_summary(block: str) -> dict:
+    """从日志块中提取持仓概览信息"""
+    def find_in_block(pattern: str, default: str = "") -> str:
+        m = re.search(pattern, block)
+        return m.group(1).strip() if m else default
+
+    return {
+        "hold_count": find_in_block(r"持仓明细\s*\((\d+/\d+)\)", "?/?"),
+        "cash": find_in_block(r"可用现金:\s*([^\n]+)", "未知"),
+        "total_asset": find_in_block(r"总资产:\s*([^\n]+)", "未知"),
+        "market_value": find_in_block(r"持仓市值:\s*([^\n]+)", "¥0.00"),
+        "pnl": find_in_block(r"持仓盈亏:\s*([^\n]+)", "+¥0.00"),
+    }
 
 def extract_trade_details(block: str, trade_type: str) -> list:
     """从日志块中提取交易详情列表"""
@@ -188,43 +199,47 @@ def format_trade_detail(trade: dict) -> str:
         f"      原因: {trade['reason']}"
     )
 
-# 先提取所有策略的交易，再汇总统计
-all_strategy_trades = {}
+# 先提取所有策略的交易和持仓信息，再汇总统计
+all_strategy_data = {}
 for strategy in ["kama_cross", "macd_cross"]:
     block = extract_strategy_block(strategy)
     if block:
-        all_strategy_trades[strategy] = {
+        all_strategy_data[strategy] = {
             "buy": extract_trade_details(block, "买入"),
-            "sell": extract_trade_details(block, "卖出")
+            "sell": extract_trade_details(block, "卖出"),
+            "portfolio": extract_portfolio_summary(block)
         }
 
 # 计算所有策略的总买入/卖出笔数
-total_buy = sum(len(t["buy"]) for t in all_strategy_trades.values())
-total_sell = sum(len(t["sell"]) for t in all_strategy_trades.values())
+total_buy = sum(len(t["buy"]) for t in all_strategy_data.values())
+total_sell = sum(len(t["sell"]) for t in all_strategy_data.values())
 trade_desc = "无需交易" if (total_buy == 0 and total_sell == 0) else f"买入 {total_buy} 笔 / 卖出 {total_sell} 笔"
 
 message_lines = [
     "【肥叔叔的交易】每日信号",
     f"时间: {today_str}",
     f"数据日: {latest_price}  看盘起始: {lookback_start}",
-    f"持仓概览: {hold_count} 持仓，{asset_line or '总资产未知'}，现金 {cash_line}",
     f"今日交易: {trade_desc}",
 ]
 
 # 附加每个策略的详细交易信息
 for strategy in ["kama_cross", "macd_cross"]:
-    if strategy not in all_strategy_trades:
+    if strategy not in all_strategy_data:
         continue
 
-    trades = all_strategy_trades[strategy]
-    buy_trades = trades["buy"]
-    sell_trades = trades["sell"]
+    data = all_strategy_data[strategy]
+    buy_trades = data["buy"]
+    sell_trades = data["sell"]
+    portfolio = data["portfolio"]
 
     # 策略标题
     strategy_name = strategy.upper().replace("_", " ")
     message_lines.append(f"\n{'='*30}")
     message_lines.append(f"{strategy_name}")
     message_lines.append(f"{'='*30}")
+
+    # 持仓概览
+    message_lines.append(f"💼 {portfolio['hold_count']} 持仓 | 总资产 {portfolio['total_asset']} | 现金 {portfolio['cash']}")
 
     if sell_trades:
         message_lines.append(f"📉 卖出 ({len(sell_trades)}笔)")

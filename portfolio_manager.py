@@ -281,6 +281,153 @@ class Portfolio:
         return portfolio
 
 
+class SnapshotManager:
+    """持仓快照管理器"""
+
+    def __init__(self, history_dir: str = 'positions/history'):
+        """
+        初始化快照管理器
+
+        Args:
+            history_dir: 历史记录目录
+        """
+        self.history_dir = Path(history_dir)
+        self.history_dir.mkdir(parents=True, exist_ok=True)
+
+    def save_snapshot(self, portfolio: 'Portfolio', date: Optional[str] = None,
+                      portfolio_name: Optional[str] = None,
+                      snapshot_type: str = 'pre_execute') -> Path:
+        """
+        保存持仓快照
+
+        Args:
+            portfolio: 投资组合对象
+            date: 日期字符串（YYYYMMDD），如果为None则使用当天
+            portfolio_name: 持仓配置名称（用于区分不同策略）
+            snapshot_type: 快照类型（pre_execute/manual/daily）
+
+        Returns:
+            保存的文件路径
+        """
+        date = date or datetime.now().strftime('%Y%m%d')
+
+        # 构建文件名
+        if portfolio_name:
+            safe_name = portfolio_name.replace('/', '_')
+            filename = f"snapshot_{safe_name}_{date}.json"
+        else:
+            filename = f"snapshot_{date}.json"
+
+        filepath = self.history_dir / filename
+
+        # 构建快照数据
+        snapshot_data = {
+            'date': date,
+            'timestamp': datetime.now().strftime('%Y-%m-%d %H:%M:%S'),
+            'snapshot_type': snapshot_type,
+            'portfolio': portfolio.to_dict()
+        }
+
+        # 保存
+        with open(filepath, 'w', encoding='utf-8') as f:
+            json.dump(snapshot_data, f, ensure_ascii=False, indent=2)
+
+        return filepath
+
+    def list_snapshots(self, portfolio_name: Optional[str] = None) -> List[Dict]:
+        """
+        列出所有可用快照
+
+        Args:
+            portfolio_name: 可选，筛选指定组合的快照
+
+        Returns:
+            快照信息列表，按日期降序排列
+        """
+        snapshots = []
+
+        # 匹配快照文件
+        if portfolio_name:
+            pattern = f"snapshot_{portfolio_name}_*.json"
+        else:
+            pattern = "snapshot_*.json"
+
+        for filepath in self.history_dir.glob(pattern):
+            try:
+                with open(filepath, 'r', encoding='utf-8') as f:
+                    data = json.load(f)
+
+                snapshots.append({
+                    'filepath': str(filepath),
+                    'filename': filepath.name,
+                    'date': data.get('date', ''),
+                    'timestamp': data.get('timestamp', ''),
+                    'snapshot_type': data.get('snapshot_type', 'unknown'),
+                    'cash': data.get('portfolio', {}).get('cash', 0),
+                    'position_count': len(data.get('portfolio', {}).get('positions', []))
+                })
+            except (json.JSONDecodeError, KeyError):
+                continue
+
+        # 按日期降序排列
+        snapshots.sort(key=lambda x: x['date'], reverse=True)
+        return snapshots
+
+    def load_snapshot(self, date: str, portfolio_name: Optional[str] = None) -> Optional[Dict]:
+        """
+        加载指定日期的快照
+
+        Args:
+            date: 日期字符串（YYYYMMDD）
+            portfolio_name: 可选，持仓配置名称
+
+        Returns:
+            快照数据或None
+        """
+        # 尝试匹配文件
+        candidates = []
+        if portfolio_name:
+            candidates.append(self.history_dir / f"snapshot_{portfolio_name}_{date}.json")
+        # 通配查找
+        candidates.extend(self.history_dir.glob(f"snapshot_*_{date}.json"))
+
+        for filepath in candidates:
+            if filepath.exists():
+                with open(filepath, 'r', encoding='utf-8') as f:
+                    return json.load(f)
+
+        return None
+
+    def restore_snapshot(self, date: str, portfolio_file: str,
+                         portfolio_name: Optional[str] = None) -> 'Portfolio':
+        """
+        从快照恢复持仓
+
+        Args:
+            date: 日期字符串（YYYYMMDD）
+            portfolio_file: 目标持仓文件路径
+            portfolio_name: 可选，持仓配置名称
+
+        Returns:
+            恢复后的Portfolio对象
+
+        Raises:
+            FileNotFoundError: 快照不存在
+        """
+        snapshot_data = self.load_snapshot(date, portfolio_name)
+        if not snapshot_data:
+            raise FileNotFoundError(f"未找到日期 {date} 的快照")
+
+        # 从快照恢复Portfolio
+        portfolio_data = snapshot_data.get('portfolio', {})
+        portfolio = Portfolio.from_dict(portfolio_data, portfolio_file=portfolio_file)
+
+        # 保存到目标文件
+        portfolio.save()
+
+        return portfolio
+
+
 class TradeLogger:
     """交易日志记录器"""
 

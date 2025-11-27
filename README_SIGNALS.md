@@ -156,6 +156,22 @@
 | `--status` | 查看当前持仓状态 |
 | `--analyze` | 分析模式（生成交易建议但不执行）⭐ 推荐日常使用 |
 | `--execute` | 执行模式（执行交易并更新持仓） |
+| `--list-snapshots` | 列出所有可用的持仓快照 |
+| `--restore <YYYYMMDD>` | 恢复持仓到指定日期的快照 |
+
+### 持仓快照与恢复 ⭐ 新增
+
+系统在每次 `--execute` 前自动保存持仓快照，支持恢复到任意历史状态：
+
+```bash
+# 列出所有快照
+./generate_daily_signals.sh --list-snapshots --portfolio-file positions/etf_kama_cross_portfolio.json
+
+# 恢复到指定日期（需确认）
+./generate_daily_signals.sh --restore 20251126 --portfolio-file positions/etf_kama_cross_portfolio.json
+```
+
+**快照文件**: `positions/history/snapshot_{portfolio_name}_{YYYYMMDD}.json`
 
 ### 基本参数
 
@@ -341,6 +357,8 @@ crontab -e
 | 状态查看 (`--status`) | ✅ | 实时查看持仓和盈亏 |
 | 分析模式 (`--analyze`) | ✅ | 生成交易建议（推荐用于实盘） |
 | 执行模式 (`--execute`) | ✅ | 执行交易并更新持仓 |
+| 快照备份 (`--list-snapshots`) | ✅ | execute前自动保存，支持列出历史 |
+| 快照恢复 (`--restore`) | ✅ | 恢复到任意历史快照（需确认） |
 | 盈亏计算 | ✅ | 自动计算持仓市值和盈亏百分比 |
 | 增量决策 | ✅ | 基于当前持仓智能生成交易计划 |
 | 向后兼容 | ✅ | 无状态模式完全保留 |
