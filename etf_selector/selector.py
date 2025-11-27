@@ -81,7 +81,9 @@ class TrendETFSelector:
         start_date: Optional[str] = None,
         end_date: Optional[str] = None,
         target_size: Optional[int] = None,
-        verbose: bool = True
+        verbose: bool = True,
+        diversify_v2: bool = False,
+        score_diff_threshold: float = 0.05
     ) -> List[Dict]:
         """执行完整筛选流程
 
@@ -90,6 +92,8 @@ class TrendETFSelector:
             end_date: 回测结束日期 (YYYY-MM-DD)，默认None使用全部数据
             target_size: 目标筛选数量，默认None使用config中的配置
             verbose: 是否打印详细信息
+            diversify_v2: 是否启用V2分散逻辑（P0: max pairwise相关性, P1: Score优先去重）
+            score_diff_threshold: V2去重时Score差异阈值（仅diversify_v2生效）
 
         Returns:
             筛选结果列表，每个元素包含：
@@ -142,7 +146,9 @@ class TrendETFSelector:
                 end_date=end_date,
                 enable_deduplication=True,  # 启用智能去重
                 dedup_min_ratio=0.8,        # 最小保留比例80%
-                verbose=verbose
+                verbose=verbose,
+                diversify_v2=diversify_v2,
+                score_diff_threshold=score_diff_threshold
             )
         except ImportError:
             if verbose:

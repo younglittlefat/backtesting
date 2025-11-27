@@ -161,6 +161,17 @@ def parse_arguments():
         help='跳过第二级的百分位筛选（ADX、收益回撤比），直接按综合评分排序返回topN'
     )
 
+    # V2分散逻辑控制
+    parser.add_argument(
+        '--diversify-v2', action='store_true', default=False,
+        help='启用V2分散逻辑：P0-贪心选择使用max pairwise相关性（而非平均相关性），'
+             'P1-去重时Score差异显著则无条件保留高分者（趋势跟踪优先）'
+    )
+    parser.add_argument(
+        '--score-diff-threshold', type=float, default=0.05,
+        help='V2去重时Score差异阈值，超过则无条件保留高分（默认: 0.05，即5%%）'
+    )
+
     # 技术参数
     parser.add_argument(
         '--ma-short', type=int, default=20,
@@ -292,6 +303,10 @@ def print_config_summary(config: FilterConfig, args: argparse.Namespace):
     print(f"  🎯 无偏评分系统: {'启用 - ' + score_mode if config.enable_unbiased_scoring else '禁用 (传统排序)'}")
     print(f"  🔗 最大相关性: {args.max_correlation}")
     print(f"  📈 双均线参数: MA({config.ma_short}, {config.ma_long})")
+    # V2分散模式
+    if getattr(args, 'diversify_v2', False):
+        print(f"  🆕 分散V2模式: 启用 (max pairwise相关性 + Score优先去重)")
+        print(f"     Score差异阈值: {getattr(args, 'score_diff_threshold', 0.05):.0%}")
     print()
 
 
@@ -343,7 +358,9 @@ def main():
             start_date=args.start_date,
             end_date=args.end_date,
             target_size=target_size,
-            verbose=verbose
+            verbose=verbose,
+            diversify_v2=getattr(args, 'diversify_v2', False),
+            score_diff_threshold=getattr(args, 'score_diff_threshold', 0.05)
         )
 
         if len(selected_etfs) == 0:

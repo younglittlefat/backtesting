@@ -170,7 +170,9 @@ class PortfolioOptimizer:
         min_ratio: float = 0.8,
         start_date: Optional[str] = None,
         end_date: Optional[str] = None,
-        verbose: bool = True
+        verbose: bool = True,
+        diversify_v2: bool = False,
+        score_diff_threshold: float = 0.05
     ) -> List[Dict]:
         """智能去重：动态调整相关性阈值，确保目标数量
 
@@ -187,6 +189,8 @@ class PortfolioOptimizer:
             start_date: 收益率计算开始日期
             end_date: 收益率计算结束日期
             verbose: 是否打印详细信息
+            diversify_v2: 是否启用V2去重逻辑（Score优先原则）
+            score_diff_threshold: Score差异阈值（仅diversify_v2生效）
 
         Returns:
             去重后的ETF列表
@@ -238,7 +242,8 @@ class PortfolioOptimizer:
         for i, threshold in enumerate(thresholds):
             try:
                 deduplicated = self._remove_duplicates_by_correlation(
-                    etf_candidates, correlation_matrix, threshold, verbose=(verbose and i==0)
+                    etf_candidates, correlation_matrix, threshold, verbose=(verbose and i==0),
+                    diversify_v2=diversify_v2, score_diff_threshold=score_diff_threshold
                 )
             except Exception as e:
                 if verbose:
@@ -267,16 +272,24 @@ class PortfolioOptimizer:
         etf_candidates: List[Dict],
         correlation_matrix: pd.DataFrame,
         threshold: float = 0.95,
-        verbose: bool = False
+        verbose: bool = False,
+        diversify_v2: bool = False,
+        score_diff_threshold: float = 0.05
     ) -> List[Dict]:
         """基于相关系数去除重复ETF
 
-        算法逻辑：
+        算法逻辑（原版V1）：
         1. 找出所有相关性>阈值的ETF对
         2. 在高相关ETF中，优先保留：
            - 不同行业的ETF（提升分散度）
            - 质量指标更高的ETF（优先使用return_dd_ratio，无偏模式下使用final_score）
         3. 返回去重后的ETF列表
+
+        算法逻辑（V2 - diversify_v2=True，P1优化）：
+        1. 找出所有相关性>阈值的ETF对
+        2. Score差异显著时（>score_diff_threshold），无条件保留高分者（趋势跟踪核心原则）
+        3. 仅当Score极其接近时，才考虑行业稀缺性作为tiebreaker
+        4. 返回去重后的ETF列表
 
         **兼容性**:
         - 启用双均线回测时：使用 return_dd_ratio 作为质量指标
@@ -287,6 +300,8 @@ class PortfolioOptimizer:
             correlation_matrix: 相关系数矩阵
             threshold: 相关性阈值
             verbose: 是否打印详细信息
+            diversify_v2: 是否启用V2去重逻辑（Score优先原则）
+            score_diff_threshold: Score差异阈值（仅diversify_v2生效）
 
         Returns:
             去重后的ETF列表
@@ -316,17 +331,15 @@ class PortfolioOptimizer:
                     continue
 
         if verbose and duplicate_pairs:
-            print(f"    发现 {len(duplicate_pairs)} 对高相关ETF (相关性 > {threshold})")
+            mode_str = "V2-Score优先" if diversify_v2 else "V1-行业稀缺优先"
+            print(f"    发现 {len(duplicate_pairs)} 对高相关ETF (相关性 > {threshold}) [{mode_str}]")
 
         # 处理每对重复ETF，决定保留哪一个
         for etf_i, etf_j, corr in duplicate_pairs:
             if etf_i['ts_code'] in to_remove or etf_j['ts_code'] in to_remove:
                 continue
 
-            # 决策逻辑：
-            # 1. 优先保留不同行业的（提升行业分散度）
-            # 2. 同行业则保留质量指标更高的（优先使用return_dd_ratio，无偏模式下使用final_score）
-
+            # 获取质量指标
             industry_i = etf_i.get('industry', '其他')
             industry_j = etf_j.get('industry', '其他')
             ret_dd_i = etf_i.get('return_dd_ratio', np.nan)
@@ -334,56 +347,111 @@ class PortfolioOptimizer:
 
             # 如果return_dd_ratio都是nan，使用final_score作为后备
             if pd.isna(ret_dd_i) and pd.isna(ret_dd_j):
-                ret_dd_i = etf_i.get('final_score', 0)
-                ret_dd_j = etf_j.get('final_score', 0)
-                metric_name = "评分"  # 用于日志输出
+                score_i = etf_i.get('final_score', 0)
+                score_j = etf_j.get('final_score', 0)
+                metric_name = "评分"
             elif pd.isna(ret_dd_i):
-                ret_dd_i = -999  # 无效值排后
+                score_i = -999
+                score_j = ret_dd_j
                 metric_name = "收益回撤比"
             elif pd.isna(ret_dd_j):
-                ret_dd_j = -999
+                score_i = ret_dd_i
+                score_j = -999
                 metric_name = "收益回撤比"
             else:
+                score_i = ret_dd_i
+                score_j = ret_dd_j
                 metric_name = "收益回撤比"
 
-            if industry_i != industry_j:
-                # 不同行业，检查已选行业分布，选择稀缺行业的ETF
-                selected_industries = [
-                    etf_dict[code].get('industry', '其他')
-                    for code in etf_dict.keys()
-                    if code not in to_remove
-                ]
-                count_i = selected_industries.count(industry_i)
-                count_j = selected_industries.count(industry_j)
-
-                if count_i > count_j:
-                    to_remove.add(etf_i['ts_code'])
-                    if verbose:
-                        print(f"    移除 {etf_i['ts_code']} ({industry_i}，已有{count_i}只) "
-                              f"保留 {etf_j['ts_code']} ({industry_j}，仅{count_j}只)")
-                elif count_j > count_i:
+            if diversify_v2:
+                # V2逻辑：Score优先原则（P1优化）
+                # 1. Score差异显著时，无条件保留高分者
+                # 2. 仅当Score极其接近时，才考虑行业稀缺性
+                if score_j > 0 and score_i > score_j * (1 + score_diff_threshold):
+                    # i的分数显著高于j，保留i
                     to_remove.add(etf_j['ts_code'])
                     if verbose:
-                        print(f"    移除 {etf_j['ts_code']} ({industry_j}，已有{count_j}只) "
-                              f"保留 {etf_i['ts_code']} ({industry_i}，仅{count_i}只)")
+                        print(f"    [V2-Score优先] 移除 {etf_j['ts_code']} ({metric_name}:{score_j:.3f}) "
+                              f"保留 {etf_i['ts_code']} ({metric_name}:{score_i:.3f}, 差异>{score_diff_threshold:.0%})")
+                elif score_i > 0 and score_j > score_i * (1 + score_diff_threshold):
+                    # j的分数显著高于i，保留j
+                    to_remove.add(etf_i['ts_code'])
+                    if verbose:
+                        print(f"    [V2-Score优先] 移除 {etf_i['ts_code']} ({metric_name}:{score_i:.3f}) "
+                              f"保留 {etf_j['ts_code']} ({metric_name}:{score_j:.3f}, 差异>{score_diff_threshold:.0%})")
                 else:
-                    # 行业数量相同，按收益回撤比选择
-                    if ret_dd_i >= ret_dd_j:
+                    # Score极其接近，作为tiebreaker考虑行业稀缺性
+                    if industry_i != industry_j:
+                        selected_industries = [
+                            etf_dict[code].get('industry', '其他')
+                            for code in etf_dict.keys()
+                            if code not in to_remove
+                        ]
+                        count_i = selected_industries.count(industry_i)
+                        count_j = selected_industries.count(industry_j)
+
+                        if count_i > count_j:
+                            to_remove.add(etf_i['ts_code'])
+                            if verbose:
+                                print(f"    [V2-Tiebreak] 移除 {etf_i['ts_code']} ({industry_i}，已有{count_i}只) "
+                                      f"保留 {etf_j['ts_code']} ({industry_j}，仅{count_j}只)")
+                        elif count_j > count_i:
+                            to_remove.add(etf_j['ts_code'])
+                            if verbose:
+                                print(f"    [V2-Tiebreak] 移除 {etf_j['ts_code']} ({industry_j}，已有{count_j}只) "
+                                      f"保留 {etf_i['ts_code']} ({industry_i}，仅{count_i}只)")
+                        else:
+                            # 行业数量相同，按分数选择（排名靠前者）
+                            if score_i >= score_j:
+                                to_remove.add(etf_j['ts_code'])
+                            else:
+                                to_remove.add(etf_i['ts_code'])
+                    else:
+                        # 同行业且分数接近，保留排名靠前者
+                        if score_i >= score_j:
+                            to_remove.add(etf_j['ts_code'])
+                        else:
+                            to_remove.add(etf_i['ts_code'])
+            else:
+                # V1逻辑：原有的行业稀缺优先
+                if industry_i != industry_j:
+                    # 不同行业，检查已选行业分布，选择稀缺行业的ETF
+                    selected_industries = [
+                        etf_dict[code].get('industry', '其他')
+                        for code in etf_dict.keys()
+                        if code not in to_remove
+                    ]
+                    count_i = selected_industries.count(industry_i)
+                    count_j = selected_industries.count(industry_j)
+
+                    if count_i > count_j:
+                        to_remove.add(etf_i['ts_code'])
+                        if verbose:
+                            print(f"    移除 {etf_i['ts_code']} ({industry_i}，已有{count_i}只) "
+                                  f"保留 {etf_j['ts_code']} ({industry_j}，仅{count_j}只)")
+                    elif count_j > count_i:
                         to_remove.add(etf_j['ts_code'])
+                        if verbose:
+                            print(f"    移除 {etf_j['ts_code']} ({industry_j}，已有{count_j}只) "
+                                  f"保留 {etf_i['ts_code']} ({industry_i}，仅{count_i}只)")
+                    else:
+                        # 行业数量相同，按收益回撤比选择
+                        if score_i >= score_j:
+                            to_remove.add(etf_j['ts_code'])
+                        else:
+                            to_remove.add(etf_i['ts_code'])
+                else:
+                    # 同行业，直接按质量指标选择
+                    if score_i >= score_j:
+                        to_remove.add(etf_j['ts_code'])
+                        if verbose:
+                            print(f"    移除 {etf_j['ts_code']} ({metric_name}:{score_j:.3f}) "
+                                  f"保留 {etf_i['ts_code']} ({metric_name}:{score_i:.3f})")
                     else:
                         to_remove.add(etf_i['ts_code'])
-            else:
-                # 同行业，直接按质量指标选择
-                if ret_dd_i >= ret_dd_j:
-                    to_remove.add(etf_j['ts_code'])
-                    if verbose:
-                        print(f"    移除 {etf_j['ts_code']} ({metric_name}:{ret_dd_j:.3f}) "
-                              f"保留 {etf_i['ts_code']} ({metric_name}:{ret_dd_i:.3f})")
-                else:
-                    to_remove.add(etf_i['ts_code'])
-                    if verbose:
-                        print(f"    移除 {etf_i['ts_code']} ({metric_name}:{ret_dd_i:.3f}) "
-                              f"保留 {etf_j['ts_code']} ({metric_name}:{ret_dd_j:.3f})")
+                        if verbose:
+                            print(f"    移除 {etf_i['ts_code']} ({metric_name}:{score_i:.3f}) "
+                                  f"保留 {etf_j['ts_code']} ({metric_name}:{score_j:.3f})")
 
         # 返回去重后的ETF列表
         deduplicated = [etf for etf in etf_candidates if etf['ts_code'] not in to_remove]
@@ -399,7 +467,9 @@ class PortfolioOptimizer:
         balance_industries: bool = True,
         enable_deduplication: bool = True,
         dedup_min_ratio: float = 0.8,
-        verbose: bool = True
+        verbose: bool = True,
+        diversify_v2: bool = False,
+        score_diff_threshold: float = 0.05
     ) -> List[Dict]:
         """组合优化：构建低相关性、分散化组合
 
@@ -413,6 +483,8 @@ class PortfolioOptimizer:
             enable_deduplication: 是否启用智能去重
             dedup_min_ratio: 去重后最小保留比例
             verbose: 是否打印详细信息
+            diversify_v2: 是否启用V2分散逻辑（P0: max pairwise相关性, P1: Score优先去重）
+            score_diff_threshold: 去重时Score差异阈值，超过则无条件保留高分（仅diversify_v2生效）
 
         Returns:
             优化后的ETF组合列表，按原排序保持
@@ -425,6 +497,9 @@ class PortfolioOptimizer:
             print(f"  📊 候选ETF数量: {len(etf_candidates)}")
             print(f"  🎯 目标组合大小: {target_size}")
             print(f"  📈 相关性阈值: < {max_correlation}")
+            if diversify_v2:
+                print(f"  🆕 分散V2模式: 启用 (max pairwise相关性 + Score优先去重)")
+                print(f"     Score差异阈值: {score_diff_threshold:.1%}")
             if enable_deduplication:
                 print(f"  🧹 智能去重: 启用 (最小保留比例: {dedup_min_ratio:.1%})")
 
@@ -437,7 +512,9 @@ class PortfolioOptimizer:
                 min_ratio=dedup_min_ratio,
                 start_date=start_date,
                 end_date=end_date,
-                verbose=verbose
+                verbose=verbose,
+                diversify_v2=diversify_v2,
+                score_diff_threshold=score_diff_threshold
             )
 
         # 第二步：计算收益率矩阵和相关性矩阵
@@ -466,7 +543,8 @@ class PortfolioOptimizer:
 
         # 贪心算法选择低相关性组合
         selected_portfolio = self._greedy_selection(
-            etf_candidates, correlation_matrix, max_correlation, target_size
+            etf_candidates, correlation_matrix, max_correlation, target_size,
+            diversify_v2=diversify_v2
         )
 
         if verbose:
@@ -507,14 +585,20 @@ class PortfolioOptimizer:
         etf_candidates: List[Dict],
         correlation_matrix: pd.DataFrame,
         max_correlation: float,
-        target_size: int
+        target_size: int,
+        diversify_v2: bool = False
     ) -> List[Dict]:
         """贪心算法选择低相关性ETF组合
 
-        算法逻辑：
+        算法逻辑（V1）：
         1. 选择排名第一且在相关性矩阵中的ETF作为起点
-        2. 依次选择与已选ETF相关性最低的候选ETF
-        3. 如果相关性超过阈值，跳过该ETF
+        2. 依次选择与已选ETF平均相关性低于阈值的候选ETF
+        3. 重复直到达到目标数量
+
+        算法逻辑（V2 - diversify_v2=True，P0优化）：
+        1. 选择排名第一且在相关性矩阵中的ETF作为起点
+        2. 依次选择与已选ETF**最大配对相关性**低于阈值的候选ETF
+        3. 保证组合内任意两只ETF相关性都低于阈值
         4. 重复直到达到目标数量
 
         **鲁棒性改进**:
@@ -526,6 +610,7 @@ class PortfolioOptimizer:
             correlation_matrix: 相关系数矩阵
             max_correlation: 最大相关系数阈值
             target_size: 目标组合大小
+            diversify_v2: 是否启用V2逻辑（max pairwise相关性）
 
         Returns:
             选中的ETF列表
@@ -558,20 +643,31 @@ class PortfolioOptimizer:
             if ts_code not in correlation_matrix.index:
                 continue
 
-            # 计算与已选ETF的平均相关性
+            # 计算与已选ETF的相关性
             selected_codes = [s['ts_code'] for s in selected]
 
             try:
                 correlations = correlation_matrix.loc[ts_code, selected_codes]
-                if isinstance(correlations, pd.Series):
-                    avg_correlation = correlations.abs().mean()
-                else:
-                    # 单个值的情况
-                    avg_correlation = abs(correlations)
 
-                # 如果平均相关性低于阈值，加入组合
-                if avg_correlation < max_correlation:
-                    selected.append(etf)
+                if diversify_v2:
+                    # V2逻辑：使用最大配对相关性（P0优化）
+                    # 保证组合内任意两只ETF相关性都低于阈值
+                    if isinstance(correlations, pd.Series):
+                        max_pairwise_corr = correlations.abs().max()
+                    else:
+                        max_pairwise_corr = abs(correlations)
+
+                    if max_pairwise_corr < max_correlation:
+                        selected.append(etf)
+                else:
+                    # V1逻辑：使用平均相关性
+                    if isinstance(correlations, pd.Series):
+                        avg_correlation = correlations.abs().mean()
+                    else:
+                        avg_correlation = abs(correlations)
+
+                    if avg_correlation < max_correlation:
+                        selected.append(etf)
 
             except (KeyError, IndexError):
                 # 如果出现索引错误，跳过该ETF

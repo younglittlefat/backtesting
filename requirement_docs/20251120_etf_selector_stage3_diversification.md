@@ -444,7 +444,77 @@ def calculate_optimized_score(df, benchmark_df):
   `python -m etf_selector.main --data-dir data/chinese_etf --output results/trend_etf_pool.csv --target-size 20 --min-turnover 50000 --momentum-min-positive`  
   结果：stage1 364 → stage2 364 → 最终 20；平均相关性 0.406；`final_score` 范围 0.13~0.96，超额收益/质量/量能指标均打印在日志。
 - 单元覆盖：`pytest etf_selector/tests/test_scoring.py` 通过，包含 R^2 高分验证、权重合成、超额收益基准/回退校验。
-- CLI 切换新旧打分（便于对比）：  
-  - 默认旧公式：`python -m etf_selector.main --data-dir data/chinese_etf --output results/trend_etf_pool.csv --target-size 20 --min-turnover 50000 --momentum-min-positive`（legacy：ADX+趋势一致性+价格效率+流动性 + 3M/12M 动量）。  
-  - 启用新公式：在命令后加 `--score-mode optimized`（超额收益/趋势质量/ADX/资金动能权重 40/35/15/10）。  
+- CLI 切换新旧打分（便于对比）：
+  - 默认旧公式：`python -m etf_selector.main --data-dir data/chinese_etf --output results/trend_etf_pool.csv --target-size 20 --min-turnover 50000 --momentum-min-positive`（legacy：ADX+趋势一致性+价格效率+流动性 + 3M/12M 动量）。
+  - 启用新公式：在命令后加 `--score-mode optimized`（超额收益/趋势质量/ADX/资金动能权重 40/35/15/10）。
   区别：仅切换二级综合评分公式，其他流程（去重、分散、阈值）不变，输出/日志会体现所选模式。
+
+### 实施进展（2025-11-26，Q1的P0+P1落地）
+
+#### 已实现功能
+
+新增开关 `--diversify-v2`，启用后生效以下两个优化：
+
+| 优先级 | 优化内容 | 实现位置 | 说明 |
+|--------|---------|----------|------|
+| **P0** | 贪心选择使用 max pairwise 相关性（而非平均相关性） | `portfolio.py:_greedy_selection()` | 保证组合内任意两只ETF相关性都低于阈值 |
+| **P1** | 去重时 Score 差异>阈值则无条件保留高分者 | `portfolio.py:_remove_duplicates_by_correlation()` | 趋势跟踪核心原则：动量优先 |
+
+#### 新增CLI参数
+
+| 参数 | 默认值 | 说明 |
+|------|--------|------|
+| `--diversify-v2` | False | 启用V2分散逻辑 |
+| `--score-diff-threshold` | 0.05 | Score差异阈值（5%），超过则无条件保留高分 |
+
+#### 验收结果（data/chinese_etf，20只ETF）
+
+| 测试项 | V1模式（默认） | V2模式（--diversify-v2） | 对比 |
+|--------|---------------|-------------------------|------|
+| 运行状态 | ✅ 成功 | ✅ 成功 | - |
+| 输出ETF数 | 20只 | 20只 | - |
+| 平均相关性 | 0.501 | **0.371** | **-26%** ✅ |
+| 共同ETF | - | - | 8只重合 |
+
+**关键发现**：
+- V2模式成功将平均相关性从0.501降低到0.371，分散度显著提升
+- 日志正确显示 `[V2-Score优先]` 和 `[V2-Tiebreak]` 标记
+- V1保持原有行为，向后兼容
+
+#### 使用方式
+
+```bash
+# V1模式（默认，行为不变）
+python -m etf_selector.main \
+  --data-dir data/chinese_etf \
+  --output results/pool.csv \
+  --target-size 20
+
+# V2模式（启用P0+P1优化）
+python -m etf_selector.main \
+  --data-dir data/chinese_etf \
+  --output results/pool.csv \
+  --target-size 20 \
+  --diversify-v2
+
+# V2模式 + 自定义Score差异阈值（10%）
+python -m etf_selector.main \
+  --data-dir data/chinese_etf \
+  --output results/pool.csv \
+  --target-size 20 \
+  --diversify-v2 \
+  --score-diff-threshold 0.10
+```
+
+#### 代码变更清单
+
+- `etf_selector/portfolio.py`:
+  - `optimize_portfolio()`: 新增 `diversify_v2`, `score_diff_threshold` 参数
+  - `adaptive_deduplication()`: 新增 `diversify_v2`, `score_diff_threshold` 参数
+  - `_remove_duplicates_by_correlation()`: 实现P1逻辑（V2-Score优先 + V2-Tiebreak）
+  - `_greedy_selection()`: 实现P0逻辑（max pairwise相关性）
+- `etf_selector/selector.py`:
+  - `run_pipeline()`: 新增 `diversify_v2`, `score_diff_threshold` 参数并传递
+- `etf_selector/main.py`:
+  - 新增CLI参数 `--diversify-v2`, `--score-diff-threshold`
+  - `print_config_summary()`: 显示V2模式配置信息
