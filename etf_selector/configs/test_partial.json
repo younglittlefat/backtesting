@@ -1,0 +1,15 @@
+{
+  "version": "2.0",
+  "description": "Partial configuration test - only override key parameters",
+
+  "stage1_initial_filter": {
+    "min_turnover": 100000000
+  },
+
+  "stage3_diversification": {
+    "target_portfolio_size": 30,
+    "diversify_v2": {
+      "enable": true
+    }
+  }
+}

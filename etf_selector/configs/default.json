@@ -1,0 +1,134 @@
+{
+  "version": "2.0",
+  "description": "ETF Selector Complete Configuration Template",
+
+  "paths": {
+    "data_dir": "data/chinese_etf",
+    "output_dir": "results/selector",
+    "output_filename": null
+  },
+
+  "time_range": {
+    "start_date": null,
+    "end_date": null
+  },
+
+  "stage1_initial_filter": {
+    "min_turnover": 50000000,
+    "min_listing_days": 180,
+    "turnover_lookback_days": 30
+  },
+
+  "stage2_core_filter": {
+    "adx": {
+      "period": 14,
+      "lookback_days": 250,
+      "percentile": 80.0
+    },
+
+    "ma_backtest": {
+      "enable": false,
+      "short_period": 20,
+      "long_period": 50,
+      "ret_dd_percentile": 70.0
+    },
+
+    "volatility": {
+      "min": 0.20,
+      "max": 0.60,
+      "lookback_days": 252
+    },
+
+    "momentum": {
+      "periods": [63, 252],
+      "min_positive": true
+    },
+
+    "filter_mode": {
+      "skip_percentile_filtering": true,
+      "skip_range_filtering": true
+    }
+  },
+
+  "scoring_system": {
+    "enable_unbiased_scoring": true,
+    "mode": "legacy",
+
+    "benchmark": {
+      "ts_code": "510300.SH"
+    },
+
+    "windows": {
+      "excess_return_short": 20,
+      "excess_return_long": 60,
+      "trend_quality": 60,
+      "trend_consistency": 63,
+      "price_efficiency": 252,
+      "volume_short": 20,
+      "volume_long": 60,
+      "liquidity_score": 30
+    },
+
+    "weights_v2": {
+      "core_trend": 0.40,
+      "trend_quality": 0.35,
+      "strength": 0.15,
+      "volume": 0.10,
+
+      "core_trend_sub": {
+        "excess_return_20d": 0.40,
+        "excess_return_60d": 0.60
+      }
+    },
+
+    "weights_v1_legacy": {
+      "primary": 0.80,
+      "secondary": 0.20,
+      "adx_score": 0.40,
+      "trend_consistency": 0.30,
+      "price_efficiency": 0.20,
+      "liquidity_score": 0.10,
+      "momentum_3m": 0.30,
+      "momentum_12m": 0.70
+    }
+  },
+
+  "stage3_diversification": {
+    "target_portfolio_size": 20,
+    "max_correlation": 0.7,
+    "min_industries": 3,
+
+    "deduplication": {
+      "enable": true,
+      "min_ratio": 0.8,
+      "thresholds": [0.98, 0.95, 0.92, 0.90]
+    },
+
+    "diversify_v2": {
+      "enable": false,
+      "score_diff_threshold": 0.05
+    },
+
+    "balance_industries": true
+  },
+
+  "industry_classification": {
+    "keywords": {
+      "tech": ["科技", "半导体", "芯片", "软件", "人工智能", "AI", "5G", "互联网", "通信"],
+      "healthcare": ["医药", "医疗", "生物", "健康", "制药", "CXO"],
+      "finance": ["金融", "银行", "证券", "保险", "券商"],
+      "consumer": ["消费", "食品", "白酒", "零售", "商业", "餐饮"],
+      "new_energy": ["新能源", "光伏", "储能", "锂电", "电池", "风电"],
+      "military": ["军工", "国防", "航空", "航天"],
+      "real_estate": ["地产", "房地产", "建筑", "基建"],
+      "cyclical": ["煤炭", "有色", "钢铁", "化工", "石油", "石化"],
+      "manufacturing": ["机械", "设备", "汽车", "制造"]
+    }
+  },
+
+  "output_options": {
+    "verbose": true,
+    "with_analysis": false,
+    "skip_portfolio_optimization": false
+  }
+}

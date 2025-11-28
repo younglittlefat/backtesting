@@ -1,0 +1,14 @@
+{
+  "version": "2.0",
+  "description": "Invalid configuration - weights sum != 1.0",
+
+  "scoring_system": {
+    "mode": "optimized",
+    "weights_v2": {
+      "core_trend": 0.50,
+      "trend_quality": 0.30,
+      "strength": 0.15,
+      "volume": 0.10
+    }
+  }
+}

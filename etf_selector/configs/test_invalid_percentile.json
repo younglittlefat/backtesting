@@ -1,0 +1,10 @@
+{
+  "version": "2.0",
+  "description": "Invalid configuration - percentile out of range",
+
+  "stage2_core_filter": {
+    "adx": {
+      "percentile": 105.0
+    }
+  }
+}

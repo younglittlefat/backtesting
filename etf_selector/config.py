@@ -40,6 +40,18 @@ class FilterConfig:
     target_portfolio_size: int = 20  # 目标组合数量
     min_industries: int = 3  # 最少行业数量
 
+    # 去重配置
+    enable_deduplication: bool = True  # 是否启用智能去重
+    dedup_min_ratio: float = 0.8  # 去重后最小保留比例
+    dedup_thresholds: List[float] = None  # 去重相关性阈值序列
+
+    # V2分散逻辑
+    diversify_v2: bool = False  # 是否启用V2分散逻辑
+    score_diff_threshold: float = 0.05  # Score差异阈值
+
+    # 行业平衡
+    balance_industries: bool = True  # 是否平衡行业分布
+
     # 新增：无偏指标配置（去偏差优化）
     enable_unbiased_scoring: bool = True  # 是否启用无偏评分系统
     use_optimized_score: bool = False  # 是否启用优化后的综合评分（否则使用旧版）
@@ -80,11 +92,24 @@ class FilterConfig:
 
     # 输出路径
     output_dir: str = 'results/selector'
+    output_filename: str = None  # 输出文件名（None则自动生成）
+
+    # 时间范围
+    start_date: str = None  # 开始日期 (YYYY-MM-DD)
+    end_date: str = None  # 结束日期 (YYYY-MM-DD)
+
+    # 输出选项
+    verbose: bool = True  # 是否显示详细日志
+    with_analysis: bool = False  # 是否生成风险分析报告
+    skip_portfolio_optimization: bool = False  # 是否跳过组合优化
 
     def __post_init__(self):
         """初始化后处理"""
         if self.momentum_periods is None:
             self.momentum_periods = [63, 252]  # 3个月、12个月
+
+        if self.dedup_thresholds is None:
+            self.dedup_thresholds = [0.98, 0.95, 0.92, 0.90]  # 默认去重阈值
 
 
 @dataclass
