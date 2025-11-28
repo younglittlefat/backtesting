@@ -1280,9 +1280,11 @@ def main():
     parser.add_argument('--zero-axis-mode', type=str,
                         help='零轴约束模式（预留，默认symmetric）')
 
-    # 执行确认
+    # 执行参数
     parser.add_argument('--yes', '-y', action='store_true',
-                       help='自动确认执行，跳过交互式确认（用于非交互式环境或脚本自动化）')
+                       help='（已弃用）所有操作自动执行，无需确认')
+    parser.add_argument('--force', action='store_true',
+                       help='强制执行，即使当天已有执行记录（会覆盖历史记录）')
 
     args = parser.parse_args()
 
@@ -1408,24 +1410,11 @@ def main():
         print("=" * 80)
         print("")
 
-        # 二次确认
+        # 执行恢复（无需确认）
         print("⚠️  警告: 恢复操作将覆盖当前持仓文件！")
         print(f"  目标文件: {args.portfolio_file}")
         print("")
-
-        if not args.yes:
-            try:
-                confirm = input("是否确认恢复？(yes/no): ").strip().lower()
-                if confirm != 'yes':
-                    print("已取消恢复。")
-                    return
-            except EOFError:
-                print("")
-                print("❌ 错误: 无法读取用户输入（非交互式环境）")
-                print("提示: 请使用 --yes 参数自动确认")
-                return
-        else:
-            print("使用 --yes 参数，自动确认恢复...")
+        print("正在执行恢复...")
 
         # 执行恢复
         portfolio = snapshot_manager.restore_snapshot(
@@ -1664,42 +1653,106 @@ def main():
 
         # 执行模式
         if args.execute:
-            if not sell_trades and not buy_trades:
-                print("无需执行任何交易。")
+            # ===== 幂等性检查：防止同一天重复执行 =====
+            history_dir = Path(args.portfolio_file).parent / 'history'
+            portfolio_name = Path(args.portfolio_file).stem
+            trade_date_compact = generator.end_date.replace('-', '')
+            trade_date_display = generator.end_date  # YYYY-MM-DD 格式用于显示
+
+            # 计算前一天日期，用于快照文件命名
+            # 快照记录的是「执行交易前的持仓状态」，即前一个交易日收盘后的状态
+            # 例如：11月28日执行交易前，持仓反映的是11月27日收盘时的状态
+            trade_date_obj = datetime.strptime(generator.end_date, '%Y-%m-%d')
+            prev_date_obj = trade_date_obj - timedelta(days=1)
+            prev_date_compact = prev_date_obj.strftime('%Y%m%d')
+
+            logger = TradeLogger(str(history_dir))
+            existing_record = logger.get_execution_record(trade_date_compact, portfolio_name)
+
+            if existing_record and not args.force:
+                # 已执行过，显示历史记录并退出
+                print("")
+                print("=" * 70)
+                print(f"⚠️  今日（{trade_date_display}）已执行过交易")
+                print("=" * 70)
+
+                existing_trades = existing_record.get('trades', [])
+                exec_time = existing_record.get('execution_time', existing_record.get('timestamp', '未知'))
+
+                print(f"\n📋 执行时间: {exec_time}")
+                print(f"📋 交易记录数: {existing_record.get('trade_count', len(existing_trades))} 笔\n")
+
+                if existing_trades:
+                    print("📋 今日已执行交易明细：")
+                    for t in existing_trades:
+                        action_icon = "🔴 卖出" if t.get('action') == 'SELL' else "🟢 买入"
+                        shares = t.get('shares', 0)
+                        price = t.get('price', 0)
+                        amount = abs(t.get('amount', 0))
+                        print(f"   {action_icon} {t.get('ts_code', '未知')} × {shares}股 @ ¥{price:.3f} = ¥{amount:,.2f}")
+                else:
+                    print("📋 今日已检查，无需交易（空交易日）")
+
+                # 尝试加载执行后的快照状态
+                snapshot_manager = SnapshotManager(str(history_dir))
+                snapshot_data = snapshot_manager.load_snapshot(trade_date_compact, portfolio_name)
+                if snapshot_data:
+                    snap_portfolio = snapshot_data.get('portfolio', {})
+                    snap_cash = snap_portfolio.get('cash', 0)
+                    snap_positions = snap_portfolio.get('positions', [])
+                    snap_total = snap_cash + sum(p.get('shares', 0) * p.get('entry_price', 0)
+                                                  for p in snap_positions)
+                    print(f"\n📊 当日快照持仓状态：")
+                    print(f"   现金: ¥{snap_cash:,.2f}")
+                    print(f"   持仓数: {len(snap_positions)} 只")
+                    print(f"   估算总值: ¥{snap_total:,.2f}")
+
+                print("")
+                print("=" * 70)
+                print("💡 如需重新执行（会覆盖历史记录），请使用 --force 参数")
+                print("=" * 70)
                 return
 
-            # 确认执行
+            if existing_record and args.force:
+                print("")
+                print("⚠️  检测到今日已有执行记录，使用 --force 强制覆盖...")
+                print("")
+
+            if not sell_trades and not buy_trades:
+                print("无需执行任何交易。")
+                # 记录空交易日志，标记今日已检查
+                logger.log_trades(
+                    [],
+                    date=trade_date_compact,
+                    portfolio_name=portfolio_name,
+                    allow_empty=True,
+                    execution_context={
+                        'status': 'no_trade_needed',
+                        'reason': '今日无交易信号',
+                        'strategy': args.strategy,
+                        'stock_count': len(generator.stock_codes) if hasattr(generator, 'stock_codes') else 0,
+                    }
+                )
+                print(f"✓ 已记录今日检查状态（无需交易）")
+                return
+
+            # 显示交易计划并执行（无需确认）
             print("")
-            print("⚠️  即将执行交易操作，请确认：")
+            print("⚠️  即将执行交易操作：")
             print(f"  - 卖出 {len(sell_trades)} 只标的")
             print(f"  - 买入 {len(buy_trades)} 只标的")
             print("")
 
-            # 检查是否跳过确认
-            if not args.yes:
-                try:
-                    confirm = input("是否确认执行？(yes/no): ").strip().lower()
-                    if confirm != 'yes':
-                        print("已取消执行。")
-                        return
-                except EOFError:
-                    print("")
-                    print("❌ 错误: 无法读取用户输入（非交互式环境）")
-                    print("提示: 请使用 --yes 参数自动确认，或在交互式终端中运行")
-                    return
-            else:
-                print("使用 --yes 参数，自动确认执行...")
-                print("")
-
             # ===== 执行前自动保存快照 =====
-            history_dir = Path(args.portfolio_file).parent / 'history'
+            # 快照使用前一天日期（prev_date_compact），因为：
+            # - 快照记录的是「执行交易前的持仓状态」
+            # - 交易日T执行前的持仓，实际上是T-1日收盘后的持仓状态
+            # - 交易记录（trades_xxx）使用当天日期（trade_date_compact）
             snapshot_manager = SnapshotManager(str(history_dir))
-            portfolio_name = Path(args.portfolio_file).stem
-            trade_date_compact = generator.end_date.replace('-', '')
 
             snapshot_path = snapshot_manager.save_snapshot(
                 portfolio,
-                date=trade_date_compact,
+                date=prev_date_compact,
                 portfolio_name=portfolio_name,
                 snapshot_type='pre_execute'
             )
@@ -1721,17 +1774,21 @@ def main():
             portfolio.save()
             print(f"\n✓ 持仓已更新: {args.portfolio_file}")
 
-            # 记录交易历史
-            if sell_trades or buy_trades:
-                history_dir = Path(args.portfolio_file).parent / 'history'
-                logger = TradeLogger(str(history_dir))
-                all_trades = sell_trades + buy_trades
-                # 使用 --end-date 作为交易日期（YYYYMMDD）
-                trade_date_compact = generator.end_date.replace('-', '')
-                # 在文件名中加入持仓配置名称（不含扩展名），用于跨策略区分
-                portfolio_name = Path(args.portfolio_file).stem
-                logger.log_trades(all_trades, date=trade_date_compact, portfolio_name=portfolio_name)
-                print(f"✓ 交易记录已保存: {history_dir}/trades_{portfolio_name}_{trade_date_compact}.json")
+            # 记录交易历史（使用已初始化的 logger）
+            all_trades = sell_trades + buy_trades
+            logger.log_trades(
+                all_trades,
+                date=trade_date_compact,
+                portfolio_name=portfolio_name,
+                execution_context={
+                    'status': 'executed',
+                    'strategy': args.strategy,
+                    'sell_count': len(sell_trades),
+                    'buy_count': len(buy_trades),
+                    'forced': args.force if hasattr(args, 'force') else False,
+                }
+            )
+            print(f"✓ 交易记录已保存: {history_dir}/trades_{portfolio_name}_{trade_date_compact}.json")
 
         return
 

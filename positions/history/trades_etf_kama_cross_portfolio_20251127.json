@@ -1,0 +1,13 @@
+{
+  "date": "20251127",
+  "trades": [],
+  "trade_count": 0,
+  "timestamp": "2025-11-28 23:19:09",
+  "execution_time": "2025-11-28T23:19:09.638020",
+  "execution_context": {
+    "status": "no_trade_needed",
+    "reason": "今日无交易信号",
+    "strategy": "kama_cross",
+    "stock_count": 0
+  }
+}

@@ -441,7 +441,10 @@ class TradeLogger:
         self.history_dir = Path(history_dir)
         self.history_dir.mkdir(parents=True, exist_ok=True)
 
-    def log_trades(self, trades: List[Trade], date: Optional[str] = None, portfolio_name: Optional[str] = None):
+    def log_trades(self, trades: List[Trade], date: Optional[str] = None,
+                   portfolio_name: Optional[str] = None,
+                   allow_empty: bool = False,
+                   execution_context: Optional[Dict] = None):
         """
         记录交易
 
@@ -449,8 +452,10 @@ class TradeLogger:
             trades: 交易列表
             date: 日期字符串（YYYYMMDD），如果为None则使用当天
             portfolio_name: 可选，持仓配置名称（用于区分不同策略/组合）
+            allow_empty: 是否允许记录空交易（用于标记"已检查无需交易"）
+            execution_context: 可选，执行上下文信息（用于审计）
         """
-        if not trades:
+        if not trades and not allow_empty:
             return
 
         date = date or datetime.now().strftime('%Y%m%d')
@@ -465,13 +470,22 @@ class TradeLogger:
         # 转换为字典列表
         trades_data = [trade.to_dict() for trade in trades]
 
+        # 构建日志数据
+        log_data = {
+            'date': date,
+            'trades': trades_data,
+            'trade_count': len(trades_data),
+            'timestamp': datetime.now().strftime('%Y-%m-%d %H:%M:%S'),
+            'execution_time': datetime.now().isoformat(),
+        }
+
+        # 添加执行上下文（用于审计）
+        if execution_context:
+            log_data['execution_context'] = execution_context
+
         # 保存
         with open(filepath, 'w', encoding='utf-8') as f:
-            json.dump({
-                'date': date,
-                'trades': trades_data,
-                'timestamp': datetime.now().strftime('%Y-%m-%d %H:%M:%S')
-            }, f, ensure_ascii=False, indent=2)
+            json.dump(log_data, f, ensure_ascii=False, indent=2)
 
     def get_trades(self, date: str, portfolio_name: Optional[str] = None) -> List[Trade]:
         """
@@ -508,6 +522,57 @@ class TradeLogger:
             data = json.load(f)
 
         return [Trade.from_dict(t) for t in data.get('trades', [])]
+
+    def get_execution_record(self, date: str, portfolio_name: Optional[str] = None) -> Optional[Dict]:
+        """
+        获取指定日期的完整执行记录（用于幂等性检查）
+
+        Args:
+            date: 日期字符串（YYYYMMDD）
+            portfolio_name: 可选，持仓配置名称
+
+        Returns:
+            执行记录字典或None（未执行过）
+            返回格式: {
+                'date': str,
+                'trades': List[dict],
+                'trade_count': int,
+                'timestamp': str,
+                'execution_time': str,
+                'execution_context': dict (可选)
+            }
+        """
+        # 构建候选文件路径
+        candidates: List[Path] = []
+        if portfolio_name:
+            candidates.append(self.history_dir / f"trades_{portfolio_name}_{date}.json")
+        candidates.append(self.history_dir / f"trades_{date}.json")
+
+        filepath: Optional[Path] = None
+        for p in candidates:
+            if p.exists():
+                filepath = p
+                break
+
+        if filepath is None:
+            # 回退到通配查找，但必须严格匹配 portfolio_name
+            matches = list(self.history_dir.glob(f"trades_*_{date}.json"))
+            if portfolio_name:
+                # 严格匹配包含 portfolio_name 的文件
+                for m in matches:
+                    if portfolio_name in m.name:
+                        filepath = m
+                        break
+                # 如果指定了 portfolio_name 但没找到匹配，不回退到其他文件
+            elif matches:
+                # 仅当未指定 portfolio_name 时，才使用第一个匹配
+                filepath = matches[0]
+
+        if filepath is None:
+            return None
+
+        with open(filepath, 'r', encoding='utf-8') as f:
+            return json.load(f)
 
 
 class PortfolioTrader:

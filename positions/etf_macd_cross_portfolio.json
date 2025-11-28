@@ -1,5 +1,20 @@
 {
-  "cash": 1000000.0,
-  "positions": [],
-  "last_update": "2025-11-24 23:40:43"
+  "cash": 900221.44828,
+  "positions": [
+    {
+      "ts_code": "159819.SZ",
+      "shares": 34700,
+      "entry_price": 1.438,
+      "entry_date": "2025-11-28",
+      "cost": 49908.57972
+    },
+    {
+      "ts_code": "159994.SZ",
+      "shares": 30000,
+      "entry_price": 1.662,
+      "entry_date": "2025-11-28",
+      "cost": 49869.971999999994
+    }
+  ],
+  "last_update": "2025-11-28 23:09:17"
 }

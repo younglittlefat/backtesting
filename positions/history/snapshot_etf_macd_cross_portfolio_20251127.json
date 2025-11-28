@@ -1,0 +1,10 @@
+{
+  "date": "20251128",
+  "timestamp": "2025-11-28 23:09:17",
+  "snapshot_type": "pre_execute",
+  "portfolio": {
+    "cash": 1000000.0,
+    "positions": [],
+    "last_update": "2025-11-24 23:40:43"
+  }
+}

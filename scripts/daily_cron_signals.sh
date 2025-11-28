@@ -65,17 +65,7 @@ run_step "导出近两年ETF日线到 $EXPORT_DIR" \
     --data_type etf --output_dir "$EXPORT_DIR" --export_daily --export_basic \
     --start_date "$START_TWO_YEARS_AGO" --end_date "$TODAY"
 
-# 3) 生成KAMA信号（分析模式）
-run_step "生成KAMA交易信号（analyze）" \
-    ./generate_daily_signals.sh --analyze \
-    --strategy kama_cross \
-    --stock-list results/trend_etf_pool_2019_2021_optimized.csv \
-    --portfolio-file positions/etf_kama_cross_portfolio.json \
-    --load-params config/kama_strategy_params.json \
-    --data-dir data/online_chinese_etf/daily \
-    --end-date "$TODAY"
-
-# 4) 执行KAMA调仓（执行模式）
+# 3) 执行KAMA调仓（执行模式）
 run_step "执行KAMA调仓（execute）" \
     ./generate_daily_signals.sh --execute \
     --strategy kama_cross \
@@ -85,17 +75,7 @@ run_step "执行KAMA调仓（execute）" \
     --data-dir data/online_chinese_etf/daily \
     --end-date "$TODAY"
 
-# 5) 生成MACD信号（分析模式）
-run_step "生成MACD交易信号（analyze）" \
-    ./generate_daily_signals.sh --analyze \
-    --strategy macd_cross \
-    --stock-list results/trend_etf_pool_2019_2021_optimized.csv \
-    --portfolio-file positions/etf_macd_cross_portfolio.json \
-    --load-params config/macd_strategy_params.json \
-    --data-dir data/online_chinese_etf/daily \
-    --end-date "$TODAY"
-
-# 6) 执行MACD调仓（执行模式）
+# 4) 执行MACD调仓（执行模式）
 run_step "执行MACD调仓（execute）" \
     ./generate_daily_signals.sh --execute \
     --strategy macd_cross \
@@ -105,7 +85,7 @@ run_step "执行MACD调仓（execute）" \
     --data-dir data/online_chinese_etf/daily \
     --end-date "$TODAY"
 
-# 7) 发送飞书通知（包含持仓与调仓摘要，必须带关键词“肥叔叔的交易”）
+# 5) 发送飞书通知（包含持仓与调仓摘要，必须带关键词“肥叔叔的交易”）
 FEISHU_WEBHOOK="https://open.feishu.cn/open-apis/bot/v2/hook/9e035bdf-0d61-4620-98ea-b915168f3c24"
 log INFO "开始: 发送飞书通知"
 export LOG_FILE FEISHU_WEBHOOK
@@ -149,8 +129,16 @@ lookback_start = find(r"Lookback起始:\s*([^\n]+)", "未知")
 # 提取策略执行块（execute模式的最后一次）
 def extract_strategy_block(strategy: str) -> str:
     """提取指定策略的execute模式日志块"""
-    # 匹配 execute 模式的策略块
-    pattern = rf"工作模式:\s*execute.*?策略名称:\s*{strategy}(.*?)(?:执行完成！|$)"
+    # 策略名称到中文标识的映射
+    strategy_cn_map = {
+        "kama_cross": "KAMA",
+        "macd_cross": "MACD",
+        "sma_cross": "SMA",
+        "sma_cross_enhanced": "SMA"
+    }
+    strategy_cn = strategy_cn_map.get(strategy, strategy.upper())
+    # 匹配 "开始: 执行XXX调仓" 到 "执行完成！" 之间的内容
+    pattern = rf"开始: 执行{strategy_cn}调仓(.*?)执行完成！"
     matches = re.findall(pattern, content_clean, re.S)
     return matches[-1] if matches else ""
 
@@ -190,6 +178,27 @@ def extract_trade_details(block: str, trade_type: str) -> list:
         })
     return trades
 
+def extract_executed_trades(block: str) -> list:
+    """从幂等性检查的"已执行交易明细"中提取交易记录"""
+    trades = []
+    # 匹配格式: 🟢 买入 159825.SZ × 61100股 @ ¥0.818 = ¥49,989.80
+    #          🔴 卖出 159825.SZ × 61100股 @ ¥0.818 = ¥49,989.80
+    executed_pattern = r"([🟢🔴])\s*(买入|卖出)\s+(\d+\.\w+)\s*×\s*(\d+)股\s*@\s*¥([\d.]+)\s*=\s*¥([\d,.]+)"
+    idx = 1
+    for m in re.finditer(executed_pattern, block):
+        icon, action, code, shares, price, amount = m.groups()
+        trades.append({
+            "idx": str(idx),
+            "code": code,
+            "action": action,
+            "price": f"¥{price}",
+            "quantity": f"{shares} 股",
+            "amount": f"¥{amount}",
+            "reason": "已执行"
+        })
+        idx += 1
+    return trades
+
 def format_trade_detail(trade: dict) -> str:
     """格式化单笔交易详情"""
     return (
@@ -204,9 +213,21 @@ all_strategy_data = {}
 for strategy in ["kama_cross", "macd_cross"]:
     block = extract_strategy_block(strategy)
     if block:
+        buy_trades = extract_trade_details(block, "买入")
+        sell_trades = extract_trade_details(block, "卖出")
+
+        # 如果常规交易详情为空，尝试从"已执行交易明细"中提取（幂等性检查场景）
+        if not buy_trades and not sell_trades:
+            executed_trades = extract_executed_trades(block)
+            for t in executed_trades:
+                if t["action"] == "买入":
+                    buy_trades.append(t)
+                else:
+                    sell_trades.append(t)
+
         all_strategy_data[strategy] = {
-            "buy": extract_trade_details(block, "买入"),
-            "sell": extract_trade_details(block, "卖出"),
+            "buy": buy_trades,
+            "sell": sell_trades,
             "portfolio": extract_portfolio_summary(block)
         }
 
