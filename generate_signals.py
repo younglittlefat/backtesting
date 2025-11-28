@@ -27,6 +27,9 @@ os.environ['BACKTESTING_DISABLE_PROGRESS'] = 'true'
 PROJECT_ROOT = Path(__file__).parent
 sys.path.insert(0, str(PROJECT_ROOT))
 
+# 导入自定义 ArgumentParser（支持下划线和连字符两种参数格式）
+from backtest_runner.utils.argparse_utils import UnderscoreHyphenArgumentParser
+
 from backtesting import Backtest
 from backtesting.lib import crossover
 from utils.data_loader import load_chinese_ohlcv_data, load_dual_price_data
@@ -1196,7 +1199,7 @@ def print_trade_plan(sell_trades: List[Trade],
 
 def main():
     """主函数"""
-    parser = argparse.ArgumentParser(
+    parser = UnderscoreHyphenArgumentParser(
         description='生成实盘交易信号',
         formatter_class=argparse.RawDescriptionHelpFormatter
     )

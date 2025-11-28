@@ -140,15 +140,16 @@ class TrendETFSelector:
             # 总是执行第三级筛选，包括去重和分散化
             final_etfs = optimizer.optimize_portfolio(
                 stage2_etfs,
-                max_correlation=0.7,
+                max_correlation=self.config.max_correlation,
                 target_size=target_size,
                 start_date=start_date,
                 end_date=end_date,
-                enable_deduplication=True,  # 启用智能去重
-                dedup_min_ratio=0.8,        # 最小保留比例80%
+                enable_deduplication=self.config.enable_deduplication,
+                dedup_min_ratio=self.config.dedup_min_ratio,
                 verbose=verbose,
                 diversify_v2=diversify_v2,
-                score_diff_threshold=score_diff_threshold
+                score_diff_threshold=score_diff_threshold,
+                dedup_thresholds=self.config.dedup_thresholds
             )
         except ImportError:
             if verbose:

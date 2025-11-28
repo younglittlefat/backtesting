@@ -4,6 +4,7 @@ import argparse
 from typing import List
 
 from .strategy_registry import get_global_registry
+from ..utils.argparse_utils import UnderscoreHyphenArgumentParser
 
 
 def create_argument_parser() -> argparse.ArgumentParser:
@@ -11,9 +12,9 @@ def create_argument_parser() -> argparse.ArgumentParser:
     创建命令行参数解析器
 
     Returns:
-        配置好的ArgumentParser对象
+        配置好的ArgumentParser对象（支持下划线和连字符两种参数格式）
     """
-    parser = argparse.ArgumentParser(
+    parser = UnderscoreHyphenArgumentParser(
         description='中国市场回测系统 - 使用 backtesting.py 对 ETF / 基金进行策略回测',
         formatter_class=argparse.RawDescriptionHelpFormatter,
         epilog="""
@@ -29,6 +30,10 @@ def create_argument_parser() -> argparse.ArgumentParser:
 
   # 限定日期范围
   python backtest_runner.py -s all --start-date 2020-01-01 --end-date 2023-12-31
+
+  # 参数支持下划线和连字符两种格式（以下两种写法等价）
+  python backtest_runner.py --enable-hysteresis --hysteresis-mode std
+  python backtest_runner.py --enable_hysteresis --hysteresis_mode std
         """,
     )
 

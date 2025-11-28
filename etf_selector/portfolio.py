@@ -172,7 +172,8 @@ class PortfolioOptimizer:
         end_date: Optional[str] = None,
         verbose: bool = True,
         diversify_v2: bool = False,
-        score_diff_threshold: float = 0.05
+        score_diff_threshold: float = 0.05,
+        dedup_thresholds: List[float] = None
     ) -> List[Dict]:
         """智能去重：动态调整相关性阈值，确保目标数量
 
@@ -237,9 +238,10 @@ class PortfolioOptimizer:
             print(f"  ✅ 相关系数矩阵: {correlation_matrix.shape[0]} × {correlation_matrix.shape[1]}")
 
         # 动态阈值去重
-        thresholds = [0.98, 0.95, 0.92, 0.90]  # 从严格到宽松
+        if dedup_thresholds is None:
+            dedup_thresholds = [0.98, 0.95, 0.92, 0.90]  # 默认阈值序列
 
-        for i, threshold in enumerate(thresholds):
+        for i, threshold in enumerate(dedup_thresholds):
             try:
                 deduplicated = self._remove_duplicates_by_correlation(
                     etf_candidates, correlation_matrix, threshold, verbose=(verbose and i==0),
@@ -469,7 +471,8 @@ class PortfolioOptimizer:
         dedup_min_ratio: float = 0.8,
         verbose: bool = True,
         diversify_v2: bool = False,
-        score_diff_threshold: float = 0.05
+        score_diff_threshold: float = 0.05,
+        dedup_thresholds: List[float] = None
     ) -> List[Dict]:
         """组合优化：构建低相关性、分散化组合
 
@@ -485,6 +488,7 @@ class PortfolioOptimizer:
             verbose: 是否打印详细信息
             diversify_v2: 是否启用V2分散逻辑（P0: max pairwise相关性, P1: Score优先去重）
             score_diff_threshold: 去重时Score差异阈值，超过则无条件保留高分（仅diversify_v2生效）
+            dedup_thresholds: 去重相关性阈值序列
 
         Returns:
             优化后的ETF组合列表，按原排序保持
@@ -514,7 +518,8 @@ class PortfolioOptimizer:
                 end_date=end_date,
                 verbose=verbose,
                 diversify_v2=diversify_v2,
-                score_diff_threshold=score_diff_threshold
+                score_diff_threshold=score_diff_threshold,
+                dedup_thresholds=dedup_thresholds
             )
 
         # 第二步：计算收益率矩阵和相关性矩阵

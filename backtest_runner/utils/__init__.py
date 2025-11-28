@@ -14,6 +14,10 @@ from .display_utils import (
     print_low_volatility_report,
     print_backtest_summary,
 )
+from .argparse_utils import (
+    UnderscoreHyphenArgumentParser,
+    normalize_args,
+)
 
 __all__ = [
     'parse_multi_values',
@@ -26,4 +30,6 @@ __all__ = [
     'print_optimization_info',
     'print_low_volatility_report',
     'print_backtest_summary',
+    'UnderscoreHyphenArgumentParser',
+    'normalize_args',
 ]
