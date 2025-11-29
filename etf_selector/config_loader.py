@@ -194,9 +194,8 @@ class ConfigLoader:
             if json_key in ['version', 'description']:
                 continue
 
-            # Handle industry keywords separately
+            # Skip industry keywords (not part of FilterConfig, uses DEFAULT_INDUSTRY_KEYWORDS instead)
             if json_key == 'industry_classification.keywords':
-                result['industry_keywords'] = value
                 continue
 
             # Map using KEY_MAPPING
