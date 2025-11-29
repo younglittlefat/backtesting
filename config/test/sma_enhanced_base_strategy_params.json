@@ -1,0 +1,45 @@
+{
+  "sma_cross_enhanced": {
+    "optimized": false,
+    "optimization_date": null,
+    "optimization_period": null,
+    "stock_pool": null,
+    "params": {
+      "n1": 10,
+      "n2": 20
+    },
+    "performance": {
+      "sharpe_ratio": null,
+      "annual_return": null,
+      "max_drawdown": null,
+      "return_pct": null
+    },
+    "notes": "SMA Enhanced策略基线配置 - 用于贪心搜索实验",
+    "runtime_config": {
+      "filters": {
+        "enable_slope_filter": false,
+        "enable_adx_filter": false,
+        "enable_volume_filter": false,
+        "enable_confirm_filter": false,
+        "slope_lookback": 5,
+        "adx_period": 14,
+        "adx_threshold": 25,
+        "volume_period": 20,
+        "volume_ratio": 1.2,
+        "confirm_bars": 2
+      },
+      "loss_protection": {
+        "enable_loss_protection": false,
+        "max_consecutive_losses": 3,
+        "pause_bars": 10
+      },
+      "stop_loss": {
+        "enable_atr_stop": false,
+        "atr_period": 14,
+        "atr_multiplier": 2.5,
+        "enable_trailing_stop": false,
+        "trailing_stop_pct": 0.05
+      }
+    }
+  }
+}
