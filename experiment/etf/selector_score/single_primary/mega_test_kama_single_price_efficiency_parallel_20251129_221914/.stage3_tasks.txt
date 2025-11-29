@@ -1,0 +1,7 @@
+k3_enable-adx-filter_enable-atr-stop_enable-slope-confirmation enable-adx-filter enable-atr-stop enable-slope-confirmation
+k3_enable-atr-stop_enable-efficiency-filter_enable-slope-filter enable-atr-stop enable-efficiency-filter enable-slope-filter
+k3_enable-atr-stop_enable-loss-protection_enable-slope-confirmation enable-atr-stop enable-loss-protection enable-slope-confirmation
+k3_enable-atr-stop_enable-loss-protection_enable-slope-filter enable-atr-stop enable-loss-protection enable-slope-filter
+k3_enable-atr-stop_enable-slope-confirmation_enable-slope-filter enable-atr-stop enable-slope-confirmation enable-slope-filter
+k3_enable-atr-stop_enable-slope-confirmation_enable-volume-filter enable-atr-stop enable-slope-confirmation enable-volume-filter
+k3_enable-loss-protection_enable-slope-confirmation_enable-slope-filter enable-loss-protection enable-slope-confirmation enable-slope-filter

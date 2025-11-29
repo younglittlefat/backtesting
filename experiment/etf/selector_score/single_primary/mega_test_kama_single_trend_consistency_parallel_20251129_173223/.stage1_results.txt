@@ -1,0 +1,9 @@
+SUCCESS:single_enable-slope-filter
+SUCCESS:single_enable-slope-confirmation
+SUCCESS:single_enable-efficiency-filter
+SUCCESS:single_enable-adx-filter
+SUCCESS:single_enable-volume-filter
+SUCCESS:single_enable-confirm-filter
+SUCCESS:single_enable-loss-protection
+SUCCESS:single_enable-trailing-stop
+SUCCESS:single_enable-atr-stop

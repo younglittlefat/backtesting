@@ -1,0 +1,82 @@
+[
+  {
+    "options": [
+      "enable-adx-filter",
+      "enable-atr-stop",
+      "enable-confirm-filter"
+    ],
+    "sharpe_mean": 0.29,
+    "sharpe_median": 0.36,
+    "exp_name": "k3_enable-adx-filter_enable-atr-stop_enable-confirm-filter"
+  },
+  {
+    "options": [
+      "enable-adx-filter",
+      "enable-atr-stop",
+      "enable-slope-confirmation"
+    ],
+    "sharpe_mean": 0.58,
+    "sharpe_median": 0.6,
+    "exp_name": "k3_enable-adx-filter_enable-atr-stop_enable-slope-confirmation"
+  },
+  {
+    "options": [
+      "enable-atr-stop",
+      "enable-confirm-filter",
+      "enable-slope-filter"
+    ],
+    "sharpe_mean": 0.35,
+    "sharpe_median": 0.39,
+    "exp_name": "k3_enable-atr-stop_enable-confirm-filter_enable-slope-filter"
+  },
+  {
+    "options": [
+      "enable-atr-stop",
+      "enable-loss-protection",
+      "enable-slope-confirmation"
+    ],
+    "sharpe_mean": 0.53,
+    "sharpe_median": 0.46,
+    "exp_name": "k3_enable-atr-stop_enable-loss-protection_enable-slope-confirmation"
+  },
+  {
+    "options": [
+      "enable-atr-stop",
+      "enable-loss-protection",
+      "enable-slope-filter"
+    ],
+    "sharpe_mean": 0.37,
+    "sharpe_median": 0.41,
+    "exp_name": "k3_enable-atr-stop_enable-loss-protection_enable-slope-filter"
+  },
+  {
+    "options": [
+      "enable-atr-stop",
+      "enable-slope-confirmation",
+      "enable-slope-filter"
+    ],
+    "sharpe_mean": 0.61,
+    "sharpe_median": 0.59,
+    "exp_name": "k3_enable-atr-stop_enable-slope-confirmation_enable-slope-filter"
+  },
+  {
+    "options": [
+      "enable-atr-stop",
+      "enable-slope-confirmation",
+      "enable-volume-filter"
+    ],
+    "sharpe_mean": 0.62,
+    "sharpe_median": 0.61,
+    "exp_name": "k3_enable-atr-stop_enable-slope-confirmation_enable-volume-filter"
+  },
+  {
+    "options": [
+      "enable-atr-stop",
+      "enable-slope-filter",
+      "enable-volume-filter"
+    ],
+    "sharpe_mean": 0.56,
+    "sharpe_median": 0.53,
+    "exp_name": "k3_enable-atr-stop_enable-slope-filter_enable-volume-filter"
+  }
+]

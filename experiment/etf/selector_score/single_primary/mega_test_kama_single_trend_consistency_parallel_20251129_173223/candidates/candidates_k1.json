@@ -1,0 +1,66 @@
+[
+  {
+    "options": [
+      "enable-efficiency-filter"
+    ],
+    "sharpe_mean": 0.53,
+    "sharpe_median": 0.47,
+    "exp_name": "single_enable-efficiency-filter"
+  },
+  {
+    "options": [
+      "enable-slope-confirmation"
+    ],
+    "sharpe_mean": 0.4,
+    "sharpe_median": 0.31,
+    "exp_name": "single_enable-slope-confirmation"
+  },
+  {
+    "options": [
+      "enable-slope-filter"
+    ],
+    "sharpe_mean": 0.2,
+    "sharpe_median": 0.25,
+    "exp_name": "single_enable-slope-filter"
+  },
+  {
+    "options": [
+      "enable-adx-filter"
+    ],
+    "sharpe_mean": 0.15,
+    "sharpe_median": 0.19,
+    "exp_name": "single_enable-adx-filter"
+  },
+  {
+    "options": [
+      "enable-volume-filter"
+    ],
+    "sharpe_mean": 0.44,
+    "sharpe_median": 0.47,
+    "exp_name": "single_enable-volume-filter"
+  },
+  {
+    "options": [
+      "enable-confirm-filter"
+    ],
+    "sharpe_mean": 0.11,
+    "sharpe_median": 0.21,
+    "exp_name": "single_enable-confirm-filter"
+  },
+  {
+    "options": [
+      "enable-loss-protection"
+    ],
+    "sharpe_mean": 0.13,
+    "sharpe_median": 0.07,
+    "exp_name": "single_enable-loss-protection"
+  },
+  {
+    "options": [
+      "enable-atr-stop"
+    ],
+    "sharpe_mean": 0.19,
+    "sharpe_median": 0.13,
+    "exp_name": "single_enable-atr-stop"
+  }
+]
