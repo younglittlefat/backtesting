@@ -72,6 +72,7 @@ class ConfigLoader:
         'scoring_system.weights_v2.trend_quality': 'trend_quality_weight',
         'scoring_system.weights_v2.strength': 'strength_weight',
         'scoring_system.weights_v2.volume': 'volume_weight',
+        'scoring_system.weights_v2.idr': 'idr_weight',
         'scoring_system.weights_v2.core_trend_sub.excess_return_20d': 'excess_return_20d_weight',
         'scoring_system.weights_v2.core_trend_sub.excess_return_60d': 'excess_return_60d_weight',
 
@@ -228,7 +229,8 @@ class ConfigLoader:
                 config.core_trend_weight +
                 config.trend_quality_weight +
                 config.strength_weight +
-                config.volume_weight
+                config.volume_weight +
+                config.idr_weight
             )
             if abs(v2_weights_sum - 1.0) > 0.01:
                 errors.append(
@@ -413,6 +415,7 @@ class ConfigLoader:
             print(f"    trend_quality_weight: {config.trend_quality_weight:.2f}")
             print(f"    strength_weight: {config.strength_weight:.2f}")
             print(f"    volume_weight: {config.volume_weight:.2f}")
+            print(f"    idr_weight: {config.idr_weight:.2f}")
             print(f"    核心趋势子权重:")
             print(f"      excess_return_20d_weight: {config.excess_return_20d_weight:.2f}")
             print(f"      excess_return_60d_weight: {config.excess_return_60d_weight:.2f}")

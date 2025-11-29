@@ -249,3 +249,80 @@ def calculate_volume_trend(
         return np.nan
 
     return float(short_mean / long_mean)
+
+
+def calculate_idr(
+    close: pd.Series,
+    benchmark_close: Optional[pd.Series],
+    period: int,
+    annualization_factor: int = 250
+) -> float:
+    """计算IDR (Information Discrete Ratio) - 信息离散比率
+
+    风险调整后的超额收益指标，将超额收益除以波动率进行标准化，
+    避免高波动标的（如妖股/妖基）获得过高评分。
+
+    公式: IDR = (R_asset - R_benchmark) / (σ_daily × √250)
+
+    Args:
+        close: 收盘价序列
+        benchmark_close: 基准收盘价序列，None则计算绝对收益
+        period: 计算周期（交易日）
+        annualization_factor: 年化因子，默认250个交易日
+
+    Returns:
+        IDR值，如果数据不足返回NaN
+
+    Example:
+        >>> # 两个ETF超额收益都是20%，一个波动率10%，一个30%
+        >>> # 前者IDR更高(2.0 vs 0.67)，说明更优质
+        >>> idr = calculate_idr(close, benchmark, 60)
+    """
+    if period <= 0:
+        return np.nan
+
+    close = close.dropna()
+    if len(close) <= period:
+        return np.nan
+
+    # 计算资产收益率
+    asset_return = close.iloc[-1] / close.iloc[-period - 1] - 1
+
+    # 计算基准收益率
+    if benchmark_close is not None:
+        aligned = pd.concat(
+            [close.rename('asset'), benchmark_close.rename('benchmark')],
+            axis=1,
+            join='inner'
+        ).dropna()
+
+        if len(aligned) <= period:
+            benchmark_return = 0.0
+        else:
+            benchmark_return = aligned['benchmark'].iloc[-1] / aligned['benchmark'].iloc[-period - 1] - 1
+    else:
+        benchmark_return = 0.0
+
+    excess_return = asset_return - benchmark_return
+
+    # 计算期间日收益率的波动率
+    daily_returns = close.pct_change().dropna()
+    if len(daily_returns) < period:
+        daily_returns_period = daily_returns
+    else:
+        daily_returns_period = daily_returns.tail(period)
+
+    if len(daily_returns_period) < 2:
+        return np.nan
+
+    daily_vol = daily_returns_period.std()
+    if daily_vol <= 0 or np.isnan(daily_vol):
+        return np.nan
+
+    # 年化波动率
+    annual_vol = daily_vol * np.sqrt(annualization_factor)
+
+    # IDR = 超额收益 / 年化波动率
+    idr = excess_return / annual_vol
+
+    return float(idr)

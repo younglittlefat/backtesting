@@ -72,6 +72,7 @@ class FilterConfig:
     trend_quality_weight: float = 0.35  # 趋势质量权重
     strength_weight: float = 0.15  # ADX趋势强度权重
     volume_weight: float = 0.10  # 资金动能权重
+    idr_weight: float = 0.0  # IDR权重（风险调整后超额收益），默认0不启用
 
     # 核心趋势子权重
     excess_return_20d_weight: float = 0.40  # 20日超额收益权重

@@ -25,6 +25,7 @@ class ScoringWeights:
     trend_quality_weight: float = 0.35
     strength_weight: float = 0.15
     volume_weight: float = 0.10
+    idr_weight: float = 0.0  # IDR权重，默认0（不启用）
 
     # 核心趋势子权重（20日 / 60日超额收益）
     excess_return_20d_weight: float = 0.40
@@ -36,7 +37,8 @@ class ScoringWeights:
             self.core_trend_weight +
             self.trend_quality_weight +
             self.strength_weight +
-            self.volume_weight
+            self.volume_weight +
+            self.idr_weight
         )
         assert abs(top_level_sum - 1.0) < 0.01, f"总权重应为1，实际为{top_level_sum}"
 
@@ -79,6 +81,10 @@ class UnbiasedScorer:
         """资金动能：成交量趋势标准化分数。"""
         return self._get_valid_score(indicators.get('volume_trend_normalized', 0.0))
 
+    def calculate_idr_score(self, indicators: Dict[str, float]) -> float:
+        """IDR：风险调整后超额收益标准化分数。"""
+        return self._get_valid_score(indicators.get('idr_normalized', 0.0))
+
     def calculate_final_score(self, indicators: Dict[str, float]) -> Dict[str, float]:
         """
         计算最终综合评分
@@ -92,18 +98,21 @@ class UnbiasedScorer:
                 - trend_quality_score: 趋势质量评分
                 - strength_score: 趋势强度评分
                 - volume_score: 资金动能评分
+                - idr_score: IDR评分（风险调整后超额收益）
                 - final_score: 综合评分
         """
         core_trend_score = self.calculate_core_trend_score(indicators)
         trend_quality_score = self.calculate_trend_quality_score(indicators)
         strength_score = self.calculate_strength_score(indicators)
         volume_score = self.calculate_volume_score(indicators)
+        idr_score = self.calculate_idr_score(indicators)
 
         final_score = (
             self.weights.core_trend_weight * core_trend_score +
             self.weights.trend_quality_weight * trend_quality_score +
             self.weights.strength_weight * strength_score +
-            self.weights.volume_weight * volume_score
+            self.weights.volume_weight * volume_score +
+            self.weights.idr_weight * idr_score
         )
 
         return {
@@ -111,6 +120,7 @@ class UnbiasedScorer:
             'trend_quality_score': trend_quality_score,
             'strength_score': strength_score,
             'volume_score': volume_score,
+            'idr_score': idr_score,
             'final_score': final_score
         }
 
@@ -283,6 +293,7 @@ def calculate_etf_scores(
             - trend_quality: 趋势质量（R^2等融合指标）
             - adx_mean: ADX均值
             - volume_trend: 成交量趋势（20日均量/60日均量）
+            - idr: IDR指标（可选，风险调整后超额收益）
         scorer: 评分器实例，默认None使用默认权重
         normalize_method: 标准化方法
 
@@ -298,7 +309,8 @@ def calculate_etf_scores(
         'excess_return_60d',
         'trend_quality',
         'adx_mean',
-        'volume_trend'
+        'volume_trend',
+        'idr'
     ]
 
     # 标准化指标
@@ -317,6 +329,7 @@ def calculate_etf_scores(
             'trend_quality_normalized': row.get('trend_quality_normalized', 0.0),
             'adx_mean_normalized': row.get('adx_mean_normalized', 0.0),
             'volume_trend_normalized': row.get('volume_trend_normalized', 0.0),
+            'idr_normalized': row.get('idr_normalized', 0.0),
         }
 
         score_dict = scorer.calculate_final_score(indicators)
@@ -327,6 +340,7 @@ def calculate_etf_scores(
     df_normalized['trend_quality_score'] = [s['trend_quality_score'] for s in scores]
     df_normalized['strength_score'] = [s['strength_score'] for s in scores]
     df_normalized['volume_score'] = [s['volume_score'] for s in scores]
+    df_normalized['idr_score'] = [s['idr_score'] for s in scores]
     df_normalized['final_score'] = [s['final_score'] for s in scores]
 
     # 按最终评分排序
@@ -402,6 +416,7 @@ def create_custom_scorer(
     trend_quality_weight: float = 0.35,
     strength_weight: float = 0.15,
     volume_weight: float = 0.10,
+    idr_weight: float = 0.0,
     excess_return_20d_weight: float = 0.40,
     excess_return_60d_weight: float = 0.60
 ) -> UnbiasedScorer:
@@ -413,6 +428,7 @@ def create_custom_scorer(
         trend_quality_weight: 趋势质量权重
         strength_weight: 趋势强度权重
         volume_weight: 资金动能权重
+        idr_weight: IDR权重（风险调整后超额收益）
         excess_return_20d_weight: 核心趋势中20日超额收益权重
         excess_return_60d_weight: 核心趋势中60日超额收益权重
 
@@ -424,6 +440,7 @@ def create_custom_scorer(
         trend_quality_weight=trend_quality_weight,
         strength_weight=strength_weight,
         volume_weight=volume_weight,
+        idr_weight=idr_weight,
         excess_return_20d_weight=excess_return_20d_weight,
         excess_return_60d_weight=excess_return_60d_weight
     )

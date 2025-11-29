@@ -74,6 +74,7 @@
       "trend_quality": 0.35,
       "strength": 0.15,
       "volume": 0.10,
+      "idr": 0.0,
 
       "core_trend_sub": {
         "excess_return_20d": 0.40,

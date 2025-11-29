@@ -23,6 +23,7 @@ from .indicators import (
     calculate_excess_return,
     calculate_trend_r2,
     calculate_volume_trend,
+    calculate_idr,
 )
 from .backtest_engine import calculate_backtest_metrics
 from .unbiased_indicators import calculate_all_unbiased_indicators
@@ -387,6 +388,13 @@ class TrendETFSelector:
                     unbiased_indicators.get('price_efficiency', np.nan)
                 ])
 
+                # 7. IDR（风险调整后超额收益）
+                idr = calculate_idr(
+                    price_series,
+                    benchmark_close,
+                    period=self.config.excess_return_long_window
+                )
+
                 # 应用筛选条件
                 # 波动率范围检查（可选）
                 if not self.config.skip_stage2_range_filtering:
@@ -425,6 +433,7 @@ class TrendETFSelector:
                     'trend_quality': trend_quality,
                     'trend_quality_r2': trend_quality_r2,
                     'volume_trend': volume_trend,
+                    'idr': idr,
                 })
 
             except Exception as e:
@@ -479,6 +488,7 @@ class TrendETFSelector:
                         trend_quality_weight=self.config.trend_quality_weight,
                         strength_weight=self.config.strength_weight,
                         volume_weight=self.config.volume_weight,
+                        idr_weight=self.config.idr_weight,
                         excess_return_20d_weight=self.config.excess_return_20d_weight,
                         excess_return_60d_weight=self.config.excess_return_60d_weight
                     )
@@ -491,12 +501,17 @@ class TrendETFSelector:
                     )
 
                     if verbose:
-                        print(
-                            "  🎯 启用无偏评分系统（优化版）："
-                            f"超额收益{self.config.core_trend_weight:.0%} + "
-                            f"趋势质量{self.config.trend_quality_weight:.0%} + "
-                            f"ADX{self.config.strength_weight:.0%} + "
+                        weights_parts = [
+                            f"超额收益{self.config.core_trend_weight:.0%}",
+                            f"趋势质量{self.config.trend_quality_weight:.0%}",
+                            f"ADX{self.config.strength_weight:.0%}",
                             f"资金动能{self.config.volume_weight:.0%}"
+                        ]
+                        if self.config.idr_weight > 0:
+                            weights_parts.append(f"IDR{self.config.idr_weight:.0%}")
+                        print(
+                            "  🎯 启用无偏评分系统（优化版）：" +
+                            " + ".join(weights_parts)
                         )
                 else:
                     # 创建评分器（旧版）
@@ -559,13 +574,18 @@ class TrendETFSelector:
                         print(f"  📊 成交量趋势(20/60): {df['volume_trend'].min():.2f} ~ {df['volume_trend'].max():.2f}")
                         print(f"  📊 超额收益20日: {df['excess_return_20d'].min():.2%} ~ {df['excess_return_20d'].max():.2%}")
                         print(f"  📊 超额收益60日: {df['excess_return_60d'].min():.2%} ~ {df['excess_return_60d'].max():.2%}")
+                        if 'idr' in df.columns:
+                            print(f"  📊 IDR(风险调整超额收益): {df['idr'].min():.2f} ~ {df['idr'].max():.2f}")
                         print(f"  📊 综合评分: {df['final_score'].min():.2f} ~ {df['final_score'].max():.2f}")
-                        print(
-                            f"  📊 评分权重: 超额收益{self.config.core_trend_weight:.0%}/"
+                        weights_str = (
+                            f"超额收益{self.config.core_trend_weight:.0%}/"
                             f"质量{self.config.trend_quality_weight:.0%}/"
                             f"ADX{self.config.strength_weight:.0%}/"
                             f"资金{self.config.volume_weight:.0%}"
                         )
+                        if self.config.idr_weight > 0:
+                            weights_str += f"/IDR{self.config.idr_weight:.0%}"
+                        print(f"  📊 评分权重: {weights_str}")
                     else:
                         print(f"  📊 趋势一致性: {df['trend_consistency'].min():.2f} ~ {df['trend_consistency'].max():.2f}")
                         print(f"  📊 价格效率: {df['price_efficiency'].min():.2f} ~ {df['price_efficiency'].max():.2f}")

@@ -167,3 +167,79 @@ def select_by_clustering(self, etf_candidates, correlation_matrix, target_size=2
 ```
 
 这个方案能一次性解决你的 **Q1 (相关性准则)** 和 **Q5 (行业分类)** 问题。你觉得这个方向如何？
+
+-----
+
+## 实现状态记录
+
+本节记录各优化建议的实现状态，便于后续开发者查阅。
+
+### 一、评分体系优化 实现状态
+
+#### 1. IDR (Information Discrete Ratio) - ✅ 已实现 (2025-11-29)
+
+**实现概述**：
+- IDR是风险调整后的超额收益指标，公式：`IDR = (R_asset - R_benchmark) / (σ_daily × √250)`
+- 默认权重为0（不启用），可通过配置文件或CLI参数启用
+- 完全向后兼容，不影响现有配置
+
+**关键代码位置**：
+
+| 文件 | 行号 | 说明 |
+|------|------|------|
+| `etf_selector/indicators.py` | 254-328 | `calculate_idr()` 函数实现 |
+| `etf_selector/scoring.py` | 28 | `ScoringWeights.idr_weight` 字段定义 |
+| `etf_selector/scoring.py` | 84-86 | `UnbiasedScorer.calculate_idr_score()` 方法 |
+| `etf_selector/scoring.py` | 110-115 | `calculate_final_score()` 中IDR评分计算 |
+| `etf_selector/scoring.py` | 307-313, 332, 343 | `calculate_etf_scores()` IDR标准化和评分 |
+| `etf_selector/scoring.py` | 419, 431, 443 | `create_custom_scorer()` IDR参数 |
+| `etf_selector/config.py` | 75 | `FilterConfig.idr_weight` 配置字段 |
+| `etf_selector/config_loader.py` | 75 | JSON配置映射 `scoring_system.weights_v2.idr` |
+| `etf_selector/config_loader.py` | 233 | 权重验证逻辑 |
+| `etf_selector/config_loader.py` | 418 | `print_all_params()` IDR显示 |
+| `etf_selector/configs/default.json` | 77 | 默认配置 `"idr": 0.0` |
+| `etf_selector/selector.py` | 26 | 导入 `calculate_idr` |
+| `etf_selector/selector.py` | 391-396 | IDR指标计算调用 |
+| `etf_selector/selector.py` | 436 | metrics_list 中存储 `'idr': idr` |
+| `etf_selector/selector.py` | 491 | 评分器创建时传递 `idr_weight` |
+
+**配置方式**：
+```json
+// etf_selector/configs/your_config.json
+"weights_v2": {
+  "core_trend": 0.35,      // 建议从0.40降低
+  "trend_quality": 0.30,
+  "strength": 0.15,
+  "volume": 0.05,          // 建议从0.10降低
+  "idr": 0.15              // 新增IDR权重
+}
+```
+
+**验收测试**：已通过全部6项测试（默认配置运行、单元测试、启用IDR运行等）
+
+#### 2. Sharpe Momentum - ❌ 未实现（与IDR本质相同，合并到IDR）
+
+根据需求文档，Sharpe Momentum和IDR的计算公式完全一致，因此只实现了IDR，避免重复代码。
+
+#### 3. 量能指标修正 - 🔲 待实现
+
+#### 4. 长周期趋势过滤器 - 🔲 待实现
+
+### 二、分散化与组合优化 实现状态
+
+#### 1. 聚类算法替代贪心算法 - 🔲 待实现
+
+#### 2. 波动率倒数加权 - 🔲 待实现
+
+### 三、其他建议 实现状态
+
+#### Q2: Score差异阈值调整 - 🔲 待评估
+#### Q3: 基准替换为中证全指 - 🔲 待实现
+
+-----
+
+## 更新日志
+
+| 日期 | 更新内容 | 开发者 |
+|------|---------|--------|
+| 2025-11-29 | 实现IDR指标及评分系统集成 | Claude |
