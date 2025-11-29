@@ -4,8 +4,7 @@
 
   "paths": {
     "data_dir": "data/chinese_etf",
-    "output_dir": "results/selector",
-    "output_filename": null
+    "output_path": null
   },
 
   "time_range": {
@@ -59,13 +58,17 @@
     },
 
     "windows": {
-      "excess_return_short": 20,
-      "excess_return_long": 60,
+      "excess_return": {
+        "short": 20,
+        "long": 60
+      },
+      "volume": {
+        "short": 20,
+        "long": 60
+      },
       "trend_quality": 60,
       "trend_consistency": 63,
       "price_efficiency": 252,
-      "volume_short": 20,
-      "volume_long": 60,
       "liquidity_score": 30
     },
 
@@ -83,14 +86,22 @@
     },
 
     "weights_v1_legacy": {
-      "primary": 0.80,
-      "secondary": 0.20,
-      "adx_score": 0.40,
-      "trend_consistency": 0.30,
-      "price_efficiency": 0.20,
-      "liquidity_score": 0.10,
-      "momentum_3m": 0.30,
-      "momentum_12m": 0.70
+      "primary": {
+        "weight": 0.80,
+        "sub_weights": {
+          "adx_score": 0.40,
+          "trend_consistency": 0.30,
+          "price_efficiency": 0.20,
+          "liquidity_score": 0.10
+        }
+      },
+      "secondary": {
+        "weight": 0.20,
+        "sub_weights": {
+          "momentum_3m": 0.30,
+          "momentum_12m": 0.70
+        }
+      }
     }
   },
 

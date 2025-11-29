@@ -1,46 +1,52 @@
 #!/bin/bash
 ################################################################################
-# MACD策略贪心筛选超参组合测试脚本
+# KAMA策略贪心筛选超参组合测试脚本 - 并发版本
 #
 # 功能：
 # - 通过递归剪枝大幅减少实验次数（预计50-200个实验 vs 1024个完整因子设计）
 # - 每个阶段结束后自动筛选优秀候选
 # - 支持中断续传，可在任意阶段暂停分析
 # - 生成详细的阶段分析报告
+# - ⭐ 支持阶段内并发执行，大幅提升实验效率
 #
 # 算法：
-# 1. 阶段0: 测试Baseline
-# 2. 阶段1: 单变量筛选（OR逻辑：sharpe_mean > base OR sharpe_median > base）
-# 3. 阶段k: k变量筛选（严格递增：两个指标同时超过所有子组合最优值）
+# 1. 阶段0: 测试Baseline（串行）
+# 2. 阶段1: 单变量筛选（并发执行，OR逻辑筛选）
+# 3. 阶段k: k变量筛选（并发执行，严格递增筛选）
 # 4. 终止条件：某阶段无任何组合满足严格递增条件
 #
 # 用法：
-#   ./mega_test_macd_greedy.sh                    # 执行完整实验流程
-#   ./mega_test_macd_greedy.sh --collect-only <实验目录>  # 仅收集已有结果
+#   ./mega_test_kama_greedy_parallel.sh                    # 执行完整实验流程（默认并发度3）
+#   ./mega_test_kama_greedy_parallel.sh -j 5               # 指定并发度为5
+#   ./mega_test_kama_greedy_parallel.sh --collect-only <实验目录>  # 仅收集已有结果
 #
 # 作者: Claude Code
-# 日期: 2025-11-23
+# 日期: 2025-11-29
 ################################################################################
 
 # ============================================================================
 # 配置区域
 # ============================================================================
 
+# 并发度配置（可通过 -j 参数覆盖）
+PARALLEL_JOBS=5
+
 # 实验类型标识（用于自动识别实验目录）
 EXPERIMENT_TYPE="mega_test_greedy"
 
 # 基础路径配置
-POOL_PATH="results/trend_etf_pool_2021_2023_optimized.csv"
+POOL_PATH="experiment/etf/selector_score/single_primary/single_price_efficiency_pool_2019_2021.csv"
 DATA_DIR="data/chinese_etf/daily"
-TEMP_PARAMS_PATH="config/test/macd_base_strategy_params.json"
-OUTPUT_BASE_DIR="results/mega_test_macd_greedy_$(date +%Y%m%d_%H%M%S)"
-START_DATE="20240102"
-END_DATE="20251120"
+TEMP_PARAMS_PATH="config/test/kama_single_price_efficiency_strategy_params.json"
+OUTPUT_BASE_DIR="experiment/etf/selector_score/single_primary/mega_test_kama_single_price_efficiency_parallel_$(date +%Y%m%d_%H%M%S)"
+START_DATE="20220102"
+END_DATE="20240102"
 
 # 候选池和报告路径
 CANDIDATES_DIR="${OUTPUT_BASE_DIR}/candidates"
 REPORTS_DIR="${OUTPUT_BASE_DIR}/reports"
 BACKTEST_DIR="${OUTPUT_BASE_DIR}/backtests"
+LOGS_DIR="${OUTPUT_BASE_DIR}/logs"
 
 # 结果汇总CSV路径
 RESULT_CSV="${OUTPUT_BASE_DIR}/mega_test_greedy_summary.csv"
@@ -52,18 +58,17 @@ COMMANDS_CSV="${OUTPUT_BASE_DIR}/experiment_commands.csv"
 METADATA_FILE="${OUTPUT_BASE_DIR}/.experiment_metadata.json"
 
 # ============================================================================
-# 定义10个核心超参开关
+# 定义核心超参开关（KAMA专用+通用过滤/止损）
 # ============================================================================
 declare -a CORE_OPTIONS=(
-    "enable-hysteresis"
-    "enable-zero-axis"
-    "enable-confirm-filter"
-    "confirm-bars-sell"
-    "min-hold-bars"
-    "enable-loss-protection"
-    "enable-trailing-stop"
+    "enable-efficiency-filter"
+    "enable-slope-confirmation"
+    "enable-slope-filter"
     "enable-adx-filter"
     "enable-volume-filter"
+    "enable-confirm-filter"
+    "enable-loss-protection"
+    "enable-trailing-stop"
     "enable-atr-stop"
 )
 
@@ -74,18 +79,15 @@ ADX_PERIOD=14
 ADX_THRESHOLD=25.0
 VOLUME_PERIOD=20
 VOLUME_RATIO=1.2
+SLOPE_LOOKBACK=5
+CONFIRM_BARS=2
 MAX_CONSECUTIVE_LOSSES=3
 PAUSE_BARS=10
 TRAILING_STOP_PCT=0.05
 ATR_PERIOD=14
 ATR_MULTIPLIER=2.5
-HYSTERESIS_MODE="std"
-HYSTERESIS_K=0.5
-HYSTERESIS_WINDOW=20
-ZERO_AXIS_MODE="symmetric"
-CONFIRM_BARS=2
-CONFIRM_BARS_SELL_VALUE=2
-MIN_HOLD_BARS_VALUE=3
+MIN_EFFICIENCY_RATIO=0.3
+MIN_SLOPE_PERIODS=3
 
 # ============================================================================
 # 颜色定义
@@ -137,10 +139,11 @@ create_metadata() {
     cat > "$metadata_path" << EOF
 {
   "experiment_type": "$EXPERIMENT_TYPE",
-  "experiment_version": "1.0",
+  "experiment_version": "1.1-parallel",
   "created_at": "$(date -Iseconds)",
   "script": "$(basename $0)",
-  "description": "MACD策略贪心筛选超参组合测试",
+  "description": "KAMA策略贪心筛选超参组合测试（并发版本）",
+  "parallel_jobs": $PARALLEL_JOBS,
   "config": {
     "pool_path": "$POOL_PATH",
     "data_dir": "$DATA_DIR",
@@ -158,21 +161,21 @@ EOF
 }
 
 # ============================================================================
-# 实验执行函数（与mega_test_macd_full.sh相同）
+# 实验执行函数（支持日志隔离）
 # ============================================================================
 
+# 单个实验执行函数（用于并发调用）
 run_single_experiment() {
     local exp_name=$1
     local options_str=$2  # 空格分隔的选项字符串
+    local log_file="${LOGS_DIR}/${exp_name}.log"
 
     local output_dir="${BACKTEST_DIR}/${exp_name}"
-
-    print_section "实验: ${exp_name}"
 
     # 构建命令行
     local cmd="./run_backtest.sh"
     cmd="$cmd --stock-list \"$POOL_PATH\""
-    cmd="$cmd --strategy macd_cross"
+    cmd="$cmd --strategy kama_cross"
     cmd="$cmd --optimize"
     cmd="$cmd --data-dir \"$DATA_DIR\""
     cmd="$cmd --save-params \"$TEMP_PARAMS_PATH\""
@@ -183,13 +186,7 @@ run_single_experiment() {
     # 添加选项开关
     if [ -n "$options_str" ]; then
         for opt in $options_str; do
-            if [ "$opt" = "confirm-bars-sell" ]; then
-                cmd="$cmd --confirm-bars-sell $CONFIRM_BARS_SELL_VALUE"
-            elif [ "$opt" = "min-hold-bars" ]; then
-                cmd="$cmd --min-hold-bars $MIN_HOLD_BARS_VALUE"
-            else
-                cmd="$cmd --${opt}"
-            fi
+            cmd="$cmd --${opt}"
         done
     fi
 
@@ -200,6 +197,10 @@ run_single_experiment() {
 
     if [[ " $options_str " =~ " enable-volume-filter " ]]; then
         cmd="$cmd --volume-period $VOLUME_PERIOD --volume-ratio $VOLUME_RATIO"
+    fi
+
+    if [[ " $options_str " =~ " enable-slope-filter " ]]; then
+        cmd="$cmd --slope-lookback $SLOPE_LOOKBACK"
     fi
 
     if [[ " $options_str " =~ " enable-loss-protection " ]]; then
@@ -214,52 +215,74 @@ run_single_experiment() {
         cmd="$cmd --atr-period $ATR_PERIOD --atr-multiplier $ATR_MULTIPLIER"
     fi
 
-    if [[ " $options_str " =~ " enable-hysteresis " ]]; then
-        cmd="$cmd --hysteresis-mode $HYSTERESIS_MODE"
-        if [ "$HYSTERESIS_MODE" = "std" ]; then
-            cmd="$cmd --hysteresis-k $HYSTERESIS_K --hysteresis-window $HYSTERESIS_WINDOW"
-        fi
-    fi
-
-    if [[ " $options_str " =~ " enable-zero-axis " ]]; then
-        cmd="$cmd --zero-axis-mode $ZERO_AXIS_MODE"
-    fi
-
     if [[ " $options_str " =~ " enable-confirm-filter " ]]; then
         cmd="$cmd --confirm-bars $CONFIRM_BARS"
     fi
 
-    # 记录命令到CSV（使用双引号包裹命令，防止逗号干扰）
-    echo "${exp_name},\"${cmd}\"" >> "$COMMANDS_CSV"
+    if [[ " $options_str " =~ " enable-efficiency-filter " ]]; then
+        cmd="$cmd --min-efficiency-ratio $MIN_EFFICIENCY_RATIO"
+    fi
 
-    # 执行命令
-    echo "Command: $cmd"
-    eval $cmd
+    if [[ " $options_str " =~ " enable-slope-confirmation " ]]; then
+        cmd="$cmd --min-slope-periods $MIN_SLOPE_PERIODS"
+    fi
 
+    # 记录命令到CSV（使用锁避免并发写入冲突）
+    (
+        flock -x 200
+        echo "${exp_name},\"${cmd}\"" >> "$COMMANDS_CSV"
+    ) 200>"${COMMANDS_CSV}.lock"
+
+    # 执行命令并记录日志
+    echo "======================================" > "$log_file"
+    echo "实验: ${exp_name}" >> "$log_file"
+    echo "时间: $(date)" >> "$log_file"
+    echo "命令: $cmd" >> "$log_file"
+    echo "======================================" >> "$log_file"
+
+    eval $cmd >> "$log_file" 2>&1
     local exit_code=$?
+
     if [ $exit_code -eq 0 ]; then
-        print_success "实验 ${exp_name} 完成"
+        echo "✓ 实验完成 (exit code: 0)" >> "$log_file"
+        echo "SUCCESS:${exp_name}"
     else
-        print_error "实验 ${exp_name} 失败 (exit code: $exit_code)"
+        echo "✗ 实验失败 (exit code: $exit_code)" >> "$log_file"
+        echo "FAILED:${exp_name}"
     fi
 
     return $exit_code
 }
 
+# 导出函数和变量供并发子进程使用
+export -f run_single_experiment
+export POOL_PATH DATA_DIR TEMP_PARAMS_PATH START_DATE END_DATE
+export ADX_PERIOD ADX_THRESHOLD VOLUME_PERIOD VOLUME_RATIO SLOPE_LOOKBACK
+export CONFIRM_BARS MAX_CONSECUTIVE_LOSSES PAUSE_BARS TRAILING_STOP_PCT
+export ATR_PERIOD ATR_MULTIPLIER MIN_EFFICIENCY_RATIO MIN_SLOPE_PERIODS
+
 # ============================================================================
-# 阶段0：Baseline测试
+# 阶段0：Baseline测试（串行）
 # ============================================================================
 
 run_stage0_baseline() {
-    print_stage "阶段0：Baseline测试（无任何选项的纯MACD策略）"
+    print_stage "阶段0：Baseline测试（无任何选项的纯KAMA策略）"
+
+    export BACKTEST_DIR LOGS_DIR COMMANDS_CSV
 
     local baseline_name="baseline"
-    run_single_experiment "$baseline_name" ""
+    print_section "实验: ${baseline_name}"
 
-    if [ $? -ne 0 ]; then
+    local result=$(run_single_experiment "$baseline_name" "")
+    local exit_code=$?
+
+    if [ $exit_code -ne 0 ]; then
         print_error "Baseline实验失败，终止流程"
+        echo "查看日志: ${LOGS_DIR}/${baseline_name}.log"
         exit 1
     fi
+
+    print_success "Baseline实验完成"
 
     # 提取Baseline指标
     print_section "提取Baseline性能指标"
@@ -350,31 +373,53 @@ PYTHON_EXTRACT_BASELINE
 }
 
 # ============================================================================
-# 阶段1：单变量筛选
+# 阶段1：单变量筛选（并发执行）
 # ============================================================================
 
 run_stage1_single_var() {
-    print_stage "阶段1：单变量筛选（测试10个独立选项）"
+    print_stage "阶段1：单变量筛选（测试${#CORE_OPTIONS[@]}个独立选项，并发度=${PARALLEL_JOBS}）"
 
-    local success_count=0
-    local fail_count=0
+    export BACKTEST_DIR LOGS_DIR COMMANDS_CSV
 
+    # 生成任务列表
+    local task_file="${OUTPUT_BASE_DIR}/.stage1_tasks.txt"
+    > "$task_file"
     for opt in "${CORE_OPTIONS[@]}"; do
-        local exp_name="single_${opt}"
-        run_single_experiment "$exp_name" "$opt"
-
-        if [ $? -eq 0 ]; then
-            success_count=$((success_count + 1))
-        else
-            fail_count=$((fail_count + 1))
-        fi
+        echo "single_${opt} $opt" >> "$task_file"
     done
+
+    local total_tasks=$(wc -l < "$task_file")
+    print_section "开始并发执行 ${total_tasks} 个实验..."
+
+    # 并发执行并收集结果
+    local results_file="${OUTPUT_BASE_DIR}/.stage1_results.txt"
+    > "$results_file"
+
+    grep -v '^$' "$task_file" | xargs -P $PARALLEL_JOBS -I {} bash -c '
+        exp_name=$(echo "{}" | cut -d" " -f1)
+        options=$(echo "{}" | cut -d" " -f2-)
+        result=$(run_single_experiment "$exp_name" "$options")
+        echo "$result"
+    ' >> "$results_file"
+
+    # 统计结果
+    local success_count=$(grep -c "^SUCCESS:" "$results_file" || echo 0)
+    local fail_count=$(grep -c "^FAILED:" "$results_file" || echo 0)
 
     echo ""
     echo "阶段1统计: 成功=${success_count}, 失败=${fail_count}"
 
+    # 显示失败的实验
+    if [ $fail_count -gt 0 ]; then
+        print_warning "失败的实验:"
+        grep "^FAILED:" "$results_file" | sed 's/^FAILED:/  - /'
+    fi
+
     # 调用Python脚本筛选候选
     print_section "筛选优秀候选（OR逻辑：sharpe_mean > base OR sharpe_median > base）"
+
+    export CANDIDATES_DIR
+    export CORE_OPTIONS_STR="${CORE_OPTIONS[*]}"
 
     python3 << 'PYTHON_FILTER_STAGE1'
 import os
@@ -480,14 +525,17 @@ PYTHON_FILTER_STAGE1
 }
 
 # ============================================================================
-# 阶段k：k变量筛选（k >= 2）
+# 阶段k：k变量筛选（k >= 2，并发执行）
 # ============================================================================
 
 run_stage_k() {
     local k=$1
     local prev_k=$((k - 1))
 
-    print_stage "阶段${k}：${k}变量筛选（严格递增剪枝）"
+    print_stage "阶段${k}：${k}变量筛选（严格递增剪枝，并发度=${PARALLEL_JOBS}）"
+
+    export BACKTEST_DIR LOGS_DIR COMMANDS_CSV CANDIDATES_DIR
+    export K=$k
 
     # 检查前一阶段候选池是否存在
     local prev_candidates_json="${CANDIDATES_DIR}/candidates_k${prev_k}.json"
@@ -496,80 +544,13 @@ run_stage_k() {
         return 1
     fi
 
-    # 生成组合并执行实验
-    print_section "从阶段${prev_k}的候选生成${k}变量组合并执行回测"
+    # 生成组合列表
+    print_section "从阶段${prev_k}的候选生成${k}变量组合"
 
-    python3 << 'PYTHON_RUN_STAGE_K'
+    local task_file="${OUTPUT_BASE_DIR}/.stage${k}_tasks.txt"
+
+    python3 << PYTHON_GEN_COMBOS > "$task_file"
 import os
-import sys
-import glob
-import json
-import pandas as pd
-from itertools import combinations
-from typing import List, Dict, Set
-
-K = int(os.environ.get('K'))
-PREV_K = K - 1
-BACKTEST_DIR = os.environ.get('BACKTEST_DIR')
-CANDIDATES_DIR = os.environ.get('CANDIDATES_DIR')
-
-# 加载前一阶段候选池
-prev_candidates_json = os.path.join(CANDIDATES_DIR, f'candidates_k{PREV_K}.json')
-with open(prev_candidates_json, 'r', encoding='utf-8') as f:
-    prev_candidates = json.load(f)
-
-print(f"阶段{PREV_K}候选数: {len(prev_candidates)}")
-
-# 收集所有出现过的选项
-all_options = set()
-for cand in prev_candidates:
-    all_options.update(cand['options'])
-
-all_options = sorted(list(all_options))
-print(f"涉及选项: {all_options}")
-
-# 生成k变量组合（从所有选项中选k个）
-k_combinations = list(combinations(all_options, K))
-print(f"生成的{K}变量组合数: {len(k_combinations)}")
-
-# 需要测试的组合列表
-experiments_to_run = []
-
-for combo in k_combinations:
-    combo_list = list(combo)
-
-    # 检查该组合的所有k-1子组合是否都在前一阶段候选池中
-    # 如果某个子组合不在候选池，说明它在前一阶段被剪枝了，当前组合也无需测试
-    sub_combos = list(combinations(combo_list, PREV_K))
-    all_subs_passed = True
-
-    for sub in sub_combos:
-        sub_list = sorted(list(sub))
-        # 检查该子组合是否在前一阶段候选池
-        found = False
-        for cand in prev_candidates:
-            if sorted(cand['options']) == sub_list:
-                found = True
-                break
-        if not found:
-            all_subs_passed = False
-            break
-
-    if all_subs_passed:
-        experiments_to_run.append(combo_list)
-
-print(f"需要测试的组合数（所有子组合都通过筛选）: {len(experiments_to_run)}")
-
-# 输出组合列表供Bash调用
-for combo in experiments_to_run:
-    print("COMBO:" + " ".join(combo))
-
-PYTHON_RUN_STAGE_K
-
-    # 捕获Python输出
-    local combo_lines=$(python3 << 'PYTHON_RUN_STAGE_K2'
-import os
-import sys
 import json
 from itertools import combinations
 
@@ -609,40 +590,47 @@ for combo in k_combinations:
         experiments_to_run.append(combo_list)
 
 for combo in experiments_to_run:
-    print("COMBO:" + " ".join(combo))
-PYTHON_RUN_STAGE_K2
-)
+    exp_name = f"k{K}_" + "_".join(combo)
+    options_str = " ".join(combo)
+    print(f"{exp_name} {options_str}")
+PYTHON_GEN_COMBOS
 
-    if [ -z "$combo_lines" ]; then
+    local total_tasks=$(wc -l < "$task_file")
+
+    if [ $total_tasks -eq 0 ]; then
         print_warning "阶段${k}: 无需测试的组合（所有组合的子组合都未全部通过前一阶段）"
         return 2  # 返回2表示无组合需要测试（非错误，而是正常终止条件）
     fi
 
-    local success_count=0
-    local fail_count=0
+    print_section "开始并发执行 ${total_tasks} 个实验..."
 
-    while IFS= read -r line; do
-        if [[ $line == COMBO:* ]]; then
-            local combo_str="${line#COMBO:}"
-            local exp_name="k${k}_$(echo $combo_str | tr ' ' '_')"
+    # 并发执行并收集结果
+    local results_file="${OUTPUT_BASE_DIR}/.stage${k}_results.txt"
+    > "$results_file"
 
-            run_single_experiment "$exp_name" "$combo_str"
+    grep -v '^$' "$task_file" | xargs -P $PARALLEL_JOBS -I {} bash -c '
+        exp_name=$(echo "{}" | cut -d" " -f1)
+        options=$(echo "{}" | cut -d" " -f2-)
+        result=$(run_single_experiment "$exp_name" "$options")
+        echo "$result"
+    ' >> "$results_file"
 
-            if [ $? -eq 0 ]; then
-                success_count=$((success_count + 1))
-            else
-                fail_count=$((fail_count + 1))
-            fi
-        fi
-    done <<< "$combo_lines"
+    # 统计结果
+    local success_count=$(grep -c "^SUCCESS:" "$results_file" || echo 0)
+    local fail_count=$(grep -c "^FAILED:" "$results_file" || echo 0)
 
     echo ""
     echo "阶段${k}统计: 成功=${success_count}, 失败=${fail_count}"
 
+    # 显示失败的实验
+    if [ $fail_count -gt 0 ]; then
+        print_warning "失败的实验:"
+        grep "^FAILED:" "$results_file" | sed 's/^FAILED:/  - /'
+    fi
+
     # 筛选候选（严格递增）
     print_section "筛选优秀候选（严格递增：两指标同时超过所有子组合最优值）"
 
-    export K=$k
     python3 << 'PYTHON_FILTER_STAGE_K'
 import os
 import sys
@@ -823,7 +811,7 @@ collect_only_mode() {
 
     export EXPERIMENT_DIR="$backtest_dir"
     export OUTPUT_CSV="$result_csv"
-    export EXPERIMENT_METADATA_FILE="$metadata_file"  # 传递元数据文件路径给收集脚本
+    export EXPERIMENT_METADATA_FILE="$metadata_file"
 
     ./scripts/collect_mega_test_results.sh "$backtest_dir" "$result_csv"
 
@@ -849,6 +837,7 @@ try:
     print(f"  类型: {meta.get('experiment_type', 'N/A')}")
     print(f"  创建时间: {meta.get('created_at', 'N/A')}")
     print(f"  描述: {meta.get('description', 'N/A')}")
+    print(f"  并发度: {meta.get('parallel_jobs', 'N/A')}")
 except:
     pass
 PYTHON_PRINT_META
@@ -864,29 +853,45 @@ PYTHON_PRINT_META
 }
 
 main() {
-    # 检查是否是仅收集模式
-    if [ "$1" = "--collect-only" ]; then
-        if [ -z "$2" ]; then
-            print_error "用法: $0 --collect-only <实验目录>"
-            echo ""
-            echo "示例:"
-            echo "  $0 --collect-only results/mega_test_macd_greedy_20251123_143022"
-            exit 1
-        fi
-        collect_only_mode "$2"
-        exit 0
-    fi
+    # 解析命令行参数
+    while [[ $# -gt 0 ]]; do
+        case $1 in
+            -j|--jobs)
+                PARALLEL_JOBS="$2"
+                shift 2
+                ;;
+            --collect-only)
+                if [ -z "$2" ]; then
+                    print_error "用法: $0 --collect-only <实验目录>"
+                    echo ""
+                    echo "示例:"
+                    echo "  $0 --collect-only results/mega_test_kama_greedy_20251123_143022"
+                    exit 1
+                fi
+                collect_only_mode "$2"
+                exit 0
+                ;;
+            *)
+                print_error "未知参数: $1"
+                echo "用法: $0 [-j <并发度>] [--collect-only <实验目录>]"
+                exit 1
+                ;;
+        esac
+    done
 
     # 正常执行模式
-    print_header "MACD策略贪心筛选超参组合测试"
+    print_header "KAMA策略贪心筛选超参组合测试（并发版本）"
+    echo "并发度: ${PARALLEL_JOBS}"
 
     # 创建目录
     mkdir -p "$OUTPUT_BASE_DIR"
     mkdir -p "$CANDIDATES_DIR"
     mkdir -p "$REPORTS_DIR"
     mkdir -p "$BACKTEST_DIR"
+    mkdir -p "$LOGS_DIR"
 
     print_success "创建输出目录: $OUTPUT_BASE_DIR"
+    print_success "日志目录: $LOGS_DIR"
 
     # 创建实验元数据文件
     create_metadata "$METADATA_FILE"
@@ -898,7 +903,12 @@ main() {
     # 导出环境变量供Python使用
     export BACKTEST_DIR
     export CANDIDATES_DIR
-    export CORE_OPTIONS_STR="${CORE_OPTIONS[*]}"  # 导出为字符串供Python使用，保留原数组供Bash使用
+    export LOGS_DIR
+    export COMMANDS_CSV
+    export CORE_OPTIONS_STR="${CORE_OPTIONS[*]}"
+
+    # 记录开始时间
+    local start_time=$(date +%s)
 
     # 阶段0: Baseline
     run_stage0_baseline
@@ -927,7 +937,6 @@ main() {
     # 收集所有实验结果
     print_section "收集所有实验结果"
 
-    # 导出环境变量供collect_mega_test_results.sh使用
     export EXPERIMENT_DIR="$BACKTEST_DIR"
     export OUTPUT_CSV="$RESULT_CSV"
 
@@ -943,14 +952,23 @@ main() {
     cp "$0" "${OUTPUT_BASE_DIR}/"
     print_success "脚本已存档: ${OUTPUT_BASE_DIR}/$(basename $0)"
 
+    # 计算总耗时
+    local end_time=$(date +%s)
+    local duration=$((end_time - start_time))
+    local minutes=$((duration / 60))
+    local seconds=$((duration % 60))
+
     # 打印最终统计
     print_header "贪心筛选完成"
 
     local total_dirs=$(find "$BACKTEST_DIR" -mindepth 1 -maxdepth 1 -type d | wc -l)
     echo "总实验数: ${total_dirs}"
+    echo "并发度: ${PARALLEL_JOBS}"
+    echo "总耗时: ${minutes}分${seconds}秒"
     echo "输出目录: ${OUTPUT_BASE_DIR}"
     echo "结果CSV: ${RESULT_CSV}"
     echo "命令记录: ${COMMANDS_CSV}"
+    echo "日志目录: ${LOGS_DIR}"
     echo ""
     echo "候选池文件:"
     ls -1 "${CANDIDATES_DIR}"/candidates_k*.json 2>/dev/null || echo "  无"

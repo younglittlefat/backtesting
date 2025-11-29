@@ -16,8 +16,7 @@ class ConfigLoader:
     KEY_MAPPING = {
         # Paths
         'paths.data_dir': 'data_dir',
-        'paths.output_dir': 'output_dir',
-        'paths.output_filename': 'output_filename',
+        'paths.output_path': 'output_path',
 
         # Time range
         'time_range.start_date': 'start_date',
@@ -57,14 +56,14 @@ class ConfigLoader:
         'scoring_system.mode': 'score_mode',  # Special: convert to use_optimized_score
         'scoring_system.benchmark.ts_code': 'benchmark_ts_code',
 
-        # Scoring windows
-        'scoring_system.windows.excess_return_short': 'excess_return_short_window',
-        'scoring_system.windows.excess_return_long': 'excess_return_long_window',
+        # Scoring windows (新格式 - 嵌套层级)
+        'scoring_system.windows.excess_return.short': 'excess_return_short_window',
+        'scoring_system.windows.excess_return.long': 'excess_return_long_window',
+        'scoring_system.windows.volume.short': 'volume_short_window',
+        'scoring_system.windows.volume.long': 'volume_long_window',
         'scoring_system.windows.trend_quality': 'trend_quality_window',
         'scoring_system.windows.trend_consistency': 'trend_consistency_window',
         'scoring_system.windows.price_efficiency': 'price_efficiency_window',
-        'scoring_system.windows.volume_short': 'volume_short_window',
-        'scoring_system.windows.volume_long': 'volume_long_window',
         'scoring_system.windows.liquidity_score': 'liquidity_score_window',
 
         # Weights V2 (optimized mode)
@@ -76,15 +75,15 @@ class ConfigLoader:
         'scoring_system.weights_v2.core_trend_sub.excess_return_20d': 'excess_return_20d_weight',
         'scoring_system.weights_v2.core_trend_sub.excess_return_60d': 'excess_return_60d_weight',
 
-        # Weights V1 (legacy mode)
-        'scoring_system.weights_v1_legacy.primary': 'primary_weight',
-        'scoring_system.weights_v1_legacy.secondary': 'secondary_weight',
-        'scoring_system.weights_v1_legacy.adx_score': 'adx_score_weight',
-        'scoring_system.weights_v1_legacy.trend_consistency': 'trend_consistency_weight',
-        'scoring_system.weights_v1_legacy.price_efficiency': 'price_efficiency_weight',
-        'scoring_system.weights_v1_legacy.liquidity_score': 'liquidity_score_weight',
-        'scoring_system.weights_v1_legacy.momentum_3m': 'momentum_3m_score_weight',
-        'scoring_system.weights_v1_legacy.momentum_12m': 'momentum_12m_score_weight',
+        # Weights V1 (legacy mode) - 新格式（嵌套层级）
+        'scoring_system.weights_v1_legacy.primary.weight': 'primary_weight',
+        'scoring_system.weights_v1_legacy.primary.sub_weights.adx_score': 'adx_score_weight',
+        'scoring_system.weights_v1_legacy.primary.sub_weights.trend_consistency': 'trend_consistency_weight',
+        'scoring_system.weights_v1_legacy.primary.sub_weights.price_efficiency': 'price_efficiency_weight',
+        'scoring_system.weights_v1_legacy.primary.sub_weights.liquidity_score': 'liquidity_score_weight',
+        'scoring_system.weights_v1_legacy.secondary.weight': 'secondary_weight',
+        'scoring_system.weights_v1_legacy.secondary.sub_weights.momentum_3m': 'momentum_3m_score_weight',
+        'scoring_system.weights_v1_legacy.secondary.sub_weights.momentum_12m': 'momentum_12m_score_weight',
 
         # Stage 3: Diversification
         'stage3_diversification.target_portfolio_size': 'target_portfolio_size',
@@ -197,6 +196,10 @@ class ConfigLoader:
 
             # Skip industry keywords (not part of FilterConfig, uses DEFAULT_INDUSTRY_KEYWORDS instead)
             if json_key == 'industry_classification.keywords':
+                continue
+
+            # Skip nested dict markers that are handled by their children
+            if json_key.endswith('.core_trend_sub'):
                 continue
 
             # Map using KEY_MAPPING
@@ -364,7 +367,7 @@ class ConfigLoader:
 
         print("📁 路径配置:")
         print(f"  data_dir: {config.data_dir}")
-        print(f"  output_dir: {config.output_dir}")
+        print(f"  output_path: {config.output_path}")
         print()
 
         print("🔍 第一级 - 初筛参数:")

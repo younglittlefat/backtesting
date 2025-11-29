@@ -91,9 +91,8 @@ class FilterConfig:
     # 数据路径
     data_dir: str = 'data/csv'
 
-    # 输出路径
-    output_dir: str = 'results/selector'
-    output_filename: str = None  # 输出文件名（None则自动生成）
+    # 输出路径（完整路径，如 experiment/etf/xxx.csv，None则自动生成）
+    output_path: str = None
 
     # 时间范围
     start_date: str = None  # 开始日期 (YYYY-MM-DD)

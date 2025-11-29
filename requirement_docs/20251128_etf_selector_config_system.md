@@ -2,6 +2,7 @@
 
 **创建日期**: 2025-11-28
 **状态**: ✅ 已完成并验收通过
+**最后更新**: 2025-11-29
 **优先级**: P0
 
 ---
@@ -32,29 +33,6 @@ ETF Selector系统包含57+个超参数分散在代码中，导致：
 
 **总计**: 59个参数
 
-### 2.2 关键参数说明
-
-#### 新增配置字段（13个）
-```python
-# config.py 新增字段
-dedup_thresholds: List[float] = [0.98, 0.95, 0.92, 0.90]  # 去重阈值序列
-diversify_v2: bool = False                                # V2分散逻辑开关
-score_diff_threshold: float = 0.05                        # Score差异阈值
-balance_industries: bool = True                           # 行业平衡开关
-enable_deduplication: bool = True                         # 去重开关
-dedup_min_ratio: float = 0.8                             # 去重最小保留比例
-output_filename: str = None                               # 输出文件名
-start_date: str = None                                    # 开始日期
-end_date: str = None                                      # 结束日期
-verbose: bool = True                                      # 详细日志
-with_analysis: bool = False                               # 风险分析报告
-skip_portfolio_optimization: bool = False                 # 跳过组合优化
-```
-
-#### 硬编码参数已暴露
-- `dedup_thresholds`: 之前硬编码在portfolio.py:240，现已配置化
-- `industry_keywords`: 保留在config.py，支持默认值（P2优化）
-
 ---
 
 ## 3. 实现方案
@@ -82,7 +60,199 @@ skip_portfolio_optimization: bool = False                 # 跳过组合优化
 └─────────────────┘
 ```
 
-### 3.2 核心实现
+### 3.2 配置文件结构（嵌套层级格式）
+
+配置文件采用嵌套层级结构，清晰表达参数之间的从属关系：
+
+#### 完整配置示例（default.json）
+
+```json
+{
+  "version": "2.0",
+  "description": "ETF Selector Complete Configuration Template",
+
+  "paths": {
+    "data_dir": "data/chinese_etf",
+    "output_dir": "results/selector",
+    "output_filename": null
+  },
+
+  "time_range": {
+    "start_date": "20190102",
+    "end_date": "20211231"
+  },
+
+  "stage1_initial_filter": {
+    "min_turnover": 50000,
+    "min_listing_days": 180,
+    "turnover_lookback_days": 30
+  },
+
+  "stage2_core_filter": {
+    "adx": {
+      "period": 14,
+      "lookback_days": 250,
+      "percentile": 80.0
+    },
+    "ma_backtest": {
+      "enable": false,
+      "short_period": 20,
+      "long_period": 50,
+      "ret_dd_percentile": 70.0
+    },
+    "volatility": {
+      "min": 0.20,
+      "max": 0.60,
+      "lookback_days": 252
+    },
+    "momentum": {
+      "periods": [63, 252],
+      "min_positive": true
+    },
+    "filter_mode": {
+      "skip_percentile_filtering": true,
+      "skip_range_filtering": true
+    }
+  },
+
+  "scoring_system": {
+    "enable_unbiased_scoring": true,
+    "mode": "legacy",
+    "benchmark": {
+      "ts_code": "510300.SH"
+    },
+
+    "windows": {
+      "excess_return": {
+        "short": 20,
+        "long": 60
+      },
+      "volume": {
+        "short": 20,
+        "long": 60
+      },
+      "trend_quality": 60,
+      "trend_consistency": 63,
+      "price_efficiency": 252,
+      "liquidity_score": 30
+    },
+
+    "weights_v2": {
+      "core_trend": 0.40,
+      "trend_quality": 0.35,
+      "strength": 0.15,
+      "volume": 0.10,
+      "idr": 0.0,
+      "core_trend_sub": {
+        "excess_return_20d": 0.40,
+        "excess_return_60d": 0.60
+      }
+    },
+
+    "weights_v1_legacy": {
+      "primary": {
+        "weight": 0.80,
+        "sub_weights": {
+          "adx_score": 0.40,
+          "trend_consistency": 0.30,
+          "price_efficiency": 0.20,
+          "liquidity_score": 0.10
+        }
+      },
+      "secondary": {
+        "weight": 0.20,
+        "sub_weights": {
+          "momentum_3m": 0.30,
+          "momentum_12m": 0.70
+        }
+      }
+    }
+  },
+
+  "stage3_diversification": {
+    "target_portfolio_size": 20,
+    "max_correlation": 0.7,
+    "min_industries": 3,
+    "deduplication": {
+      "enable": true,
+      "min_ratio": 0.8,
+      "thresholds": [0.98, 0.95, 0.92, 0.90]
+    },
+    "diversify_v2": {
+      "enable": false,
+      "score_diff_threshold": 0.05
+    },
+    "balance_industries": true
+  },
+
+  "output_options": {
+    "verbose": true,
+    "with_analysis": false,
+    "skip_portfolio_optimization": false
+  }
+}
+```
+
+### 3.3 权重配置层级说明
+
+#### weights_v1_legacy（旧版评分系统）
+
+评分公式：`final_score = primary.weight × primary_score + secondary.weight × secondary_score`
+
+其中：
+- **primary_score** = `adx_score × ADX + trend_consistency × TC + price_efficiency × PE + liquidity_score × LQ`
+- **secondary_score** = `momentum_3m × M3M + momentum_12m × M12M`
+
+**约束条件**：
+1. `primary.sub_weights` 四个子权重之和必须等于 1.0
+2. `secondary.sub_weights` 两个子权重之和必须等于 1.0
+3. `primary.weight + secondary.weight` 必须等于 1.0
+
+**单因子测试示例**（仅使用 ADX 评分）：
+
+```json
+"weights_v1_legacy": {
+  "primary": {
+    "weight": 1.0,
+    "sub_weights": {
+      "adx_score": 1.0,
+      "trend_consistency": 0,
+      "price_efficiency": 0,
+      "liquidity_score": 0
+    }
+  },
+  "secondary": {
+    "weight": 0,
+    "sub_weights": {
+      "momentum_3m": 0.5,
+      "momentum_12m": 0.5
+    }
+  }
+}
+```
+
+#### windows（计算窗口参数）
+
+采用嵌套结构将相关参数分组：
+
+```json
+"windows": {
+  "excess_return": {
+    "short": 20,
+    "long": 60
+  },
+  "volume": {
+    "short": 20,
+    "long": 60
+  },
+  "trend_quality": 60,
+  "trend_consistency": 63,
+  "price_efficiency": 252,
+  "liquidity_score": 30
+}
+```
+
+### 3.4 核心实现
 
 #### ConfigLoader类 (`etf_selector/config_loader.py`)
 
@@ -91,11 +261,21 @@ class ConfigLoader:
     """配置加载器：JSON解析 + 验证 + CLI合并"""
 
     KEY_MAPPING = {
-        'stage1_initial_filter.min_turnover': 'min_turnover',
-        'stage2_core_filter.adx.period': 'adx_period',
-        'scoring_system.mode': 'score_mode',  # 特殊：转换为use_optimized_score
-        'stage3_diversification.deduplication.thresholds': 'dedup_thresholds',
-        # ... 60+映射规则
+        # 嵌套层级映射
+        'scoring_system.windows.excess_return.short': 'excess_return_short_window',
+        'scoring_system.windows.excess_return.long': 'excess_return_long_window',
+        'scoring_system.windows.volume.short': 'volume_short_window',
+        'scoring_system.windows.volume.long': 'volume_long_window',
+
+        'scoring_system.weights_v1_legacy.primary.weight': 'primary_weight',
+        'scoring_system.weights_v1_legacy.primary.sub_weights.adx_score': 'adx_score_weight',
+        'scoring_system.weights_v1_legacy.primary.sub_weights.trend_consistency': 'trend_consistency_weight',
+        'scoring_system.weights_v1_legacy.primary.sub_weights.price_efficiency': 'price_efficiency_weight',
+        'scoring_system.weights_v1_legacy.primary.sub_weights.liquidity_score': 'liquidity_score_weight',
+        'scoring_system.weights_v1_legacy.secondary.weight': 'secondary_weight',
+        'scoring_system.weights_v1_legacy.secondary.sub_weights.momentum_3m': 'momentum_3m_score_weight',
+        'scoring_system.weights_v1_legacy.secondary.sub_weights.momentum_12m': 'momentum_12m_score_weight',
+        # ... 其他映射规则
     }
 
     @staticmethod
@@ -109,115 +289,6 @@ class ConfigLoader:
     @staticmethod
     def merge_with_cli_args(config, args) -> FilterConfig:
         """CLI参数覆盖配置（最高优先级）"""
-
-    @staticmethod
-    def print_all_params(config: FilterConfig):
-        """打印所有57+个参数（用于调试和验收）"""
-```
-
-#### 使用示例
-
-```python
-# main.py 重构后
-from etf_selector.config_loader import ConfigLoader
-
-def load_config(config_path: str = None, args = None) -> FilterConfig:
-    if config_path:
-        config = ConfigLoader.load_from_json(config_path)  # 加载JSON
-    else:
-        config = FilterConfig()  # 使用默认值
-
-    if args:
-        config = ConfigLoader.merge_with_cli_args(config, args)  # CLI覆盖
-
-    return config
-```
-
-### 3.3 配置文件结构
-
-#### 完整配置示例（default.json）
-
-```json
-{
-  "version": "2.0",
-  "paths": {
-    "data_dir": "data/chinese_etf",
-    "output_dir": "results/selector"
-  },
-  "stage1_initial_filter": {
-    "min_turnover": 50000000,
-    "min_listing_days": 180
-  },
-  "stage2_core_filter": {
-    "adx": {"period": 14, "percentile": 80.0},
-    "volatility": {"min": 0.20, "max": 0.60}
-  },
-  "scoring_system": {
-    "mode": "optimized",
-    "weights_v2": {
-      "core_trend": 0.40,
-      "trend_quality": 0.35,
-      "strength": 0.15,
-      "volume": 0.10
-    }
-  },
-  "stage3_diversification": {
-    "target_portfolio_size": 20,
-    "deduplication": {
-      "thresholds": [0.98, 0.95, 0.92, 0.90]
-    },
-    "diversify_v2": {"enable": false}
-  }
-}
-```
-
-#### 预设配置
-
-**Conservative** (高流动性、低波动、严格分散):
-```json
-{
-  "stage1_initial_filter": {"min_turnover": 100000000, "min_listing_days": 252},
-  "stage2_core_filter": {"volatility": {"min": 0.15, "max": 0.40}},
-  "stage3_diversification": {"max_correlation": 0.6, "diversify_v2": {"enable": true}}
-}
-```
-
-**Aggressive** (低门槛、高波动、Score优先):
-```json
-{
-  "stage1_initial_filter": {"min_turnover": 20000000, "min_listing_days": 90},
-  "stage2_core_filter": {"volatility": {"min": 0.25, "max": 0.80}},
-  "stage3_diversification": {"score_diff_threshold": 0.10}
-}
-```
-
-### 3.4 验证逻辑
-
-```python
-def validate(config: FilterConfig):
-    errors = []
-
-    # V2权重总和必须为1.0
-    if config.use_optimized_score:
-        v2_sum = (config.core_trend_weight + config.trend_quality_weight +
-                  config.strength_weight + config.volume_weight)
-        if abs(v2_sum - 1.0) > 0.01:
-            errors.append(f"V2权重总和必须为1.0，当前为{v2_sum:.4f}")
-
-    # 百分位数范围[0, 100]
-    if not (0 <= config.adx_percentile <= 100):
-        errors.append(f"adx_percentile必须在[0, 100]范围内")
-
-    # 相关性阈值[0, 1]
-    if not (0 <= config.max_correlation <= 1):
-        errors.append(f"max_correlation必须在[0, 1]范围内")
-
-    # MA周期约束
-    if config.ma_short >= config.ma_long:
-        errors.append(f"ma_short必须小于ma_long")
-
-    if errors:
-        raise ValueError("配置验证失败:\n" + "\n".join(f"  - {e}" for e in errors))
 ```
 
 ---
@@ -227,7 +298,7 @@ def validate(config: FilterConfig):
 ### 4.1 纯配置文件模式
 
 ```bash
-python -m etf_selector.main --config etf_selector/configs/conservative.json
+python -m etf_selector.main --config etf_selector/configs/default.json
 ```
 
 ### 4.2 配置文件 + CLI覆盖
@@ -239,13 +310,12 @@ python -m etf_selector.main \
   --max-correlation 0.65
 ```
 
-### 4.3 纯CLI模式（向后兼容）
+### 4.3 单因子测试
+
+创建配置文件测试单个评分因子（如仅使用 ADX）：
 
 ```bash
-python -m etf_selector.main \
-  --target-size 20 \
-  --min-turnover 50000000 \
-  --diversify-v2
+python -m etf_selector.main --config experiment/etf/selector_score/single_adx.json
 ```
 
 ### 4.4 批量实验（Python脚本）
@@ -267,73 +337,33 @@ for corr_threshold in [0.6, 0.65, 0.7, 0.75]:
 
 ## 5. 验收结果
 
-### 5.1 测试摘要（2025-11-28）
+### 5.1 测试摘要（2025-11-29 更新）
 
 | 测试用例 | 状态 | 备注 |
 |---------|------|------|
-| P0.1: 完整配置加载 | ✅ | 配置加载成功，CLI默认值不再覆盖 |
+| P0.1: 完整配置加载 | ✅ | 嵌套层级格式正确解析 |
 | P0.2: CLI参数覆盖 | ✅ | 显式CLI参数正确覆盖配置文件 |
-| P0.3: 参数日志完整 | ✅ | 47/57参数打印（82%覆盖率） |
-| P0.4: 配置验证 | ✅ | 权重和、百分位、范围检查完善 |
+| P0.3: 权重验证 | ✅ | primary/secondary 子权重和=1 检查通过 |
+| P0.4: 单因子测试 | ✅ | single_primary.json 成功运行 |
 | P0.5: 向后兼容性 | ✅ | 旧CLI命令完全兼容 |
-| P1.1: 预设配置 | ✅ | Conservative/Aggressive配置正确生效 |
-| P1.2: dedup_thresholds传递 | ✅ | 参数链路正确 |
 
-**总体结论**: ✅ **验收通过** - 所有测试场景均通过，BLOCKER BUG已修复
+**总体结论**: ✅ **验收通过**
 
-### 5.2 🟢 BLOCKER - CLI默认值覆盖配置文件（已修复）
+### 5.2 2025-11-29 层级配置优化
 
-#### 问题描述
+#### 改进内容
 
-argparse所有参数设置了默认值（如`--min-turnover default=100_000_000`），导致即使用户未传递参数，`args.min_turnover`也不是`None`，从而覆盖配置文件。
+1. **weights_v1_legacy 结构优化**
+   - 旧格式：扁平化，子权重与父权重混在一起
+   - 新格式：嵌套层级，明确表达 primary/secondary 与其子因子的从属关系
 
-#### 修复方案（已实施）
+2. **windows 结构优化**
+   - 旧格式：`excess_return_short`, `excess_return_long`, `volume_short`, `volume_long`
+   - 新格式：`excess_return.short`, `excess_return.long`, `volume.short`, `volume.long`
 
-**使用`argparse.SUPPRESS`作为默认值**:
-
-```python
-# main.py
-parser.add_argument('--min-turnover', type=float, default=argparse.SUPPRESS)
-parser.add_argument('--target-size', type=int, default=argparse.SUPPRESS)
-# 只有用户显式传递时，args才会有该属性
-
-# config_loader.py（无需修改，现有逻辑即可工作）
-cli_overrides = {
-    'min_turnover': getattr(args, 'min_turnover', None),  # ✅ 未传递时为None
-}
-```
-
-#### 修复验证结果（2025-11-28）
-
-| 测试场景 | 关键参数 | 期望值 | 实际值 | 状态 |
-|---------|---------|--------|--------|------|
-| 纯配置文件 | min_turnover | 100,000,000 | 100,000,000 | ✅ |
-| 纯配置文件 | min_listing_days | 252 | 252 | ✅ |
-| 纯配置文件 | max_correlation | 0.6 | 0.6 | ✅ |
-| 配置+CLI覆盖 | target_portfolio_size | 30 | 30 | ✅ |
-| 纯CLI | min_turnover | 50,000,000 | 50,000,000 | ✅ |
-| 纯CLI | max_correlation | 0.7 | 0.7 | ✅ |
-
-### 5.3 其他问题
-
-#### 🟡 MINOR - 未知配置键警告
-
-**现象**: 加载test_full.json时出现`⚠️ 未知配置键: scoring_system.weights_v2.core_trend_sub`
-
-**原因**: `_flatten_dict`函数特殊处理了`core_trend_sub`，但映射表中仍按嵌套路径定义
-
-**影响**: 不影响功能，但警告信息困扰用户
-
-**优先级**: P1
-
-#### 🟢 NICE-TO-HAVE - 日志覆盖率提升
-
-**当前**: 47/57参数打印（82%）
-**缺失**: output_filename, start_date, end_date, verbose, with_analysis, skip_portfolio_optimization
-
-**建议**: 在`print_all_params`增加"输出选项"和"时间范围"分组
-
-**优先级**: P2
+3. **修复 core_trend_sub 警告**
+   - 问题：加载配置时出现 `⚠️ 未知配置键: scoring_system.weights_v2.core_trend_sub`
+   - 解决：在 `_map_json_keys` 中跳过嵌套字典标记
 
 ---
 
@@ -341,112 +371,18 @@ cli_overrides = {
 
 ### 已完成 ✅
 
-- [x] 创建`etf_selector/config_loader.py`（ConfigLoader类，452行）
+- [x] 创建`etf_selector/config_loader.py`（ConfigLoader类）
 - [x] 更新`etf_selector/config.py`（新增13个字段）
 - [x] 重构`etf_selector/main.py`（使用ConfigLoader）
-- [x] 更新`etf_selector/portfolio.py`（adaptive_deduplication添加dedup_thresholds参数）
-- [x] 更新`etf_selector/selector.py`（optimize_portfolio调用传入config参数）
 - [x] 创建配置文件：default.json, conservative.json, aggressive.json
-- [x] 创建测试配置：test_full.json, test_partial.json
-- [x] 完成初步验收测试
 - [x] **BLOCKER修复**: 使用argparse.SUPPRESS解决CLI默认值覆盖问题
-- [x] 完成端到端验收测试（三种使用模式均通过）
-
-### 待优化 📝 (P2)
-
-- [ ] 修复"未知配置键"警告（core_trend_sub映射）
-- [ ] 提升日志覆盖率到95%+
+- [x] 完成端到端验收测试
+- [x] **层级配置优化**: weights_v1_legacy 和 windows 采用嵌套结构
+- [x] **修复警告**: core_trend_sub 未知配置键警告已修复
 
 ---
 
-## 7. 快速修复指南
-
-### 修复步骤（预计2-4小时）
-
-#### Step 1: 修改main.py的argparse定义
-
-```python
-# etf_selector/main.py
-import argparse
-
-def parse_arguments():
-    parser = argparse.ArgumentParser(...)
-
-    # 基本参数 - 全部使用SUPPRESS
-    parser.add_argument('--start-date', type=str, default=argparse.SUPPRESS)
-    parser.add_argument('--end-date', type=str, default=argparse.SUPPRESS)
-    parser.add_argument('--target-size', type=int, default=argparse.SUPPRESS)
-
-    # 数据和输出
-    parser.add_argument('--data-dir', type=str, default=argparse.SUPPRESS)
-    parser.add_argument('--output', type=str, default=argparse.SUPPRESS)
-
-    # 筛选参数 - 全部使用SUPPRESS
-    parser.add_argument('--min-turnover', type=float, default=argparse.SUPPRESS)
-    parser.add_argument('--min-listing-days', type=int, default=argparse.SUPPRESS)
-    parser.add_argument('--adx-percentile', type=float, default=argparse.SUPPRESS)
-    parser.add_argument('--ret-dd-percentile', type=float, default=argparse.SUPPRESS)
-    parser.add_argument('--min-volatility', type=float, default=argparse.SUPPRESS)
-    parser.add_argument('--max-volatility', type=float, default=argparse.SUPPRESS)
-    parser.add_argument('--max-correlation', type=float, default=argparse.SUPPRESS)
-    parser.add_argument('--ma-short', type=int, default=argparse.SUPPRESS)
-    parser.add_argument('--ma-long', type=int, default=argparse.SUPPRESS)
-    parser.add_argument('--adx-period', type=int, default=argparse.SUPPRESS)
-
-    # 无偏评分参数
-    parser.add_argument('--score-mode', type=str, choices=['optimized', 'legacy'],
-                       default=argparse.SUPPRESS)
-
-    # V2分散逻辑
-    parser.add_argument('--score-diff-threshold', type=float, default=argparse.SUPPRESS)
-
-    # 去重参数
-    parser.add_argument('--dedup-min-ratio', type=float, default=argparse.SUPPRESS)
-
-    # 保留action='store_true'的布尔开关（这些不需要SUPPRESS）
-    parser.add_argument('--with-analysis', action='store_true')
-    parser.add_argument('--enable-ma-filter', action='store_true')
-    parser.add_argument('--disable-ma-filter', action='store_true')
-    parser.add_argument('--diversify-v2', action='store_true')
-    # ...
-```
-
-#### Step 2: 验证修复
-
-```bash
-# 测试1: 纯配置文件
-python -m etf_selector.main --config etf_selector/configs/conservative.json --verbose | grep -E "(min_turnover|min_listing_days|max_correlation|diversify_v2)"
-
-# 期望输出：
-# min_turnover: 100,000,000 元
-# min_listing_days: 252 天
-# max_correlation: 0.6
-# enable: True
-
-# 测试2: 配置文件 + CLI覆盖
-python -m etf_selector.main --config etf_selector/configs/conservative.json --target-size 30 --verbose | grep "target_portfolio_size"
-
-# 期望输出：
-# target_portfolio_size: 30
-
-# 测试3: 纯CLI（向后兼容）
-python -m etf_selector.main --target-size 20 --min-turnover 50000000 --verbose | grep -E "(min_turnover|target_portfolio_size)"
-
-# 期望输出：
-# min_turnover: 50,000,000 元
-# target_portfolio_size: 20
-```
-
-#### Step 3: 更新文档状态
-
-修复验证通过后，更新本文档状态：
-```markdown
-**状态**: ✅ 已完成并验收通过
-```
-
----
-
-## 8. 参考资料
+## 7. 参考资料
 
 ### 配置文件位置
 - `etf_selector/configs/default.json` - 完整模板（所有参数）
@@ -454,18 +390,18 @@ python -m etf_selector.main --target-size 20 --min-turnover 50000000 --verbose |
 - `etf_selector/configs/aggressive.json` - 激进配置预设
 
 ### 核心代码文件
-- `etf_selector/config_loader.py` - 配置加载器（452行）
-- `etf_selector/config.py` - 配置数据类（149行）
-- `etf_selector/main.py` - CLI入口（455行）
+- `etf_selector/config_loader.py` - 配置加载器
+- `etf_selector/config.py` - 配置数据类
+- `etf_selector/main.py` - CLI入口
 
 ### 设计原则
 1. **向后兼容**: 所有旧CLI命令继续工作
 2. **分层覆盖**: Default < JSON < CLI（优先级递增）
 3. **Fail-Fast验证**: 配置错误立即报错
-4. **部分更新**: 配置文件可只指定变更参数
+4. **语义清晰**: 嵌套层级结构表达参数从属关系
 
 ---
 
-**文档版本**: v1.0
-**最后更新**: 2025-11-28
+**文档版本**: v1.1
+**最后更新**: 2025-11-29
 **维护者**: ETF Selector开发团队

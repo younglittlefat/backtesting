@@ -100,37 +100,52 @@ EXPERIMENT_TYPE = detect_experiment_type()
 
 # ============================================================================
 # 核心超参定义（与主脚本保持一致）
+# 包含 MACD 和 KAMA 策略的所有选项
 # ============================================================================
 
 CORE_OPTIONS = [
+    # MACD 专用选项
     'enable-hysteresis',
     'enable-zero-axis',
-    'enable-confirm-filter',
     'confirm-bars-sell',
     'min-hold-bars',
-    'enable-loss-protection',
-    'enable-trailing-stop',
+    # KAMA 专用选项
+    'enable-efficiency-filter',
+    'enable-slope-confirmation',
+    # 通用过滤器选项
+    'enable-slope-filter',
     'enable-adx-filter',
     'enable-volume-filter',
+    'enable-confirm-filter',
+    # 通用止损选项
+    'enable-loss-protection',
+    'enable-trailing-stop',
     'enable-atr-stop'
 ]
 
 # 非store_true参数及其默认值
 NON_BOOLEAN_PARAMS = {
+    # 通用过滤器参数
     'adx-period': 14,
     'adx-threshold': 25.0,
     'volume-period': 20,
     'volume-ratio': 1.2,
+    'slope-lookback': 5,
+    'confirm-bars': 2,  # enable-confirm-filter的附属参数
+    # 通用止损参数
     'max-consecutive-losses': 3,
     'pause-bars': 10,
     'trailing-stop-pct': 0.05,
     'atr-period': 14,
     'atr-multiplier': 2.5,
+    # MACD 专用参数
     'hysteresis-mode': 'std',
     'hysteresis-k': 0.5,
     'hysteresis-window': 20,
     'zero-axis-mode': 'symmetric',
-    'confirm-bars': 2,  # enable-confirm-filter的附属参数
+    # KAMA 专用参数
+    'min-efficiency-ratio': 0.3,
+    'min-slope-periods': 3,
     # 注意：confirm-bars-sell和min-hold-bars是独立开关，值在组合中时固定
 }
 
@@ -446,6 +461,10 @@ def collect_results():
                     row[param] = ''
                 elif param.startswith('volume-') and not row.get('enable-volume-filter', False):
                     row[param] = ''
+                elif param == 'slope-lookback' and not row.get('enable-slope-filter', False):
+                    row[param] = ''
+                elif param == 'confirm-bars' and not row.get('enable-confirm-filter', False):
+                    row[param] = ''
                 elif param in ['max-consecutive-losses', 'pause-bars'] and not row.get('enable-loss-protection', False):
                     row[param] = ''
                 elif param == 'trailing-stop-pct' and not row.get('enable-trailing-stop', False):
@@ -454,11 +473,21 @@ def collect_results():
                     row[param] = ''
                 elif param.startswith('hysteresis-') and not row.get('enable-hysteresis', False):
                     row[param] = ''
+                elif param == 'zero-axis-mode' and not row.get('enable-zero-axis', False):
+                    row[param] = ''
+                elif param == 'min-efficiency-ratio' and not row.get('enable-efficiency-filter', False):
+                    row[param] = ''
+                elif param == 'min-slope-periods' and not row.get('enable-slope-confirmation', False):
+                    row[param] = ''
                 else:
                     # 对于生效的参数，显示默认值
                     if param in ['adx-period', 'adx-threshold'] and row.get('enable-adx-filter', False):
                         row[param] = default_value
                     elif param in ['volume-period', 'volume-ratio'] and row.get('enable-volume-filter', False):
+                        row[param] = default_value
+                    elif param == 'slope-lookback' and row.get('enable-slope-filter', False):
+                        row[param] = default_value
+                    elif param == 'confirm-bars' and row.get('enable-confirm-filter', False):
                         row[param] = default_value
                     elif param in ['max-consecutive-losses', 'pause-bars'] and row.get('enable-loss-protection', False):
                         row[param] = default_value
@@ -468,10 +497,11 @@ def collect_results():
                         row[param] = default_value
                     elif param.startswith('hysteresis-') and row.get('enable-hysteresis', False):
                         row[param] = default_value
-                    elif param not in ['adx-period', 'adx-threshold', 'volume-period', 'volume-ratio',
-                                      'max-consecutive-losses', 'pause-bars', 'trailing-stop-pct',
-                                      'atr-period', 'atr-multiplier', 'hysteresis-mode', 'hysteresis-k', 'hysteresis-window']:
-                        # 其他通用参数始终显示
+                    elif param == 'zero-axis-mode' and row.get('enable-zero-axis', False):
+                        row[param] = default_value
+                    elif param == 'min-efficiency-ratio' and row.get('enable-efficiency-filter', False):
+                        row[param] = default_value
+                    elif param == 'min-slope-periods' and row.get('enable-slope-confirmation', False):
                         row[param] = default_value
                     else:
                         row[param] = ''

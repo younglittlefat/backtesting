@@ -30,10 +30,17 @@
 EXPERIMENT_TYPE="mega_test_greedy"
 
 # 基础路径配置
-POOL_PATH="results/trend_etf_pool_2019_2022_optimized.csv"
+# POOL_PATH="results/trend_etf_pool_2019_2022_optimized.csv"
+# DATA_DIR="data/chinese_etf/daily"
+# TEMP_PARAMS_PATH="config/test/kama_base_strategy_params.json"
+# OUTPUT_BASE_DIR="results/mega_test_kama_greedy_$(date +%Y%m%d_%H%M%S)"
+# START_DATE="20220102"
+# END_DATE="20240102"
+
+POOL_PATH="experiment/etf/selector_score/single_primary/single_adx_score_pool_2019_2021.csv"
 DATA_DIR="data/chinese_etf/daily"
 TEMP_PARAMS_PATH="config/test/kama_base_strategy_params.json"
-OUTPUT_BASE_DIR="results/mega_test_kama_greedy_$(date +%Y%m%d_%H%M%S)"
+OUTPUT_BASE_DIR="experiment/etf/selector_score/single_primary/mega_test_kama_single_adx_score_$(date +%Y%m%d_%H%M%S)"
 START_DATE="20220102"
 END_DATE="20240102"
 
@@ -44,6 +51,9 @@ BACKTEST_DIR="${OUTPUT_BASE_DIR}/backtests"
 
 # 结果汇总CSV路径
 RESULT_CSV="${OUTPUT_BASE_DIR}/mega_test_greedy_summary.csv"
+
+# 实验命令记录CSV路径
+COMMANDS_CSV="${OUTPUT_BASE_DIR}/experiment_commands.csv"
 
 # 元数据文件路径
 METADATA_FILE="${OUTPUT_BASE_DIR}/.experiment_metadata.json"
@@ -216,6 +226,9 @@ run_single_experiment() {
     if [[ " $options_str " =~ " enable-slope-confirmation " ]]; then
         cmd="$cmd --min-slope-periods $MIN_SLOPE_PERIODS"
     fi
+
+    # 记录命令到CSV（使用双引号包裹命令，防止逗号干扰）
+    echo "${exp_name},\"${cmd}\"" >> "$COMMANDS_CSV"
 
     # 执行命令
     echo "Command: $cmd"
@@ -876,6 +889,10 @@ main() {
     # 创建实验元数据文件
     create_metadata "$METADATA_FILE"
 
+    # 初始化实验命令记录CSV
+    echo "exp_name,command" > "$COMMANDS_CSV"
+    print_success "初始化命令记录文件: $COMMANDS_CSV"
+
     # 导出环境变量供Python使用
     export BACKTEST_DIR
     export CANDIDATES_DIR
@@ -920,6 +937,10 @@ main() {
         print_error "结果汇总失败"
     fi
 
+    # 复制脚本自身到输出目录存档
+    cp "$0" "${OUTPUT_BASE_DIR}/"
+    print_success "脚本已存档: ${OUTPUT_BASE_DIR}/$(basename $0)"
+
     # 打印最终统计
     print_header "贪心筛选完成"
 
@@ -927,6 +948,7 @@ main() {
     echo "总实验数: ${total_dirs}"
     echo "输出目录: ${OUTPUT_BASE_DIR}"
     echo "结果CSV: ${RESULT_CSV}"
+    echo "命令记录: ${COMMANDS_CSV}"
     echo ""
     echo "候选池文件:"
     ls -1 "${CANDIDATES_DIR}"/candidates_k*.json 2>/dev/null || echo "  无"

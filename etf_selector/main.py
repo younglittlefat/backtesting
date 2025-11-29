@@ -347,10 +347,12 @@ def main():
             traceback.print_exc()
         return 1
 
-    # 确定输出路径
+    # 确定输出路径（优先级: CLI > config > 自动生成）
     output_arg = getattr(args, 'output', None)
     if output_arg:
         output_path = Path(output_arg)
+    elif config.output_path:
+        output_path = Path(config.output_path)
     else:
         timestamp = datetime.now().strftime('%Y%m%d')
         output_path = Path('results') / f'trend_etf_pool_{timestamp}.csv'
