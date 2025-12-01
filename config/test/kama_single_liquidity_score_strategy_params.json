@@ -1,0 +1,75 @@
+{
+  "sma_cross": {
+    "optimized": false,
+    "optimization_date": null,
+    "optimization_period": null,
+    "stock_pool": null,
+    "params": {
+      "n1": 10,
+      "n2": 20
+    },
+    "performance": {
+      "sharpe_ratio": null,
+      "annual_return": null,
+      "max_drawdown": null,
+      "return_pct": null
+    },
+    "notes": "默认参数配置"
+  },
+  "kama_cross": {
+    "optimized": true,
+    "optimization_date": "2025-11-30 09:05:18",
+    "optimization_period": "20220102 至 20240102",
+    "stock_pool": "全局稳健优化 (共20只标的)",
+    "params": {
+      "kama_fast": 2,
+      "kama_period": 20,
+      "kama_slow": 30
+    },
+    "performance": {
+      "sharpe_ratio": 1.2893375913796261,
+      "annual_return": 13.088575803293079,
+      "max_drawdown": -8.1563152105116,
+      "return_pct": 26.709701114250567,
+      "median_sharpe": 0.6551997086205339,
+      "avg_sharpe": 0.6371129852343633,
+      "win_rate": 0.9,
+      "sharpe_std": 0.4209568240442418,
+      "robustness_score": 1.0580661227503139
+    },
+    "notes": "全局稳健参数优化 (综合评分=1.0581)\n参数: kama_fast=2, kama_period=20, kama_slow=30\n中位数夏普=0.6552, 平均夏普=0.6371, 胜率=90.0%, 稳定性(标准差)=0.4210",
+    "runtime_config": {
+      "filters": {
+        "enable_slope_filter": true,
+        "enable_adx_filter": true,
+        "enable_volume_filter": false,
+        "enable_confirm_filter": false,
+        "slope_lookback": 5,
+        "adx_period": 14,
+        "adx_threshold": 25.0,
+        "volume_period": 20,
+        "volume_ratio": 1.2,
+        "confirm_bars": 0,
+        "enable_slope_confirmation": true,
+        "min_slope_periods": 3,
+        "enable_efficiency_filter": false,
+        "min_efficiency_ratio": 0.3
+      },
+      "loss_protection": {
+        "enable_loss_protection": false,
+        "max_consecutive_losses": 3,
+        "pause_bars": 10
+      },
+      "anti_whipsaw": {},
+      "trailing_stop": {
+        "enable_trailing_stop": false,
+        "trailing_stop_pct": 0.05
+      },
+      "atr_stop": {
+        "enable_atr_stop": true,
+        "atr_period": 14,
+        "atr_multiplier": 2.5
+      }
+    }
+  }
+}

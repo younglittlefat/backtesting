@@ -356,6 +356,7 @@ def handle_list_snapshots_mode(args):
 
 def handle_restore_mode(args):
     """处理恢复快照模式"""
+    import shutil
     from portfolio_manager import SnapshotManager
 
     if not args.portfolio_file:
@@ -363,6 +364,7 @@ def handle_restore_mode(args):
         sys.exit(1)
 
     history_dir = Path(args.portfolio_file).parent / 'history'
+    invalid_history_dir = Path(args.portfolio_file).parent / 'invalid_history'
     snapshot_manager = SnapshotManager(str(history_dir))
     portfolio_name = Path(args.portfolio_file).stem
 
@@ -375,10 +377,42 @@ def handle_restore_mode(args):
     print_restore_preview(args.restore, snapshot_data)
     print("")
 
+    # 查找并移动回滚日期之后的历史记录
+    restore_date = int(args.restore)
+    files_to_move = []
+
+    if history_dir.exists():
+        for filepath in history_dir.glob(f"*_{portfolio_name}_*.json"):
+            # 从文件名提取日期，格式: trades_xxx_YYYYMMDD.json 或 snapshot_xxx_YYYYMMDD.json
+            filename = filepath.name
+            # 提取最后的日期部分（去掉.json后取最后8位数字）
+            date_part = filename.replace('.json', '').split('_')[-1]
+            if date_part.isdigit() and len(date_part) == 8:
+                file_date = int(date_part)
+                if file_date > restore_date:
+                    files_to_move.append(filepath)
+
     print("⚠️  警告: 恢复操作将覆盖当前持仓文件！")
     print(f"  目标文件: {args.portfolio_file}")
+    if files_to_move:
+        print(f"  将移动 {len(files_to_move)} 个历史记录到 invalid_history/")
+        for f in sorted(files_to_move):
+            print(f"    - {f.name}")
     print("")
     print("正在执行恢复...")
+
+    # 移动历史记录到 invalid_history
+    if files_to_move:
+        invalid_history_dir.mkdir(parents=True, exist_ok=True)
+        for filepath in files_to_move:
+            dest = invalid_history_dir / filepath.name
+            # 如果目标已存在，添加时间戳避免覆盖
+            if dest.exists():
+                from datetime import datetime
+                timestamp = datetime.now().strftime('%H%M%S')
+                dest = invalid_history_dir / f"{filepath.stem}_{timestamp}.json"
+            shutil.move(str(filepath), str(dest))
+        print(f"✓ 已移动 {len(files_to_move)} 个历史记录到 {invalid_history_dir}/")
 
     portfolio = snapshot_manager.restore_snapshot(
         args.restore,
@@ -394,6 +428,8 @@ def handle_restore_mode(args):
     print(f"  可用现金: ¥{portfolio.cash:,.2f}")
     print(f"  持仓数量: {len(portfolio.positions)}")
     print(f"  持仓文件: {args.portfolio_file}")
+    if files_to_move:
+        print(f"  已移动历史: {len(files_to_move)} 个文件 → invalid_history/")
     print("=" * 80)
 
 

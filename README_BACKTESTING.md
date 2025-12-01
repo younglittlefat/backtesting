@@ -22,11 +22,12 @@ python scripts/export_mysql_to_csv.py --data_type etf --output_dir data/online_c
 # ./generate_daily_signals.sh --init 1000000 --portfolio-file positions/etf_sma_cross_portfolio.json
 # ./generate_daily_signals.sh --init 1000000 --portfolio-file positions/etf_macd_cross_portfolio.json
 
-## 根据超参获取今天信号
-# ./generate_daily_signals.sh --analyze --strategy sma_cross_enhanced --stock-list results/trend_etf_pool.csv --portfolio-file positions/etf_sma_cross_portfolio.json --load-params config/sma_strategy_params.json --data-dir data/chinese_etf/daily --end-date 20251112
+## 根据超参获取今天信号示例
 ./generate_daily_signals.sh --analyze --strategy macd_cross --stock-list results/trend_etf_pool_2019_2021_optimized.csv --portfolio-file positions/etf_macd_cross_portfolio.json --load-params config/macd_strategy_params.json --data-dir data/chinese_etf/daily --end-date 20251112
 
-## 根据超参执行今天的调仓
-# ./generate_daily_signals.sh --execute --strategy sma_cross_enhanced --stock-list results/trend_etf_pool.csv --portfolio-file positions/etf_sma_cross_portfolio.json --load-params config/sma_strategy_params.json --data-dir data/chinese_etf/daily --end-date 20251110
+## 根据超参执行今天的调仓示例
 ./generate_daily_signals.sh --execute --strategy macd_cross --stock-list results/trend_etf_pool_2019_2021_optimized.csv --portfolio-file positions/etf_macd_cross_portfolio.json --load-params config/macd_strategy_params.json --data-dir data/chinese_etf/daily --end-date 20251112
 
+
+## 回滚持仓配置示例
+./generate_daily_signals.sh --strategy kama_cross --portfolio-file positions/etf_kama_cross_portfolio.json --restore 20251130

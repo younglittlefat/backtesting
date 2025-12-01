@@ -5,7 +5,10 @@ set -euo pipefail
 # 时区与日期
 export TZ="Asia/Shanghai"
 TODAY=$(date +%Y%m%d)
-START_TWO_YEARS_AGO=$(date -d "-2 years" +%Y%m%d)
+# 数据日期：使用前一天（适配早上9点运行，使用前一日收盘价）
+# 若需使用当天数据（收盘后运行），将 DATA_DATE 改为 $TODAY
+DATA_DATE=$(date -d "-1 day" +%Y%m%d)
+START_TWO_YEARS_AGO=$(date -d "$DATA_DATE -2 years" +%Y%m%d)
 
 # 路径与环境
 CONDA_BIN="/home/zijunliu/miniforge3/condabin/conda"
@@ -31,7 +34,7 @@ trap 'log ERROR "步骤失败，查看日志: $LOG_FILE"' ERR
 log INFO "启动每日任务"
 log INFO "项目目录: $PROJECT_ROOT"
 log INFO "日志文件: $LOG_FILE"
-log INFO "今日日期: $TODAY, 两年前起始: $START_TWO_YEARS_AGO"
+log INFO "今日日期: $TODAY, 数据日期: $DATA_DATE, 两年前起始: $START_TWO_YEARS_AGO"
 
 # 运行并打标
 run_step() {
@@ -47,10 +50,10 @@ run_step() {
 
 cd "$PROJECT_ROOT"
 
-# 1) 获取今日ETF日线
-run_step "获取今日ETF日线" \
+# 1) 获取数据日ETF日线（前一天收盘价）
+run_step "获取${DATA_DATE}ETF日线" \
     "$CONDA_BIN" run -n "$CONDA_ENV" python scripts/fetch_tushare_data_v2.py \
-    --start_date "$TODAY" --end_date "$TODAY" --daily_data --basic_info --data_type etf
+    --start_date "$DATA_DATE" --end_date "$DATA_DATE" --daily_data --basic_info --data_type etf
 
 # 2) 导出近两年ETF日线（先清空目录）
 EXPORT_DIR="$PROJECT_ROOT/data/online_chinese_etf"
@@ -63,7 +66,7 @@ mkdir -p "$EXPORT_DIR"
 run_step "导出近两年ETF日线到 $EXPORT_DIR" \
     "$CONDA_BIN" run -n "$CONDA_ENV" python scripts/export_mysql_to_csv.py \
     --data_type etf --output_dir "$EXPORT_DIR" --export_daily --export_basic \
-    --start_date "$START_TWO_YEARS_AGO" --end_date "$TODAY"
+    --start_date "$START_TWO_YEARS_AGO" --end_date "$DATA_DATE"
 
 # 3) 执行KAMA调仓（执行模式）
 run_step "执行KAMA调仓（execute）" \
@@ -73,7 +76,7 @@ run_step "执行KAMA调仓（execute）" \
     --portfolio-file positions/etf_kama_cross_portfolio.json \
     --load-params config/kama_strategy_params.json \
     --data-dir data/online_chinese_etf/daily \
-    --end-date "$TODAY"
+    --end-date "$DATA_DATE"
 
 # 4) 执行MACD调仓（执行模式）
 run_step "执行MACD调仓（execute）" \
@@ -83,7 +86,7 @@ run_step "执行MACD调仓（execute）" \
     --portfolio-file positions/etf_macd_cross_portfolio.json \
     --load-params config/macd_strategy_params.json \
     --data-dir data/online_chinese_etf/daily \
-    --end-date "$TODAY"
+    --end-date "$DATA_DATE"
 
 # 5) 发送飞书通知（包含持仓与调仓摘要，必须带关键词“肥叔叔的交易”）
 FEISHU_WEBHOOK="https://open.feishu.cn/open-apis/bot/v2/hook/9e035bdf-0d61-4620-98ea-b915168f3c24"

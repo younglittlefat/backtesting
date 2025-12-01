@@ -29,16 +29,16 @@
 # ============================================================================
 
 # 并发度配置（可通过 -j 参数覆盖）
-PARALLEL_JOBS=5
+PARALLEL_JOBS=8
 
 # 实验类型标识（用于自动识别实验目录）
 EXPERIMENT_TYPE="mega_test_greedy"
 
 # 基础路径配置
-POOL_PATH="experiment/etf/selector_score/single_primary/single_price_efficiency_pool_2019_2021.csv"
+POOL_PATH="experiment/etf/selector_score/single_primary/single_liquidity_score_pool_2019_2021.csv"
 DATA_DIR="data/chinese_etf/daily"
-TEMP_PARAMS_PATH="config/test/kama_single_price_efficiency_strategy_params.json"
-OUTPUT_BASE_DIR="experiment/etf/selector_score/single_primary/mega_test_kama_single_price_efficiency_parallel_$(date +%Y%m%d_%H%M%S)"
+TEMP_PARAMS_PATH="config/test/kama_single_liquidity_score_strategy_params.json"
+OUTPUT_BASE_DIR="experiment/etf/selector_score/single_primary/mega_test_kama_single_liquidity_score_parallel_$(date +%Y%m%d_%H%M%S)"
 START_DATE="20220102"
 END_DATE="20240102"
 
