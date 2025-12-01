@@ -1,0 +1,1 @@
+SUCCESS:k4_enable-adx-filter_enable-atr-stop_enable-slope-confirmation_enable-slope-filter
