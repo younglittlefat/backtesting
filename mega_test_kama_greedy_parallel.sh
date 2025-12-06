@@ -315,6 +315,12 @@ try:
     col_mapping = {
         'sharpe_mean': ['夏普-均值', 'Sharpe Ratio Mean'],
         'sharpe_median': ['夏普-中位数', 'Sharpe Ratio Median'],
+        'win_rate_mean': ['胜率-均值(%)', 'Win Rate [%] Mean'],
+        'win_rate_median': ['胜率-中位数(%)', 'Win Rate [%] Median'],
+        'pl_ratio_mean': ['盈亏比-均值', 'Profit/Loss Ratio Mean'],
+        'pl_ratio_median': ['盈亏比-中位数', 'Profit/Loss Ratio Median'],
+        'trades_mean': ['交易次数-均值', '# Trades Mean'],
+        'trades_median': ['交易次数-中位数', '# Trades Median'],
     }
 
     baseline_metrics = {}
@@ -324,8 +330,11 @@ try:
         for key, possible_names in col_mapping.items():
             for col_name in possible_names:
                 if col_name in df.columns:
-                    baseline_metrics[key] = float(df[col_name].iloc[0])
+                    val = df[col_name].iloc[0]
+                    baseline_metrics[key] = float(val) if pd.notna(val) else None
                     break
+            if key not in baseline_metrics:
+                baseline_metrics[key] = None
     else:
         # 详细格式，需要计算统计值
         cols_variants = [
@@ -346,14 +355,34 @@ try:
         baseline_metrics['sharpe_mean'] = float(df[cols_found[0]].mean())
         baseline_metrics['sharpe_median'] = float(df[cols_found[0]].median())
 
+        # 提取其他指标（详细格式）
+        for col in ['胜率(%)', 'Win Rate [%]']:
+            if col in df.columns:
+                baseline_metrics['win_rate_mean'] = float(df[col].mean())
+                baseline_metrics['win_rate_median'] = float(df[col].median())
+                break
+        for col in ['盈亏比', 'Profit/Loss Ratio']:
+            if col in df.columns:
+                baseline_metrics['pl_ratio_mean'] = float(df[col].dropna().mean()) if df[col].dropna().size else None
+                baseline_metrics['pl_ratio_median'] = float(df[col].dropna().median()) if df[col].dropna().size else None
+                break
+        for col in ['交易次数', '# Trades']:
+            if col in df.columns:
+                baseline_metrics['trades_mean'] = float(df[col].mean())
+                baseline_metrics['trades_median'] = float(df[col].median())
+                break
+
     # 保存到JSON
     baseline_json = os.path.join(CANDIDATES_DIR, 'baseline.json')
     with open(baseline_json, 'w', encoding='utf-8') as f:
         json.dump(baseline_metrics, f, indent=2, ensure_ascii=False)
 
     print(f"✓ Baseline指标:")
-    print(f"  - 夏普均值: {baseline_metrics['sharpe_mean']:.4f}")
-    print(f"  - 夏普中位数: {baseline_metrics['sharpe_median']:.4f}")
+    print(f"  - 夏普均值: {baseline_metrics.get('sharpe_mean', 'N/A'):.4f}" if baseline_metrics.get('sharpe_mean') else "  - 夏普均值: N/A")
+    print(f"  - 夏普中位数: {baseline_metrics.get('sharpe_median', 'N/A'):.4f}" if baseline_metrics.get('sharpe_median') else "  - 夏普中位数: N/A")
+    print(f"  - 胜率均值: {baseline_metrics.get('win_rate_mean', 'N/A'):.2f}%" if baseline_metrics.get('win_rate_mean') else "  - 胜率均值: N/A")
+    print(f"  - 盈亏比均值: {baseline_metrics.get('pl_ratio_mean', 'N/A'):.2f}" if baseline_metrics.get('pl_ratio_mean') else "  - 盈亏比均值: N/A")
+    print(f"  - 交易次数均值: {baseline_metrics.get('trades_mean', 'N/A'):.1f}" if baseline_metrics.get('trades_mean') else "  - 交易次数均值: N/A")
     print(f"✓ 已保存到: {baseline_json}")
 
 except Exception as e:
@@ -433,12 +462,65 @@ BACKTEST_DIR = os.environ.get('BACKTEST_DIR')
 CANDIDATES_DIR = os.environ.get('CANDIDATES_DIR')
 CORE_OPTIONS = os.environ.get('CORE_OPTIONS_STR').split()
 
+# 辅助函数：从global_summary提取所有指标
+def extract_metrics_from_summary(df):
+    """从global_summary DataFrame提取所有指标"""
+    metrics = {}
+
+    if len(df) == 1:
+        # 汇总格式
+        col_mapping = {
+            'sharpe_mean': ['夏普-均值', 'Sharpe Ratio Mean'],
+            'sharpe_median': ['夏普-中位数', 'Sharpe Ratio Median'],
+            'win_rate_mean': ['胜率-均值(%)', 'Win Rate [%] Mean'],
+            'win_rate_median': ['胜率-中位数(%)', 'Win Rate [%] Median'],
+            'pl_ratio_mean': ['盈亏比-均值', 'Profit/Loss Ratio Mean'],
+            'pl_ratio_median': ['盈亏比-中位数', 'Profit/Loss Ratio Median'],
+            'trades_mean': ['交易次数-均值', '# Trades Mean'],
+            'trades_median': ['交易次数-中位数', '# Trades Median'],
+        }
+        for key, possible_names in col_mapping.items():
+            for col_name in possible_names:
+                if col_name in df.columns:
+                    val = df[col_name].iloc[0]
+                    metrics[key] = float(val) if pd.notna(val) else None
+                    break
+            if key not in metrics:
+                metrics[key] = None
+    else:
+        # 详细格式
+        for col in ['Sharpe Ratio', '夏普比率']:
+            if col in df.columns:
+                metrics['sharpe_mean'] = float(df[col].mean())
+                metrics['sharpe_median'] = float(df[col].median())
+                break
+        for col in ['胜率(%)', 'Win Rate [%]']:
+            if col in df.columns:
+                metrics['win_rate_mean'] = float(df[col].mean())
+                metrics['win_rate_median'] = float(df[col].median())
+                break
+        for col in ['盈亏比', 'Profit/Loss Ratio']:
+            if col in df.columns:
+                metrics['pl_ratio_mean'] = float(df[col].dropna().mean()) if df[col].dropna().size else None
+                metrics['pl_ratio_median'] = float(df[col].dropna().median()) if df[col].dropna().size else None
+                break
+        for col in ['交易次数', '# Trades']:
+            if col in df.columns:
+                metrics['trades_mean'] = float(df[col].mean())
+                metrics['trades_median'] = float(df[col].median())
+                break
+
+    return metrics
+
 # 加载Baseline
 baseline_json = os.path.join(CANDIDATES_DIR, 'baseline.json')
 with open(baseline_json, 'r', encoding='utf-8') as f:
     baseline = json.load(f)
 
-print(f"Baseline: sharpe_mean={baseline['sharpe_mean']:.4f}, sharpe_median={baseline['sharpe_median']:.4f}")
+print(f"Baseline: sharpe={baseline.get('sharpe_mean', 'N/A'):.4f}/{baseline.get('sharpe_median', 'N/A'):.4f}, "
+      f"win_rate={baseline.get('win_rate_mean', 'N/A'):.1f}%, "
+      f"pl_ratio={baseline.get('pl_ratio_mean', 'N/A'):.2f}, "
+      f"trades={baseline.get('trades_mean', 'N/A'):.0f}" if all(baseline.get(k) for k in ['sharpe_mean', 'sharpe_median']) else "Baseline: 指标缺失")
 
 # 提取每个单变量的指标
 candidates = []
@@ -458,28 +540,10 @@ for opt in CORE_OPTIONS:
 
     try:
         df = pd.read_csv(summary_path, encoding='utf-8-sig')
+        metrics = extract_metrics_from_summary(df)
 
-        # 提取夏普指标
-        sharpe_mean = None
-        sharpe_median = None
-
-        if len(df) == 1:
-            # 汇总格式
-            for col in ['夏普-均值', 'Sharpe Ratio Mean']:
-                if col in df.columns:
-                    sharpe_mean = float(df[col].iloc[0])
-                    break
-            for col in ['夏普-中位数', 'Sharpe Ratio Median']:
-                if col in df.columns:
-                    sharpe_median = float(df[col].iloc[0])
-                    break
-        else:
-            # 详细格式
-            for col in ['Sharpe Ratio', '夏普比率']:
-                if col in df.columns:
-                    sharpe_mean = float(df[col].mean())
-                    sharpe_median = float(df[col].median())
-                    break
+        sharpe_mean = metrics.get('sharpe_mean')
+        sharpe_median = metrics.get('sharpe_median')
 
         if sharpe_mean is None or sharpe_median is None:
             print(f"  ⚠ {exp_name}: 无法提取夏普指标，跳过")
@@ -489,13 +553,23 @@ for opt in CORE_OPTIONS:
         passes = (sharpe_mean > baseline['sharpe_mean']) or (sharpe_median > baseline['sharpe_median'])
 
         status = "✓ 通过" if passes else "✗ 未通过"
-        print(f"  {status} {opt}: sharpe_mean={sharpe_mean:.4f}, sharpe_median={sharpe_median:.4f}")
+        # 打印输出包含新指标
+        win_rate_str = f"{metrics.get('win_rate_mean', 0):.1f}%" if metrics.get('win_rate_mean') else "N/A"
+        pl_ratio_str = f"{metrics.get('pl_ratio_mean', 0):.2f}" if metrics.get('pl_ratio_mean') else "N/A"
+        trades_str = f"{metrics.get('trades_mean', 0):.0f}" if metrics.get('trades_mean') else "N/A"
+        print(f"  {status} {opt}: sharpe={sharpe_mean:.4f}/{sharpe_median:.4f}, win_rate={win_rate_str}, pl_ratio={pl_ratio_str}, trades={trades_str}")
 
         if passes:
             candidates.append({
                 'options': [opt],
                 'sharpe_mean': sharpe_mean,
                 'sharpe_median': sharpe_median,
+                'win_rate_mean': metrics.get('win_rate_mean'),
+                'win_rate_median': metrics.get('win_rate_median'),
+                'pl_ratio_mean': metrics.get('pl_ratio_mean'),
+                'pl_ratio_median': metrics.get('pl_ratio_median'),
+                'trades_mean': metrics.get('trades_mean'),
+                'trades_median': metrics.get('trades_median'),
                 'exp_name': exp_name
             })
 
@@ -644,6 +718,56 @@ PREV_K = K - 1
 BACKTEST_DIR = os.environ.get('BACKTEST_DIR')
 CANDIDATES_DIR = os.environ.get('CANDIDATES_DIR')
 
+# 辅助函数：从global_summary提取所有指标
+def extract_metrics_from_summary(df):
+    """从global_summary DataFrame提取所有指标"""
+    metrics = {}
+
+    if len(df) == 1:
+        # 汇总格式
+        col_mapping = {
+            'sharpe_mean': ['夏普-均值', 'Sharpe Ratio Mean'],
+            'sharpe_median': ['夏普-中位数', 'Sharpe Ratio Median'],
+            'win_rate_mean': ['胜率-均值(%)', 'Win Rate [%] Mean'],
+            'win_rate_median': ['胜率-中位数(%)', 'Win Rate [%] Median'],
+            'pl_ratio_mean': ['盈亏比-均值', 'Profit/Loss Ratio Mean'],
+            'pl_ratio_median': ['盈亏比-中位数', 'Profit/Loss Ratio Median'],
+            'trades_mean': ['交易次数-均值', '# Trades Mean'],
+            'trades_median': ['交易次数-中位数', '# Trades Median'],
+        }
+        for key, possible_names in col_mapping.items():
+            for col_name in possible_names:
+                if col_name in df.columns:
+                    val = df[col_name].iloc[0]
+                    metrics[key] = float(val) if pd.notna(val) else None
+                    break
+            if key not in metrics:
+                metrics[key] = None
+    else:
+        # 详细格式
+        for col in ['Sharpe Ratio', '夏普比率']:
+            if col in df.columns:
+                metrics['sharpe_mean'] = float(df[col].mean())
+                metrics['sharpe_median'] = float(df[col].median())
+                break
+        for col in ['胜率(%)', 'Win Rate [%]']:
+            if col in df.columns:
+                metrics['win_rate_mean'] = float(df[col].mean())
+                metrics['win_rate_median'] = float(df[col].median())
+                break
+        for col in ['盈亏比', 'Profit/Loss Ratio']:
+            if col in df.columns:
+                metrics['pl_ratio_mean'] = float(df[col].dropna().mean()) if df[col].dropna().size else None
+                metrics['pl_ratio_median'] = float(df[col].dropna().median()) if df[col].dropna().size else None
+                break
+        for col in ['交易次数', '# Trades']:
+            if col in df.columns:
+                metrics['trades_mean'] = float(df[col].mean())
+                metrics['trades_median'] = float(df[col].median())
+                break
+
+    return metrics
+
 # 加载前一阶段候选池
 prev_candidates_json = os.path.join(CANDIDATES_DIR, f'candidates_k{PREV_K}.json')
 with open(prev_candidates_json, 'r', encoding='utf-8') as f:
@@ -679,26 +803,10 @@ for exp_dir in stage_k_dirs:
 
     try:
         df = pd.read_csv(summary_path, encoding='utf-8-sig')
+        metrics = extract_metrics_from_summary(df)
 
-        # 提取夏普指标
-        sharpe_mean = None
-        sharpe_median = None
-
-        if len(df) == 1:
-            for col in ['夏普-均值', 'Sharpe Ratio Mean']:
-                if col in df.columns:
-                    sharpe_mean = float(df[col].iloc[0])
-                    break
-            for col in ['夏普-中位数', 'Sharpe Ratio Median']:
-                if col in df.columns:
-                    sharpe_median = float(df[col].iloc[0])
-                    break
-        else:
-            for col in ['Sharpe Ratio', '夏普比率']:
-                if col in df.columns:
-                    sharpe_mean = float(df[col].mean())
-                    sharpe_median = float(df[col].median())
-                    break
+        sharpe_mean = metrics.get('sharpe_mean')
+        sharpe_median = metrics.get('sharpe_median')
 
         if sharpe_mean is None or sharpe_median is None:
             print(f"  ⚠ {exp_name}: 无法提取夏普指标，跳过")
@@ -721,15 +829,25 @@ for exp_dir in stage_k_dirs:
         passes = (sharpe_mean > max_sub_sharpe_mean) and (sharpe_median > max_sub_sharpe_median)
 
         status = "✓ 通过" if passes else "✗ 未通过"
+        # 打印输出包含新指标
+        win_rate_str = f"{metrics.get('win_rate_mean', 0):.1f}%" if metrics.get('win_rate_mean') else "N/A"
+        pl_ratio_str = f"{metrics.get('pl_ratio_mean', 0):.2f}" if metrics.get('pl_ratio_mean') else "N/A"
+        trades_str = f"{metrics.get('trades_mean', 0):.0f}" if metrics.get('trades_mean') else "N/A"
         print(f"  {status} {options_str}:")
-        print(f"      当前: mean={sharpe_mean:.4f}, median={sharpe_median:.4f}")
-        print(f"      子组合最优: mean={max_sub_sharpe_mean:.4f}, median={max_sub_sharpe_median:.4f}")
+        print(f"      当前: sharpe={sharpe_mean:.4f}/{sharpe_median:.4f}, win_rate={win_rate_str}, pl_ratio={pl_ratio_str}, trades={trades_str}")
+        print(f"      子组合最优: sharpe={max_sub_sharpe_mean:.4f}/{max_sub_sharpe_median:.4f}")
 
         if passes:
             candidates_k.append({
                 'options': options,
                 'sharpe_mean': sharpe_mean,
                 'sharpe_median': sharpe_median,
+                'win_rate_mean': metrics.get('win_rate_mean'),
+                'win_rate_median': metrics.get('win_rate_median'),
+                'pl_ratio_mean': metrics.get('pl_ratio_mean'),
+                'pl_ratio_median': metrics.get('pl_ratio_median'),
+                'trades_mean': metrics.get('trades_mean'),
+                'trades_median': metrics.get('trades_median'),
                 'exp_name': exp_name
             })
 

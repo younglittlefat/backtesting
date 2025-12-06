@@ -238,6 +238,13 @@ def extract_metrics_from_summary(summary_path: str) -> Optional[Dict[str, float]
             'sharpe_median': ['夏普-中位数', 'Sharpe Ratio Median'],
             'max_dd_mean': ['最大回撤-均值(%)', 'Max. Drawdown [%] Mean'],
             'max_dd_median': ['最大回撤-中位数(%)', 'Max. Drawdown [%] Median'],
+            # 新增指标
+            'win_rate_mean': ['胜率-均值(%)', 'Win Rate [%] Mean'],
+            'win_rate_median': ['胜率-中位数(%)', 'Win Rate [%] Median'],
+            'pl_ratio_mean': ['盈亏比-均值', 'Profit/Loss Ratio Mean'],
+            'pl_ratio_median': ['盈亏比-中位数', 'Profit/Loss Ratio Median'],
+            'trades_mean': ['交易次数-均值', '# Trades Mean'],
+            'trades_median': ['交易次数-中位数', '# Trades Median'],
         }
 
         # 如果是汇总格式（单行），直接读取
@@ -290,6 +297,23 @@ def extract_metrics_from_summary(summary_path: str) -> Optional[Dict[str, float]
             'max_dd_median': df[cols_found[2]].median(),
             'num_stocks': len(df)
         }
+
+        # 提取新增指标（详细格式）
+        for col in ['胜率(%)', 'Win Rate [%]']:
+            if col in df.columns:
+                metrics['win_rate_mean'] = float(df[col].mean())
+                metrics['win_rate_median'] = float(df[col].median())
+                break
+        for col in ['盈亏比', 'Profit/Loss Ratio']:
+            if col in df.columns:
+                metrics['pl_ratio_mean'] = float(df[col].dropna().mean()) if df[col].dropna().size else None
+                metrics['pl_ratio_median'] = float(df[col].dropna().median()) if df[col].dropna().size else None
+                break
+        for col in ['交易次数', '# Trades']:
+            if col in df.columns:
+                metrics['trades_mean'] = float(df[col].mean())
+                metrics['trades_median'] = float(df[col].median())
+                break
 
         return metrics
 
@@ -440,6 +464,13 @@ def collect_results():
         'sharpe_median',
         'max_dd_mean',
         'max_dd_median',
+        # 新增指标
+        'win_rate_mean',
+        'win_rate_median',
+        'pl_ratio_mean',
+        'pl_ratio_median',
+        'trades_mean',
+        'trades_median',
         'num_stocks',
         'summary_path'
     ])

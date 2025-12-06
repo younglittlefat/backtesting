@@ -194,6 +194,11 @@ def compute_stats(
     s.loc['Max. Trade Duration'] = _round_timedelta(durations.max())
     s.loc['Avg. Trade Duration'] = _round_timedelta(durations.mean())
     s.loc['Profit Factor'] = returns[returns > 0].sum() / (abs(returns[returns < 0].sum()) or np.nan)  # noqa: E501
+    # 盈亏比（平均盈利收益率/平均亏损收益率）- 趋势跟踪核心指标，应 > 2
+    # 使用收益率（ReturnPct）而非绝对金额，确保跨标的可比性
+    avg_win_pct = returns[returns > 0].mean() if (returns > 0).any() else np.nan
+    avg_loss_pct = abs(returns[returns < 0].mean()) if (returns < 0).any() else np.nan
+    s.loc['Profit/Loss Ratio'] = avg_win_pct / (avg_loss_pct or np.nan)
     s.loc['Expectancy [%]'] = returns.mean() * 100
     s.loc['SQN'] = np.sqrt(n_trades) * pl.mean() / (pl.std() or np.nan)
     s.loc['Kelly Criterion'] = win_rate - (1 - win_rate) / (pl[pl > 0].mean() / -pl[pl < 0].mean())

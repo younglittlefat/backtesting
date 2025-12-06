@@ -72,6 +72,9 @@ def save_summary_csv(
             '总收益率(%)': round(return_pct, 3) if return_pct is not None else None,
             '夏普比率': round(sharpe_value, 3) if not pd.isna(sharpe_value) else None,
             '最大回撤(%)': round(max_dd, 3) if max_dd is not None else None,
+            '胜率(%)': round(_safe_stat(stats, 'Win Rate [%]'), 2) if _safe_stat(stats, 'Win Rate [%]') is not None and not pd.isna(_safe_stat(stats, 'Win Rate [%]')) else None,
+            '盈亏比': round(_safe_stat(stats, 'Profit/Loss Ratio'), 2) if _safe_stat(stats, 'Profit/Loss Ratio') is not None and not pd.isna(_safe_stat(stats, 'Profit/Loss Ratio')) else None,
+            '交易次数': int(_safe_stat(stats, '# Trades')) if _safe_stat(stats, '# Trades') is not None and not pd.isna(_safe_stat(stats, '# Trades')) else None,
         })
 
     summary_df = pd.DataFrame(summary_rows)
@@ -126,6 +129,9 @@ def save_global_summary_csv(aggregate_path: Path) -> Path:
       - 年化收益率：均值/中位数（%）
       - 夏普比率：均值/中位数
       - 最大回撤：均值/中位数（%）
+      - 胜率：均值/中位数（%）
+      - 盈亏比：均值/中位数
+      - 交易次数：均值/中位数
 
     Args:
         aggregate_path: 明细汇总 CSV 路径
@@ -153,6 +159,18 @@ def save_global_summary_csv(aggregate_path: Path) -> Path:
         raise ValueError("未找到最大回撤列（候选：最大回撤(%) / Max. Drawdown [%]）")
     mdd_pct = pd.to_numeric(df[mdd_col], errors='coerce')
 
+    # 获取胜率（新增）
+    win_rate_col = _find_first_col(df, ['胜率(%)', 'Win Rate [%]', 'win_rate'])
+    win_rate = pd.to_numeric(df[win_rate_col], errors='coerce') if win_rate_col else pd.Series(dtype=float)
+
+    # 获取盈亏比（新增）
+    pl_ratio_col = _find_first_col(df, ['盈亏比', 'Profit/Loss Ratio', 'pl_ratio'])
+    pl_ratio = pd.to_numeric(df[pl_ratio_col], errors='coerce') if pl_ratio_col else pd.Series(dtype=float)
+
+    # 获取交易次数（新增）
+    trades_col = _find_first_col(df, ['交易次数', '# Trades', 'trades', 'num_trades'])
+    trades = pd.to_numeric(df[trades_col], errors='coerce') if trades_col else pd.Series(dtype=float)
+
     # 计算聚合统计
     n_instruments = int(len(df))
     ann_mean = float(round(ann_ret_pct.dropna().mean(), 2)) if ann_ret_pct.dropna().size else None
@@ -161,6 +179,14 @@ def save_global_summary_csv(aggregate_path: Path) -> Path:
     sharpe_median = float(round(sharpe.dropna().median(), 2)) if sharpe.dropna().size else None
     mdd_mean = float(round(mdd_pct.dropna().mean(), 2)) if mdd_pct.dropna().size else None
     mdd_median = float(round(mdd_pct.dropna().median(), 2)) if mdd_pct.dropna().size else None
+
+    # 新增指标统计
+    win_rate_mean = float(round(win_rate.dropna().mean(), 2)) if win_rate.dropna().size else None
+    win_rate_median = float(round(win_rate.dropna().median(), 2)) if win_rate.dropna().size else None
+    pl_ratio_mean = float(round(pl_ratio.dropna().mean(), 2)) if pl_ratio.dropna().size else None
+    pl_ratio_median = float(round(pl_ratio.dropna().median(), 2)) if pl_ratio.dropna().size else None
+    trades_mean = float(round(trades.dropna().mean(), 1)) if trades.dropna().size else None
+    trades_median = float(round(trades.dropna().median(), 1)) if trades.dropna().size else None
 
     # 组装结果并保存
     result = pd.DataFrame([{
@@ -171,6 +197,12 @@ def save_global_summary_csv(aggregate_path: Path) -> Path:
         '夏普-中位数': sharpe_median,
         '最大回撤-均值(%)': mdd_mean,
         '最大回撤-中位数(%)': mdd_median,
+        '胜率-均值(%)': win_rate_mean,
+        '胜率-中位数(%)': win_rate_median,
+        '盈亏比-均值': pl_ratio_mean,
+        '盈亏比-中位数': pl_ratio_median,
+        '交易次数-均值': trades_mean,
+        '交易次数-中位数': trades_median,
         '来源文件': source_file,
     }])
 
