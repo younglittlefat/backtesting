@@ -26,6 +26,11 @@ def create_argument_parser() -> argparse.ArgumentParser:
   # 自定义过滤阈值
   python export_mysql_to_csv.py --start_date 20200101 --end_date 20231231 \\
     --min_history_days 252 --min_annual_vol 0.05 --export_daily
+
+  # 导出基准指数数据（用于计算超额收益）
+  python export_mysql_to_csv.py --start_date 20190101 --end_date 20221231 \\
+    --include_benchmark --benchmark_config scripts/configs/benchmark_config.json \\
+    --output_dir data/chinese_etf
         """,
     )
 
@@ -106,6 +111,16 @@ def _add_export_arguments(parser: argparse.ArgumentParser) -> None:
         action="store_true",
         help="是否导出元数据文件",
     )
+    parser.add_argument(
+        "--include_benchmark",
+        action="store_true",
+        help="是否导出基准指数数据（用于计算超额收益）",
+    )
+    parser.add_argument(
+        "--benchmark_config",
+        default="scripts/configs/benchmark_config.json",
+        help="基准指数配置文件路径，默认为scripts/configs/benchmark_config.json",
+    )
 
 
 def _add_filter_arguments(parser: argparse.ArgumentParser) -> None:
@@ -183,7 +198,13 @@ def validate_arguments(args: argparse.Namespace) -> None:
     Raises:
         ValueError: 当参数验证失败时抛出
     """
-    if not args.export_basic and not args.export_daily and not args.export_metadata:
+    has_export_option = (
+        args.export_basic or
+        args.export_daily or
+        args.export_metadata or
+        args.include_benchmark
+    )
+    if not has_export_option:
         raise ValueError(
-            "至少需要指定一个导出选项，如--export_basic或--export_daily或--export_metadata"
+            "至少需要指定一个导出选项，如--export_basic、--export_daily、--export_metadata或--include_benchmark"
         )

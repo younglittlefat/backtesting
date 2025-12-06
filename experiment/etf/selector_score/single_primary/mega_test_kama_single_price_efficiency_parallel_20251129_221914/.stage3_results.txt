@@ -1,7 +1,0 @@
-SUCCESS:k3_enable-atr-stop_enable-slope-confirmation_enable-slope-filter
-SUCCESS:k3_enable-atr-stop_enable-loss-protection_enable-slope-confirmation
-SUCCESS:k3_enable-atr-stop_enable-loss-protection_enable-slope-filter
-SUCCESS:k3_enable-atr-stop_enable-efficiency-filter_enable-slope-filter
-FAILED:k3_enable-loss-protection_enable-slope-confirmation_enable-slope-filter
-FAILED:k3_enable-atr-stop_enable-slope-confirmation_enable-volume-filter
-SUCCESS:k3_enable-adx-filter_enable-atr-stop_enable-slope-confirmation

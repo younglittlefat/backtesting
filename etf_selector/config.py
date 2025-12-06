@@ -1,8 +1,8 @@
 """
 筛选系统配置参数
 """
-from dataclasses import dataclass
-from typing import Dict, List
+from dataclasses import dataclass, field
+from typing import Dict, List, Optional
 
 
 @dataclass
@@ -32,8 +32,8 @@ class FilterConfig:
     momentum_min_positive: bool = True  # 是否要求动量为正
 
     # 二级筛选模式控制
-    skip_stage2_percentile_filtering: bool = True  # 是否跳过第二级的百分位筛选（ADX、收益回撤比），直接按评分排序返回topN
-    skip_stage2_range_filtering: bool = True  # 是否跳过第二级的范围过滤（波动率、动量），仅在轮换场景下启用
+    skip_stage2_percentile_filtering: bool = True  # 是否跳过第二级的百分位筛选
+    skip_stage2_range_filtering: bool = True  # 是否跳过第二级的范围过滤
 
     # 第三级：组合优化
     max_correlation: float = 0.7  # 最大相关系数
@@ -52,41 +52,61 @@ class FilterConfig:
     # 行业平衡
     balance_industries: bool = True  # 是否平衡行业分布
 
-    # 新增：无偏指标配置（去偏差优化）
+    # 评分系统配置
     enable_unbiased_scoring: bool = True  # 是否启用无偏评分系统
-    use_optimized_score: bool = False  # 是否启用优化后的综合评分（否则使用旧版）
-    benchmark_ts_code: str = '510300.SH'  # 基准指数或ETF，计算超额收益
+    benchmark_ts_code: str = '510300.SH'  # 基准指数或ETF（超额收益类指标自动使用）
+
+    # 指标计算窗口配置
     trend_consistency_window: int = 63  # 趋势一致性计算窗口（3个月）
     price_efficiency_window: int = 252  # 价格效率计算窗口（1年）
     liquidity_score_window: int = 30  # 流动性评分计算窗口
-
-    # 相对强弱与趋势质量窗口
     excess_return_short_window: int = 20  # 短期超额收益窗口
     excess_return_long_window: int = 60  # 中期超额收益窗口
     trend_quality_window: int = 60  # 趋势质量R^2窗口
     volume_short_window: int = 20  # 成交量短均
     volume_long_window: int = 60  # 成交量长均
 
-    # 评分权重配置（Q&A2优化版）
-    core_trend_weight: float = 0.40  # 核心趋势（超额收益）权重
-    trend_quality_weight: float = 0.35  # 趋势质量权重
-    strength_weight: float = 0.15  # ADX趋势强度权重
-    volume_weight: float = 0.10  # 资金动能权重
-    idr_weight: float = 0.0  # IDR权重（风险调整后超额收益），默认0不启用
+    # ========================================================================
+    # 统一评分权重配置（共11个指标，权重总和必须为1.0）
+    # ========================================================================
+    # 趋势类指标
+    weight_adx_score: float = 0.0  # ADX趋势强度
+    weight_trend_consistency: float = 0.0  # 趋势一致性
+    weight_trend_quality: float = 0.0  # 趋势质量（R²）
 
-    # 核心趋势子权重
-    excess_return_20d_weight: float = 0.40  # 20日超额收益权重
-    excess_return_60d_weight: float = 0.60  # 60日超额收益权重
+    # 收益类指标
+    weight_momentum_3m: float = 0.0  # 3个月动量
+    weight_momentum_12m: float = 0.0  # 12个月动量
+    weight_excess_return_20d: float = 0.0  # 20日超额收益（需要基准）
+    weight_excess_return_60d: float = 0.0  # 60日超额收益（需要基准）
 
-    # 兼容旧版权重字段（已弃用，保留以确保旧脚本可运行）
-    primary_weight: float = 0.80
-    secondary_weight: float = 0.20
-    adx_score_weight: float = 0.40
-    trend_consistency_weight: float = 0.30
-    price_efficiency_weight: float = 0.20
-    liquidity_score_weight: float = 0.10
-    momentum_3m_score_weight: float = 0.30
-    momentum_12m_score_weight: float = 0.70
+    # 流动性/成交量类指标
+    weight_liquidity_score: float = 0.0  # 流动性评分
+    weight_price_efficiency: float = 0.0  # 价格效率
+    weight_volume_trend: float = 0.0  # 成交量趋势
+
+    # 风险调整类指标
+    weight_idr: float = 0.0  # 风险调整后超额收益（需要基准）
+
+    # ========================================================================
+    # 向后兼容：旧版权重字段（已废弃，保留以确保旧脚本可运行）
+    # ========================================================================
+    use_optimized_score: bool = False  # [已废弃] 是否使用V2评分
+    primary_weight: float = 0.80  # [已废弃]
+    secondary_weight: float = 0.20  # [已废弃]
+    adx_score_weight: float = 0.40  # [已废弃]
+    trend_consistency_weight: float = 0.30  # [已废弃]
+    price_efficiency_weight: float = 0.20  # [已废弃]
+    liquidity_score_weight: float = 0.10  # [已废弃]
+    momentum_3m_score_weight: float = 0.30  # [已废弃]
+    momentum_12m_score_weight: float = 0.70  # [已废弃]
+    core_trend_weight: float = 0.40  # [已废弃]
+    trend_quality_weight: float = 0.35  # [已废弃]
+    strength_weight: float = 0.15  # [已废弃]
+    volume_weight: float = 0.10  # [已废弃]
+    idr_weight: float = 0.0  # [已废弃]
+    excess_return_20d_weight: float = 0.40  # [已废弃]
+    excess_return_60d_weight: float = 0.60  # [已废弃]
 
     # 数据路径
     data_dir: str = 'data/csv'
@@ -110,6 +130,40 @@ class FilterConfig:
 
         if self.dedup_thresholds is None:
             self.dedup_thresholds = [0.98, 0.95, 0.92, 0.90]  # 默认去重阈值
+
+    def get_scoring_weights(self) -> Dict[str, float]:
+        """获取评分权重配置字典"""
+        return {
+            'adx_score': self.weight_adx_score,
+            'trend_consistency': self.weight_trend_consistency,
+            'trend_quality': self.weight_trend_quality,
+            'momentum_3m': self.weight_momentum_3m,
+            'momentum_12m': self.weight_momentum_12m,
+            'excess_return_20d': self.weight_excess_return_20d,
+            'excess_return_60d': self.weight_excess_return_60d,
+            'liquidity_score': self.weight_liquidity_score,
+            'price_efficiency': self.weight_price_efficiency,
+            'volume_trend': self.weight_volume_trend,
+            'idr': self.weight_idr,
+        }
+
+    def get_total_weight(self) -> float:
+        """获取所有评分权重总和"""
+        weights = self.get_scoring_weights()
+        return sum(weights.values())
+
+    def needs_benchmark(self) -> bool:
+        """是否需要基准数据（超额收益类指标权重>0时自动需要）"""
+        return (
+            self.weight_excess_return_20d > 0 or
+            self.weight_excess_return_60d > 0 or
+            self.weight_idr > 0
+        )
+
+    def get_active_indicators(self) -> List[str]:
+        """获取所有权重>0的指标名称"""
+        weights = self.get_scoring_weights()
+        return [k for k, v in weights.items() if v > 0]
 
 
 @dataclass

@@ -1,0 +1,94 @@
+======================================================================
+Score 正交检验分析报告
+======================================================================
+
+【1. 相关性矩阵】
+--------------------------------------------------
+                   adx_mean  trend_consistency  price_efficiency  liquidity_score  momentum_3m  momentum_12m  excess_return_20d  excess_return_60d  trend_quality  volume_trend    idr
+adx_mean              1.000              0.126             0.063            0.365       -0.158        -0.105             -0.267             -0.133         -0.249        -0.054 -0.182
+trend_consistency     0.126              1.000             0.008            0.015        0.011        -0.132              0.195              0.073          0.577         0.160  0.057
+price_efficiency      0.063              0.008             1.000            0.146        0.010         0.494              0.103              0.045          0.181        -0.213  0.050
+liquidity_score       0.365              0.015             0.146            1.000        0.048        -0.002             -0.302              0.047         -0.222        -0.064  0.002
+momentum_3m          -0.158              0.011             0.010            0.048        1.000         0.244              0.459              0.961          0.105        -0.017  0.942
+momentum_12m         -0.105             -0.132             0.494           -0.002        0.244         1.000              0.124              0.310          0.025        -0.272  0.335
+excess_return_20d    -0.267              0.195             0.103           -0.302        0.459         0.124              1.000              0.437          0.324         0.198  0.465
+excess_return_60d    -0.133              0.073             0.045            0.047        0.961         0.310              0.437              1.000          0.107        -0.023  0.982
+trend_quality        -0.249              0.577             0.181           -0.222        0.105         0.025              0.324              0.107          1.000         0.141  0.123
+volume_trend         -0.054              0.160            -0.213           -0.064       -0.017        -0.272              0.198             -0.023          0.141         1.000 -0.036
+idr                  -0.182              0.057             0.050            0.002        0.942         0.335              0.465              0.982          0.123        -0.036  1.000
+
+【2. 关键发现】
+--------------------------------------------------
+相关性排序（从高到低）:
+  excess_return_60d vs idr: 0.982 高度相关 ❌
+  momentum_3m vs excess_return_60d: 0.961 高度相关 ❌
+  momentum_3m vs idr: 0.942 高度相关 ❌
+  trend_consistency vs trend_quality: 0.577 中度相关 ⚠️
+  price_efficiency vs momentum_12m: 0.494 中度相关 ⚠️
+  excess_return_20d vs idr: 0.465 中度相关 ⚠️
+  momentum_3m vs excess_return_20d: 0.459 中度相关 ⚠️
+  excess_return_20d vs excess_return_60d: 0.437 中度相关 ⚠️
+  adx_mean vs liquidity_score: 0.365 中度相关 ⚠️
+  momentum_12m vs idr: 0.335 中度相关 ⚠️
+  excess_return_20d vs trend_quality: 0.324 中度相关 ⚠️
+  momentum_12m vs excess_return_60d: 0.310 中度相关 ⚠️
+  liquidity_score vs excess_return_20d: -0.302 中度相关 ⚠️
+  momentum_12m vs volume_trend: -0.272 正交/独立 ✅
+  adx_mean vs excess_return_20d: -0.267 正交/独立 ✅
+  adx_mean vs trend_quality: -0.249 正交/独立 ✅
+  momentum_3m vs momentum_12m: 0.244 正交/独立 ✅
+  liquidity_score vs trend_quality: -0.222 正交/独立 ✅
+  price_efficiency vs volume_trend: -0.213 正交/独立 ✅
+  excess_return_20d vs volume_trend: 0.198 正交/独立 ✅
+  trend_consistency vs excess_return_20d: 0.195 正交/独立 ✅
+  adx_mean vs idr: -0.182 正交/独立 ✅
+  price_efficiency vs trend_quality: 0.181 正交/独立 ✅
+  trend_consistency vs volume_trend: 0.160 正交/独立 ✅
+  adx_mean vs momentum_3m: -0.158 正交/独立 ✅
+  price_efficiency vs liquidity_score: 0.146 正交/独立 ✅
+  trend_quality vs volume_trend: 0.141 正交/独立 ✅
+  adx_mean vs excess_return_60d: -0.133 正交/独立 ✅
+  trend_consistency vs momentum_12m: -0.132 正交/独立 ✅
+  adx_mean vs trend_consistency: 0.126 正交/独立 ✅
+  momentum_12m vs excess_return_20d: 0.124 正交/独立 ✅
+  trend_quality vs idr: 0.123 正交/独立 ✅
+  excess_return_60d vs trend_quality: 0.107 正交/独立 ✅
+  momentum_3m vs trend_quality: 0.105 正交/独立 ✅
+  adx_mean vs momentum_12m: -0.105 正交/独立 ✅
+  price_efficiency vs excess_return_20d: 0.103 正交/独立 ✅
+  trend_consistency vs excess_return_60d: 0.073 正交/独立 ✅
+  liquidity_score vs volume_trend: -0.064 正交/独立 ✅
+  adx_mean vs price_efficiency: 0.063 正交/独立 ✅
+  trend_consistency vs idr: 0.057 正交/独立 ✅
+  adx_mean vs volume_trend: -0.054 正交/独立 ✅
+  price_efficiency vs idr: 0.050 正交/独立 ✅
+  liquidity_score vs momentum_3m: 0.048 正交/独立 ✅
+  liquidity_score vs excess_return_60d: 0.047 正交/独立 ✅
+  price_efficiency vs excess_return_60d: 0.045 正交/独立 ✅
+  volume_trend vs idr: -0.036 正交/独立 ✅
+  momentum_12m vs trend_quality: 0.025 正交/独立 ✅
+  excess_return_60d vs volume_trend: -0.023 正交/独立 ✅
+  momentum_3m vs volume_trend: -0.017 正交/独立 ✅
+  trend_consistency vs liquidity_score: 0.015 正交/独立 ✅
+  trend_consistency vs momentum_3m: 0.011 正交/独立 ✅
+  price_efficiency vs momentum_3m: 0.010 正交/独立 ✅
+  trend_consistency vs price_efficiency: 0.008 正交/独立 ✅
+  liquidity_score vs idr: 0.002 正交/独立 ✅
+  liquidity_score vs momentum_12m: -0.002 正交/独立 ✅
+
+【3. 组合建议】
+--------------------------------------------------
+✅ 推荐组合（正交，|r| < 0.3）:
+   - momentum_12m + volume_trend (r=-0.272)
+   - adx_mean + excess_return_20d (r=-0.267)
+   - adx_mean + trend_quality (r=-0.249)
+   - momentum_3m + momentum_12m (r=0.244)
+   - liquidity_score + trend_quality (r=-0.222)
+
+❌ 避免同时使用（高度相关，|r| >= 0.6）:
+   - excess_return_60d vs idr (r=0.982)，建议二选一
+   - momentum_3m vs excess_return_60d (r=0.961)，建议二选一
+   - momentum_3m vs idr (r=0.942)，建议二选一
+
+
+======================================================================

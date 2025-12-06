@@ -23,7 +23,7 @@ if PROJECT_ROOT not in sys.path:
 from common.mysql_manager import MySQLManager  # noqa: E402
 
 from .config import create_argument_parser, validate_arguments
-from .core import MySQLToCSVExporter
+from .core import MySQLToCSVExporter, BenchmarkExporter
 from .io import MetadataGenerator
 from .models import FilterThresholds
 from .utils import configure_logging, parse_data_types, validate_date
@@ -139,6 +139,42 @@ def main() -> int:
             ts_code=ts_code,
             thresholds=thresholds,
         )
+
+    # 导出基准指数数据
+    benchmark_stats: Dict[str, int] = {}
+    if args.include_benchmark:
+        logger.info("开始导出基准指数数据...")
+        benchmark_exporter = BenchmarkExporter(
+            output_dir=args.output_dir,
+            db_manager=db_manager,
+            logger=logger,
+        )
+
+        try:
+            # 加载基准配置
+            benchmarks = benchmark_exporter.load_benchmark_config(args.benchmark_config)
+            logger.info("加载基准指数配置: %d 个基准", len(benchmarks))
+
+            # 导出基准数据
+            benchmark_stats = benchmark_exporter.export_benchmark_data(
+                benchmarks=benchmarks,
+                start_date=start_date,
+                end_date=end_date,
+            )
+
+            # 打印统计
+            total_records = sum(benchmark_stats.values())
+            logger.info(
+                "基准指数导出完成: %d 个基准, 共 %d 条记录",
+                len([v for v in benchmark_stats.values() if v > 0]),
+                total_records,
+            )
+        except FileNotFoundError as exc:
+            logger.error("基准配置文件不存在: %s", exc)
+            return 1
+        except ValueError as exc:
+            logger.error("基准配置文件格式错误: %s", exc)
+            return 1
 
     # 生成元数据
     if args.export_metadata:

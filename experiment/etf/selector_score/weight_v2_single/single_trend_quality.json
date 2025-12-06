@@ -1,0 +1,143 @@
+{
+  "version": "2.0",
+  "description": "ETF Selector Complete Configuration Template",
+
+  "paths": {
+    "data_dir": "data/chinese_etf",
+    "output_path": "experiment/etf/selector_score/weight_v2_single/single_trend_quality_pool.csv"
+  },
+
+  "time_range": {
+    "start_date": "20190102",
+    "end_date": "20211231"
+  },
+
+  "stage1_initial_filter": {
+    "min_turnover": 2000,
+    "min_listing_days": 180,
+    "turnover_lookback_days": 30
+  },
+
+  "stage2_core_filter": {
+    "adx": {
+      "period": 14,
+      "lookback_days": 250,
+      "percentile": 80.0
+    },
+
+    "ma_backtest": {
+      "enable": false,
+      "short_period": 20,
+      "long_period": 50,
+      "ret_dd_percentile": 70.0
+    },
+
+    "volatility": {
+      "min": 0.20,
+      "max": 0.60,
+      "lookback_days": 252
+    },
+
+    "momentum": {
+      "periods": [63, 252],
+      "min_positive": true
+    },
+
+    "filter_mode": {
+      "skip_percentile_filtering": true,
+      "skip_range_filtering": true
+    }
+  },
+
+  "scoring_system": {
+    "enable_unbiased_scoring": true,
+    "mode": "optimized",
+
+    "benchmark": {
+      "ts_code": "DX000300.SH"
+    },
+
+    "windows": {
+      "excess_return": {
+        "short": 20,
+        "long": 60
+      },
+      "volume": {
+        "short": 20,
+        "long": 60
+      },
+      "trend_quality": 60,
+      "trend_consistency": 63,
+      "price_efficiency": 252,
+      "liquidity_score": 30
+    },
+
+    "weights": {
+      "_comment": "四组指标，每组设置组权重(weight)和组内子权重(sub_weights)，最终权重=组权重×子权重",
+
+      "trend": {
+        "_description": "趋势类指标：ADX趋势强度、趋势一致性、趋势质量(R²)",
+        "weight": 1,
+        "sub_weights": {
+          "adx_score": 0,
+          "trend_consistency": 0,
+          "trend_quality": 1
+        }
+      },
+
+      "return": {
+        "_description": "收益类指标：动量(3m/12m)、超额收益(20d/60d需要基准)",
+        "weight": 0,
+        "sub_weights": {
+          "momentum_3m": 0,
+          "momentum_12m": 0,
+          "excess_return_20d": 0.0,
+          "excess_return_60d": 1.0
+        }
+      },
+
+      "liquidity": {
+        "_description": "流动性/成交量类指标：流动性评分、价格效率、成交量趋势",
+        "weight": 0,
+        "sub_weights": {
+          "liquidity_score": 1,
+          "price_efficiency": 0,
+          "volume_trend": 0
+        }
+      },
+
+      "risk_adjusted": {
+        "_description": "风险调整类指标：IDR(需要基准)",
+        "weight": 0.0,
+        "sub_weights": {
+          "idr": 1
+        }
+      }
+    }
+  },
+
+  "stage3_diversification": {
+    "target_portfolio_size": 20,
+    "max_correlation": 0.7,
+    "min_industries": 3,
+
+    "deduplication": {
+      "enable": true,
+      "min_ratio": 0.8,
+      "thresholds": [0.98, 0.95, 0.92, 0.90]
+    },
+
+    "diversify_v2": {
+      "enable": false,
+      "score_diff_threshold": 0.05
+    },
+
+    "balance_industries": true
+  },
+
+  "output_options": {
+    "verbose": true,
+    "with_analysis": false,
+    "skip_portfolio_optimization": false
+  }
+}

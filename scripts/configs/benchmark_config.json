@@ -1,0 +1,17 @@
+{
+  "description": "基准指数配置文件，用于导出超额收益计算所需的基准数据",
+  "benchmarks": [
+    {
+      "type": "index",
+      "ts_code": "000300.SH",
+      "name": "沪深300",
+      "output_prefix": "IDX"
+    },
+    {
+      "type": "index",
+      "ts_code": "000985.SH",
+      "name": "中证全指",
+      "output_prefix": "IDX"
+    }
+  ]
+}

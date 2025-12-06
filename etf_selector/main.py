@@ -252,7 +252,7 @@ def print_config_summary(config: FilterConfig):
     """打印配置摘要（仅使用config对象，不依赖args）"""
     print("📋 筛选配置摘要:")
     print(f"  🎯 目标组合大小: {config.target_portfolio_size} 只")
-    print(f"  💰 流动性阈值: {config.min_turnover/1e8:.2f} 亿元")
+    print(f"  💰 流动性阈值: {config.min_turnover:.0f} 元")
     print(f"  📅 最小上市天数: {config.min_listing_days} 天")
     print(f"  📊 ADX筛选: 保留前 {100 - config.adx_percentile:.0f}%")
     ret_dd_summary = f"保留前 {100 - config.ret_dd_percentile:.0f}%"

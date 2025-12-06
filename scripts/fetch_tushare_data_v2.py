@@ -30,7 +30,8 @@ class TushareDataFetcherV2:
     """Tushare数据获取器 V2.0 (重构版)"""
 
     def __init__(self, token: str, mode: str = 'append', data_type_filter: str = None,
-                 batch_size: int = 10000, forced_by_instrument: bool = False):
+                 batch_size: int = 10000, forced_by_instrument: bool = False,
+                 benchmark_only: bool = False):
         """
         初始化数据获取器
 
@@ -40,11 +41,13 @@ class TushareDataFetcherV2:
             data_type_filter: 数据类型过滤 ('etf', 'index', 'fund')
             batch_size: 批处理大小
             forced_by_instrument: 强制使用by_instrument模式
+            benchmark_only: 仅获取基准指数（仅对index类型生效）
         """
         self.logger = logging.getLogger(__name__)
         self.mode = mode
         self.data_type_filter = data_type_filter
         self.forced_by_instrument = forced_by_instrument
+        self.benchmark_only = benchmark_only
 
         # 初始化Tushare
         ts.set_token(token)
@@ -72,7 +75,8 @@ class TushareDataFetcherV2:
         )
 
         self.logger.info(f"TushareDataFetcherV2 初始化完成 - 模式: {mode}, "
-                        f"数据类型: {data_type_filter}, 批处理: {batch_size}")
+                        f"数据类型: {data_type_filter}, 批处理: {batch_size}, "
+                        f"仅基准指数: {benchmark_only}")
 
     def should_process_data_type(self, data_type: str) -> bool:
         """检查是否应该处理指定的数据类型"""
@@ -107,7 +111,11 @@ class TushareDataFetcherV2:
             results['etf'] = 0
 
         if self.should_process_data_type('index'):
-            results['index'] = self.index_fetcher.fetch_basic_info()
+            if self.benchmark_only:
+                self.logger.info("仅获取基准指数基本信息")
+                results['index'] = self.index_fetcher.fetch_benchmark_basic_info()
+            else:
+                results['index'] = self.index_fetcher.fetch_basic_info()
         else:
             results['index'] = 0
 
@@ -163,8 +171,12 @@ class TushareDataFetcherV2:
 
         # 处理指数数据
         if 'index' in strategies and strategies['index'] == 'batch':
-            self.logger.info("开始批量获取指数数据")
-            index_count = self.index_fetcher.fetch_daily_optimized(start_date, end_date)
+            if self.benchmark_only:
+                self.logger.info("仅获取基准指数日线数据")
+                index_count = self.index_fetcher.fetch_benchmark_daily(start_date, end_date)
+            else:
+                self.logger.info("开始批量获取指数数据")
+                index_count = self.index_fetcher.fetch_daily_optimized(start_date, end_date)
             results['index'] = index_count
 
         # 处理基金净值数据
@@ -278,6 +290,8 @@ def main():
     parser.add_argument('--batch_size', type=int, default=10000, help='批处理大小')
     parser.add_argument('--forced_by_instrument', action='store_true',
                        help='强行使用遍历每个指数获取全周期数据的模式')
+    parser.add_argument('--benchmark_only', action='store_true',
+                       help='仅获取基准指数（沪深300、中证500等9个常用大盘指数），仅对index类型生效')
     parser.add_argument('--ts_code', type=str, help='指定单个标的代码（用于测试）')
 
     args = parser.parse_args()
@@ -289,7 +303,8 @@ def main():
     logger = logging.getLogger(__name__)
     logger.info("=== Tushare数据获取开始 (V2重构版) ===")
     logger.info(f"参数: start_date={args.start_date}, end_date={args.end_date}, "
-               f"mode={args.mode}, data_type={args.data_type}, ts_code={args.ts_code}")
+               f"mode={args.mode}, data_type={args.data_type}, ts_code={args.ts_code}, "
+               f"benchmark_only={args.benchmark_only}")
 
     try:
         # 读取token
@@ -298,7 +313,8 @@ def main():
         # 初始化数据获取器
         fetcher = TushareDataFetcherV2(
             token, mode=args.mode, data_type_filter=args.data_type,
-            batch_size=args.batch_size, forced_by_instrument=args.forced_by_instrument
+            batch_size=args.batch_size, forced_by_instrument=args.forced_by_instrument,
+            benchmark_only=args.benchmark_only
         )
 
         # 根据模式准备数据环境

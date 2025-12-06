@@ -2,12 +2,46 @@
 # 每日自动获取数据、生成/执行信号并发送飞书通知
 set -euo pipefail
 
-# 时区与日期
+# 时区
 export TZ="Asia/Shanghai"
+
+# 解析命令行参数
+CUSTOM_DATE=""
+while [[ $# -gt 0 ]]; do
+    case $1 in
+        --date)
+            CUSTOM_DATE="$2"
+            shift 2
+            ;;
+        -h|--help)
+            echo "用法: $0 [--date YYYYMMDD]"
+            echo ""
+            echo "选项:"
+            echo "  --date YYYYMMDD  指定数据日期（默认：前一天）"
+            echo "  -h, --help       显示帮助信息"
+            exit 0
+            ;;
+        *)
+            echo "未知参数: $1"
+            echo "使用 --help 查看帮助"
+            exit 1
+            ;;
+    esac
+done
+
+# 日期设置
 TODAY=$(date +%Y%m%d)
-# 数据日期：使用前一天（适配早上9点运行，使用前一日收盘价）
-# 若需使用当天数据（收盘后运行），将 DATA_DATE 改为 $TODAY
-DATA_DATE=$(date -d "-1 day" +%Y%m%d)
+if [[ -n "$CUSTOM_DATE" ]]; then
+    # 验证日期格式
+    if ! [[ "$CUSTOM_DATE" =~ ^[0-9]{8}$ ]]; then
+        echo "错误: 日期格式必须为 YYYYMMDD，例如 20251201"
+        exit 1
+    fi
+    DATA_DATE="$CUSTOM_DATE"
+else
+    # 默认使用前一天（适配早上9点运行，使用前一日收盘价）
+    DATA_DATE=$(date -d "-1 day" +%Y%m%d)
+fi
 START_TWO_YEARS_AGO=$(date -d "$DATA_DATE -2 years" +%Y%m%d)
 
 # 路径与环境

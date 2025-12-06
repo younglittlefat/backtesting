@@ -1,15 +1,17 @@
-## 获取最新日期的ETF、基金日线
+## 获取最新日期的ETF、基金、指数日线
 python scripts/fetch_tushare_data_v2.py --start_date 20251107 --end_date 20251107 --daily_data --basic_info --data_type etf
+python scripts/fetch_tushare_data_v2.py --start_date 20030101 --end_date 20251204 --daily_data --basic_info --data_type index --benchmark_only
 # python scripts/fetch_tushare_data_v2.py --start_date 20251107 --end_date 20251107 --daily_data --basic_info --data_type fund
 
 ## 获取基金全周期分红信息
 # python scripts/fetch_tushare_data_v2.py --fetch_dividend --data_type fund
 
 ## 输出最新etf日线到目录（最近两年）
-python scripts/export_mysql_to_csv.py --data_type etf --output_dir data/online_chinese_etf --export_daily --export_basic --start_date 20211107 --end_date 20251112
+python scripts/export_mysql_to_csv.py --data_type etf --output_dir data/online_chinese_etf --export_daily --export_basic --start_date 20170102 --end_date 20251201 --include_benchmark --benchmark_config scripts/configs/benchmark_config.json
 
 ## ETF标的预筛选
 # python -m etf_selector.main --data-dir data/chinese_etf --output results/trend_etf_pool.csv --target-size 20 --min-turnover 50000 --momentum-min-positive
+python -m etf_selector.main --config experiment/etf/selector_score/single_primary/single_adx_score.json
 
 ## 根据筛选标的回测得出最佳超参
 ### 策略1：双均线+止损

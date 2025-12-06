@@ -51,12 +51,11 @@ class ConfigLoader:
         'stage2_core_filter.filter_mode.skip_percentile_filtering': 'skip_stage2_percentile_filtering',
         'stage2_core_filter.filter_mode.skip_range_filtering': 'skip_stage2_range_filtering',
 
-        # Scoring system
+        # Scoring system - basic
         'scoring_system.enable_unbiased_scoring': 'enable_unbiased_scoring',
-        'scoring_system.mode': 'score_mode',  # Special: convert to use_optimized_score
         'scoring_system.benchmark.ts_code': 'benchmark_ts_code',
 
-        # Scoring windows (新格式 - 嵌套层级)
+        # Scoring windows
         'scoring_system.windows.excess_return.short': 'excess_return_short_window',
         'scoring_system.windows.excess_return.long': 'excess_return_long_window',
         'scoring_system.windows.volume.short': 'volume_short_window',
@@ -66,7 +65,30 @@ class ConfigLoader:
         'scoring_system.windows.price_efficiency': 'price_efficiency_window',
         'scoring_system.windows.liquidity_score': 'liquidity_score_window',
 
-        # Weights V2 (optimized mode)
+        # ====================================================================
+        # 统一权重配置（新版）
+        # ====================================================================
+        # 趋势类
+        'scoring_system.weights.adx_score': 'weight_adx_score',
+        'scoring_system.weights.trend_consistency': 'weight_trend_consistency',
+        'scoring_system.weights.trend_quality': 'weight_trend_quality',
+        # 收益类
+        'scoring_system.weights.momentum_3m': 'weight_momentum_3m',
+        'scoring_system.weights.momentum_12m': 'weight_momentum_12m',
+        'scoring_system.weights.excess_return_20d': 'weight_excess_return_20d',
+        'scoring_system.weights.excess_return_60d': 'weight_excess_return_60d',
+        # 流动性/成交量类
+        'scoring_system.weights.liquidity_score': 'weight_liquidity_score',
+        'scoring_system.weights.price_efficiency': 'weight_price_efficiency',
+        'scoring_system.weights.volume_trend': 'weight_volume_trend',
+        # 风险调整类
+        'scoring_system.weights.idr': 'weight_idr',
+
+        # ====================================================================
+        # 向后兼容：旧版权重配置（已废弃，但仍支持加载）
+        # ====================================================================
+        'scoring_system.mode': 'score_mode',  # 特殊处理
+        # V2 旧版
         'scoring_system.weights_v2.core_trend': 'core_trend_weight',
         'scoring_system.weights_v2.trend_quality': 'trend_quality_weight',
         'scoring_system.weights_v2.strength': 'strength_weight',
@@ -74,8 +96,7 @@ class ConfigLoader:
         'scoring_system.weights_v2.idr': 'idr_weight',
         'scoring_system.weights_v2.core_trend_sub.excess_return_20d': 'excess_return_20d_weight',
         'scoring_system.weights_v2.core_trend_sub.excess_return_60d': 'excess_return_60d_weight',
-
-        # Weights V1 (legacy mode) - 新格式（嵌套层级）
+        # V1 旧版
         'scoring_system.weights_v1_legacy.primary.weight': 'primary_weight',
         'scoring_system.weights_v1_legacy.primary.sub_weights.adx_score': 'adx_score_weight',
         'scoring_system.weights_v1_legacy.primary.sub_weights.trend_consistency': 'trend_consistency_weight',
@@ -138,6 +159,9 @@ class ConfigLoader:
         # Map JSON keys to FilterConfig fields
         mapped_dict = ConfigLoader._map_json_keys(flat_dict)
 
+        # 处理旧版配置到新版的转换
+        mapped_dict = ConfigLoader._convert_legacy_weights(mapped_dict, flat_dict)
+
         # Create config object
         try:
             config = FilterConfig(**mapped_dict)
@@ -156,21 +180,13 @@ class ConfigLoader:
         Example:
             {'stage1': {'min_turnover': 50000}}
             → {'stage1.min_turnover': 50000}
-
-        Args:
-            nested_dict: 嵌套字典
-            parent_key: 父键前缀
-            sep: 分隔符
-
-        Returns:
-            扁平化后的字典
         """
         items = []
         for k, v in nested_dict.items():
             new_key = f"{parent_key}{sep}{k}" if parent_key else k
 
-            # 特殊处理：keywords字典、core_trend_sub需要保持嵌套
-            if isinstance(v, dict) and k not in ['keywords', 'core_trend_sub']:
+            # 特殊处理：keywords字典需要保持嵌套（行业分类用）
+            if isinstance(v, dict) and k not in ['keywords']:
                 items.extend(ConfigLoader._flatten_dict(v, new_key, sep=sep).items())
             else:
                 items.append((new_key, v))
@@ -179,14 +195,7 @@ class ConfigLoader:
 
     @staticmethod
     def _map_json_keys(flat_dict: Dict) -> Dict:
-        """将JSON键映射到FilterConfig字段名
-
-        Args:
-            flat_dict: 扁平化后的字典
-
-        Returns:
-            映射后的字典，键为FilterConfig字段名
-        """
+        """将JSON键映射到FilterConfig字段名"""
         result = {}
 
         for json_key, value in flat_dict.items():
@@ -194,19 +203,15 @@ class ConfigLoader:
             if json_key in ['version', 'description']:
                 continue
 
-            # Skip industry keywords (not part of FilterConfig, uses DEFAULT_INDUSTRY_KEYWORDS instead)
+            # Skip industry keywords
             if json_key == 'industry_classification.keywords':
-                continue
-
-            # Skip nested dict markers that are handled by their children
-            if json_key.endswith('.core_trend_sub'):
                 continue
 
             # Map using KEY_MAPPING
             if json_key in ConfigLoader.KEY_MAPPING:
                 config_field = ConfigLoader.KEY_MAPPING[json_key]
 
-                # Special handling for score_mode
+                # Special handling for score_mode (旧版兼容)
                 if config_field == 'score_mode':
                     result['use_optimized_score'] = (value == 'optimized')
                 else:
@@ -218,6 +223,97 @@ class ConfigLoader:
         return result
 
     @staticmethod
+    def _convert_legacy_weights(mapped_dict: Dict, flat_dict: Dict) -> Dict:
+        """将各种权重配置格式转换为统一的扁平权重
+
+        支持三种格式：
+        1. 新版层级格式（V3）: weights.trend.weight + weights.trend.sub_weights.*
+        2. 新版扁平格式: weights.adx_score 等直接设置
+        3. 旧版V1/V2格式: weights_v1_legacy.* 或 weights_v2.*
+        """
+        # 检查是否已设置新版扁平权重
+        new_flat_weights_set = any(
+            mapped_dict.get(f'weight_{ind}', 0) > 0
+            for ind in ['adx_score', 'trend_consistency', 'trend_quality',
+                       'momentum_3m', 'momentum_12m', 'excess_return_20d',
+                       'excess_return_60d', 'liquidity_score', 'price_efficiency',
+                       'volume_trend', 'idr']
+        )
+
+        if new_flat_weights_set:
+            # 已设置新版扁平权重，跳过转换
+            return mapped_dict
+
+        # 检查是否使用新版层级格式（V3）
+        has_v3_weights = any(
+            k.startswith('scoring_system.weights.') and '.weight' in k
+            for k in flat_dict.keys()
+        )
+
+        if has_v3_weights:
+            # 解析V3层级权重格式
+            groups = ['trend', 'return', 'liquidity', 'risk_adjusted']
+            indicator_groups = {
+                'trend': ['adx_score', 'trend_consistency', 'trend_quality'],
+                'return': ['momentum_3m', 'momentum_12m', 'excess_return_20d', 'excess_return_60d'],
+                'liquidity': ['liquidity_score', 'price_efficiency', 'volume_trend'],
+                'risk_adjusted': ['idr'],
+            }
+
+            for group in groups:
+                group_weight = flat_dict.get(f'scoring_system.weights.{group}.weight', 0.0)
+                if group_weight > 0:
+                    for indicator in indicator_groups[group]:
+                        sub_weight = flat_dict.get(
+                            f'scoring_system.weights.{group}.sub_weights.{indicator}', 0.0
+                        )
+                        final_weight = group_weight * sub_weight
+                        if final_weight > 0:
+                            mapped_dict[f'weight_{indicator}'] = final_weight
+
+            return mapped_dict
+
+        # 检查是否使用旧版V1/V2配置
+        mode = flat_dict.get('scoring_system.mode', 'legacy')
+
+        if mode == 'legacy':
+            # 转换V1旧版权重到新版
+            primary_w = mapped_dict.get('primary_weight', 0.80)
+            secondary_w = mapped_dict.get('secondary_weight', 0.20)
+            adx_w = mapped_dict.get('adx_score_weight', 0.40)
+            tc_w = mapped_dict.get('trend_consistency_weight', 0.30)
+            pe_w = mapped_dict.get('price_efficiency_weight', 0.20)
+            liq_w = mapped_dict.get('liquidity_score_weight', 0.10)
+            m3_w = mapped_dict.get('momentum_3m_score_weight', 0.30)
+            m12_w = mapped_dict.get('momentum_12m_score_weight', 0.70)
+
+            mapped_dict['weight_adx_score'] = primary_w * adx_w
+            mapped_dict['weight_trend_consistency'] = primary_w * tc_w
+            mapped_dict['weight_price_efficiency'] = primary_w * pe_w
+            mapped_dict['weight_liquidity_score'] = primary_w * liq_w
+            mapped_dict['weight_momentum_3m'] = secondary_w * m3_w
+            mapped_dict['weight_momentum_12m'] = secondary_w * m12_w
+
+        elif mode == 'optimized':
+            # 转换V2旧版权重到新版
+            core_trend_w = mapped_dict.get('core_trend_weight', 0.40)
+            tq_w = mapped_dict.get('trend_quality_weight', 0.35)
+            strength_w = mapped_dict.get('strength_weight', 0.15)
+            volume_w = mapped_dict.get('volume_weight', 0.10)
+            idr_w = mapped_dict.get('idr_weight', 0.0)
+            er20_sub = mapped_dict.get('excess_return_20d_weight', 0.40)
+            er60_sub = mapped_dict.get('excess_return_60d_weight', 0.60)
+
+            mapped_dict['weight_adx_score'] = strength_w
+            mapped_dict['weight_trend_quality'] = tq_w
+            mapped_dict['weight_excess_return_20d'] = core_trend_w * er20_sub
+            mapped_dict['weight_excess_return_60d'] = core_trend_w * er60_sub
+            mapped_dict['weight_volume_trend'] = volume_w
+            mapped_dict['weight_idr'] = idr_w
+
+        return mapped_dict
+
+    @staticmethod
     def validate(config: FilterConfig):
         """验证配置参数
 
@@ -226,28 +322,12 @@ class ConfigLoader:
         """
         errors = []
 
-        # Validate V2 weights (if using optimized mode)
-        if config.use_optimized_score:
-            v2_weights_sum = (
-                config.core_trend_weight +
-                config.trend_quality_weight +
-                config.strength_weight +
-                config.volume_weight +
-                config.idr_weight
+        # 验证统一权重
+        total_weight = config.get_total_weight()
+        if total_weight > 0 and abs(total_weight - 1.0) > 0.01:
+            errors.append(
+                f"评分权重总和必须为1.0，当前为{total_weight:.4f}"
             )
-            if abs(v2_weights_sum - 1.0) > 0.01:
-                errors.append(
-                    f"V2权重总和必须为1.0，当前为{v2_weights_sum:.4f}"
-                )
-
-            core_trend_sub_sum = (
-                config.excess_return_20d_weight +
-                config.excess_return_60d_weight
-            )
-            if abs(core_trend_sub_sum - 1.0) > 0.01:
-                errors.append(
-                    f"核心趋势子权重总和必须为1.0，当前为{core_trend_sub_sum:.4f}"
-                )
 
         # Validate percentile ranges
         if not (0 <= config.adx_percentile <= 100):
@@ -290,17 +370,7 @@ class ConfigLoader:
 
     @staticmethod
     def merge_with_cli_args(config: FilterConfig, args) -> FilterConfig:
-        """将CLI参数合并到配置中（CLI优先级最高）
-
-        Args:
-            config: 基础配置对象
-            args: argparse.Namespace命令行参数
-
-        Returns:
-            合并后的配置对象
-        """
-        # CLI参数覆盖（使用getattr安全获取）
-        # 使用argparse.SUPPRESS后，未显式传递的参数不会出现在args中，getattr返回None
+        """将CLI参数合并到配置中（CLI优先级最高）"""
         cli_overrides = {
             'min_turnover': getattr(args, 'min_turnover', None),
             'min_listing_days': getattr(args, 'min_listing_days', None),
@@ -334,16 +404,12 @@ class ConfigLoader:
         elif getattr(args, 'enable_unbiased_scoring', False):
             config.enable_unbiased_scoring = True
 
-        if hasattr(args, 'score_mode') and args.score_mode:
-            config.use_optimized_score = (args.score_mode == 'optimized')
-
         if getattr(args, 'momentum_min_positive', False):
             config.momentum_min_positive = True
 
         if getattr(args, 'skip_stage2_filtering', False):
             config.skip_stage2_percentile_filtering = True
 
-        # diversify_v2是action='store_true'，所以直接检查
         if getattr(args, 'diversify_v2', False):
             config.diversify_v2 = True
 
@@ -354,12 +420,7 @@ class ConfigLoader:
 
     @staticmethod
     def print_all_params(config: FilterConfig, title: str = "完整配置参数"):
-        """打印所有配置参数（用于调试和验收）
-
-        Args:
-            config: 配置对象
-            title: 标题
-        """
+        """打印所有配置参数（用于调试和验收）"""
         print("=" * 80)
         print(f" {title}")
         print("=" * 80)
@@ -380,19 +441,14 @@ class ConfigLoader:
         print(f"  ADX:")
         print(f"    period: {config.adx_period}")
         print(f"    lookback_days: {config.adx_lookback_days}")
-        print(f"    percentile: {config.adx_percentile}% (保留前{100-config.adx_percentile:.0f}%)")
+        print(f"    percentile: {config.adx_percentile}%")
         print(f"  双均线回测:")
         print(f"    enable: {config.enable_ma_backtest_filter}")
         print(f"    ma_short: {config.ma_short}")
         print(f"    ma_long: {config.ma_long}")
-        print(f"    ret_dd_percentile: {config.ret_dd_percentile}%")
         print(f"  波动率:")
         print(f"    min: {config.min_volatility:.2f}")
         print(f"    max: {config.max_volatility:.2f}")
-        print(f"    lookback_days: {config.volatility_lookback_days}")
-        print(f"  动量:")
-        print(f"    periods: {config.momentum_periods}")
-        print(f"    min_positive: {config.momentum_min_positive}")
         print(f"  筛选模式:")
         print(f"    skip_stage2_percentile_filtering: {config.skip_stage2_percentile_filtering}")
         print(f"    skip_stage2_range_filtering: {config.skip_stage2_range_filtering}")
@@ -400,62 +456,44 @@ class ConfigLoader:
 
         print("📊 评分系统:")
         print(f"  enable_unbiased_scoring: {config.enable_unbiased_scoring}")
-        print(f"  mode: {'optimized' if config.use_optimized_score else 'legacy'}")
         print(f"  benchmark_ts_code: {config.benchmark_ts_code}")
         print(f"  窗口参数:")
-        print(f"    excess_return_short_window: {config.excess_return_short_window}")
-        print(f"    excess_return_long_window: {config.excess_return_long_window}")
-        print(f"    trend_quality_window: {config.trend_quality_window}")
-        print(f"    trend_consistency_window: {config.trend_consistency_window}")
-        print(f"    price_efficiency_window: {config.price_efficiency_window}")
-        print(f"    volume_short_window: {config.volume_short_window}")
-        print(f"    volume_long_window: {config.volume_long_window}")
-        print(f"    liquidity_score_window: {config.liquidity_score_window}")
+        print(f"    excess_return_short: {config.excess_return_short_window}")
+        print(f"    excess_return_long: {config.excess_return_long_window}")
+        print(f"    trend_quality: {config.trend_quality_window}")
+        print(f"    trend_consistency: {config.trend_consistency_window}")
+        print(f"    price_efficiency: {config.price_efficiency_window}")
+        print(f"    liquidity_score: {config.liquidity_score_window}")
+        print(f"    volume_short: {config.volume_short_window}")
+        print(f"    volume_long: {config.volume_long_window}")
+        print()
 
-        if config.use_optimized_score:
-            print(f"  V2权重 (优化版):")
-            print(f"    core_trend_weight: {config.core_trend_weight:.2f}")
-            print(f"    trend_quality_weight: {config.trend_quality_weight:.2f}")
-            print(f"    strength_weight: {config.strength_weight:.2f}")
-            print(f"    volume_weight: {config.volume_weight:.2f}")
-            print(f"    idr_weight: {config.idr_weight:.2f}")
-            print(f"    核心趋势子权重:")
-            print(f"      excess_return_20d_weight: {config.excess_return_20d_weight:.2f}")
-            print(f"      excess_return_60d_weight: {config.excess_return_60d_weight:.2f}")
+        print("⚖️ 评分权重（统一配置）:")
+        weights = config.get_scoring_weights()
+        active_weights = {k: v for k, v in weights.items() if v > 0}
+        if active_weights:
+            for name, weight in active_weights.items():
+                print(f"    {name}: {weight:.2%}")
+            print(f"  总和: {config.get_total_weight():.2%}")
         else:
-            print(f"  V1权重 (旧版):")
-            print(f"    primary_weight: {config.primary_weight:.2f}")
-            print(f"    secondary_weight: {config.secondary_weight:.2f}")
-            print(f"    adx_score_weight: {config.adx_score_weight:.2f}")
-            print(f"    trend_consistency_weight: {config.trend_consistency_weight:.2f}")
-            print(f"    price_efficiency_weight: {config.price_efficiency_weight:.2f}")
-            print(f"    liquidity_score_weight: {config.liquidity_score_weight:.2f}")
-            print(f"    momentum_3m_score_weight: {config.momentum_3m_score_weight:.2f}")
-            print(f"    momentum_12m_score_weight: {config.momentum_12m_score_weight:.2f}")
+            print("    (未配置权重)")
+        print()
+
+        if config.needs_benchmark():
+            print(f"  📌 需要基准数据: 是 (超额收益类指标已启用)")
         print()
 
         print("🎲 第三级 - 分散化参数:")
         print(f"  target_portfolio_size: {config.target_portfolio_size}")
         print(f"  max_correlation: {config.max_correlation}")
         print(f"  min_industries: {config.min_industries}")
-
-        # 如果有dedup_thresholds属性（新增字段）
-        if hasattr(config, 'enable_deduplication'):
-            print(f"  去重:")
-            print(f"    enable: {config.enable_deduplication}")
-            if hasattr(config, 'dedup_min_ratio'):
-                print(f"    min_ratio: {config.dedup_min_ratio}")
-            if hasattr(config, 'dedup_thresholds'):
-                print(f"    thresholds: {config.dedup_thresholds}")
-
-        if hasattr(config, 'diversify_v2'):
-            print(f"  V2分散逻辑:")
-            print(f"    enable: {config.diversify_v2}")
-            if hasattr(config, 'score_diff_threshold'):
-                print(f"    score_diff_threshold: {config.score_diff_threshold}")
-
-        if hasattr(config, 'balance_industries'):
-            print(f"  balance_industries: {config.balance_industries}")
-
+        print(f"  去重:")
+        print(f"    enable: {config.enable_deduplication}")
+        print(f"    min_ratio: {config.dedup_min_ratio}")
+        print(f"    thresholds: {config.dedup_thresholds}")
+        print(f"  V2分散逻辑:")
+        print(f"    enable: {config.diversify_v2}")
+        print(f"    score_diff_threshold: {config.score_diff_threshold}")
+        print(f"  balance_industries: {config.balance_industries}")
         print()
         print("=" * 80)

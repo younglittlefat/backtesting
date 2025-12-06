@@ -78,7 +78,7 @@ class ETFDataLoader:
         """加载ETF日线数据
 
         Args:
-            ts_code: 标的代码（如 159915.SZ）
+            ts_code: 标的代码（如 159915.SZ）或基准指数代码（如 IDX000300.SH）
             start_date: 开始日期 (YYYY-MM-DD)，默认None表示全部数据
             end_date: 结束日期 (YYYY-MM-DD)，默认None表示全部数据
             use_adj: 是否使用复权数据，默认True
@@ -93,6 +93,11 @@ class ETFDataLoader:
         Raises:
             FileNotFoundError: 数据文件不存在
             ValueError: 数据不足或格式错误
+
+        Note:
+            支持IDX前缀的基准指数文件，例如:
+            - ts_code='IDX000300.SH' -> 加载 IDX000300.SH.csv (沪深300指数)
+            - 对于基准指数，adj_close = close（指数无复权概念）
         """
         # 构建文件路径
         file_path = self.daily_data_dir / f"{ts_code}.csv"

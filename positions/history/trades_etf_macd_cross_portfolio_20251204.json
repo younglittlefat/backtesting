@@ -1,0 +1,25 @@
+{
+  "date": "20251204",
+  "trades": [
+    {
+      "ts_code": "159740.SZ",
+      "action": "BUY",
+      "shares": 67800,
+      "price": 0.737,
+      "amount": -49978.59372,
+      "commission": 4.99686,
+      "date": "2025-12-04",
+      "reason": "MACD金叉买入信号！MACD(12,26,9)线上穿信号线"
+    }
+  ],
+  "trade_count": 1,
+  "timestamp": "2025-12-05 09:01:47",
+  "execution_time": "2025-12-05T09:01:47.950291",
+  "execution_context": {
+    "status": "executed",
+    "strategy": "macd_cross",
+    "sell_count": 0,
+    "buy_count": 1,
+    "forced": false
+  }
+}

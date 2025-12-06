@@ -13,7 +13,7 @@
   },
 
   "stage1_initial_filter": {
-    "min_turnover": 50000,
+    "min_turnover": 2000,
     "min_listing_days": 180,
     "turnover_lookback_days": 30
   },
@@ -72,34 +72,45 @@
       "liquidity_score": 30
     },
 
-    "weights_v2": {
-      "core_trend": 0.40,
-      "trend_quality": 0.35,
-      "strength": 0.15,
-      "volume": 0.10,
-      "idr": 0.0,
+    "weights": {
+      "_comment": "四组指标，每组设置组权重(weight)和组内子权重(sub_weights)，最终权重=组权重×子权重",
 
-      "core_trend_sub": {
-        "excess_return_20d": 0.40,
-        "excess_return_60d": 0.60
-      }
-    },
-
-    "weights_v1_legacy": {
-      "primary": {
-        "weight": 1.0,
+      "trend": {
+        "_description": "趋势类指标：ADX趋势强度、趋势一致性、趋势质量(R²)",
+        "weight": 1,
         "sub_weights": {
-          "adx_score": 0.0,
+          "adx_score": 0,
           "trend_consistency": 1,
-          "price_efficiency": 0,
-          "liquidity_score": 0
+          "trend_quality": 0
         }
       },
-      "secondary": {
+
+      "return": {
+        "_description": "收益类指标：动量(3m/12m)、超额收益(20d/60d需要基准)",
         "weight": 0,
         "sub_weights": {
-          "momentum_3m": 0.5,
-          "momentum_12m": 0.5
+          "momentum_3m": 0,
+          "momentum_12m": 0,
+          "excess_return_20d": 0.0,
+          "excess_return_60d": 0.0
+        }
+      },
+
+      "liquidity": {
+        "_description": "流动性/成交量类指标：流动性评分、价格效率、成交量趋势",
+        "weight": 0,
+        "sub_weights": {
+          "liquidity_score": 1,
+          "price_efficiency": 0,
+          "volume_trend": 0
+        }
+      },
+
+      "risk_adjusted": {
+        "_description": "风险调整类指标：IDR(需要基准)",
+        "weight": 0.0,
+        "sub_weights": {
+          "idr": 0
         }
       }
     }
