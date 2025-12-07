@@ -4,7 +4,7 @@
 
   "paths": {
     "data_dir": "data/chinese_etf",
-    "output_path": "experiment/etf/selector_score/weight_v2_single/single_volume_pool.csv"
+    "output_path": "experiment/etf/selector_score/pool/single_volume_pool_2019_2022.csv"
   },
 
   "time_range": {
