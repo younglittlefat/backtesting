@@ -1,0 +1,19 @@
+[
+  {
+    "options": [
+      "enable-adx-filter",
+      "enable-atr-stop",
+      "enable-slope-confirmation",
+      "enable-slope-filter"
+    ],
+    "sharpe_mean": 0.73,
+    "sharpe_median": 0.86,
+    "win_rate_mean": 68.75,
+    "win_rate_median": 66.67,
+    "pl_ratio_mean": 4.64,
+    "pl_ratio_median": 1.58,
+    "trades_mean": 3.1,
+    "trades_median": 3.0,
+    "exp_name": "k4_enable-adx-filter_enable-atr-stop_enable-slope-confirmation_enable-slope-filter"
+  }
+]

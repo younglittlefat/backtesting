@@ -1,6 +1,6 @@
 #!/bin/bash
 ################################################################################
-# SMA Enhanced策略贪心筛选超参组合测试脚本 - 并发版本
+# SMA Enhanced策略贪心筛选超参组合测试脚本 - 并发版本（模块化重构）
 #
 # 功能：
 # - 通过递归剪枝大幅减少实验次数（预计30-100个实验 vs 256个完整因子设计）
@@ -9,39 +9,32 @@
 # - 生成详细的阶段分析报告
 # - 支持阶段内并发执行，大幅提升实验效率
 #
-# 算法：
-# 1. 阶段0: 测试Baseline（串行）
-# 2. 阶段1: 单变量筛选（并发执行，OR逻辑筛选）
-# 3. 阶段k: k变量筛选（并发执行，严格递增筛选）
-# 4. 终止条件：某阶段无任何组合满足严格递增条件
-#
-# 核心超参（8个）：
-# - enable-slope-filter: 均线斜率过滤
-# - enable-adx-filter: ADX趋势强度过滤
-# - enable-volume-filter: 成交量确认过滤
-# - enable-confirm-filter: 持续确认过滤
-# - enable-loss-protection: 连续止损保护
-# - enable-trailing-stop: 传统跟踪止损
-# - enable-atr-stop: ATR自适应止损
-# - confirm-bars: 持续确认K线数（设为3生效）
-#
 # 用法：
 #   ./mega_test_sma_enhanced_greedy_parallel.sh                    # 执行完整实验流程（默认并发度3）
 #   ./mega_test_sma_enhanced_greedy_parallel.sh -j 5               # 指定并发度为5
 #   ./mega_test_sma_enhanced_greedy_parallel.sh --collect-only <实验目录>  # 仅收集已有结果
 #
 # 作者: Claude Code
-# 日期: 2025-11-29
+# 日期: 2025-12-07 (模块化重构)
 ################################################################################
 
+# 获取脚本所在目录
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+
+# 加载公共函数库
+source "${SCRIPT_DIR}/greedy_search/greedy_lib.sh"
+
 # ============================================================================
-# 配置区域
+# 策略特定配置
 # ============================================================================
+
+STRATEGY_NAME="sma_cross_enhanced"
+STRATEGY_DESCRIPTION="SMA Enhanced策略贪心筛选超参组合测试（并发版本）"
 
 # 并发度配置（可通过 -j 参数覆盖）
 PARALLEL_JOBS=3
 
-# 实验类型标识（用于自动识别实验目录）
+# 实验类型标识
 EXPERIMENT_TYPE="mega_test_greedy"
 
 # 基础路径配置
@@ -51,21 +44,6 @@ TEMP_PARAMS_PATH="config/test/sma_enhanced_base_strategy_params.json"
 OUTPUT_BASE_DIR="results/mega_test_sma_enhanced_greedy_parallel_$(date +%Y%m%d_%H%M%S)"
 START_DATE="20240102"
 END_DATE="20251120"
-
-# 候选池和报告路径
-CANDIDATES_DIR="${OUTPUT_BASE_DIR}/candidates"
-REPORTS_DIR="${OUTPUT_BASE_DIR}/reports"
-BACKTEST_DIR="${OUTPUT_BASE_DIR}/backtests"
-LOGS_DIR="${OUTPUT_BASE_DIR}/logs"
-
-# 结果汇总CSV路径
-RESULT_CSV="${OUTPUT_BASE_DIR}/mega_test_greedy_summary.csv"
-
-# 实验命令记录CSV路径
-COMMANDS_CSV="${OUTPUT_BASE_DIR}/experiment_commands.csv"
-
-# 元数据文件路径
-METADATA_FILE="${OUTPUT_BASE_DIR}/.experiment_metadata.json"
 
 # ============================================================================
 # 定义8个核心超参开关（SMA Enhanced策略）
@@ -104,112 +82,17 @@ ATR_PERIOD=14
 ATR_MULTIPLIER=2.5
 
 # ============================================================================
-# 颜色定义
-# ============================================================================
-RED='\033[0;31m'
-GREEN='\033[0;32m'
-YELLOW='\033[1;33m'
-BLUE='\033[0;34m'
-CYAN='\033[0;36m'
-MAGENTA='\033[0;35m'
-NC='\033[0m' # No Color
-
-# ============================================================================
-# 工具函数
+# SMA Enhanced策略特定的实验执行函数
 # ============================================================================
 
-print_header() {
-    echo -e "${BLUE}═══════════════════════════════════════════════════════════════════${NC}"
-    echo -e "${BLUE}  $1${NC}"
-    echo -e "${BLUE}═══════════════════════════════════════════════════════════════════${NC}"
-}
-
-print_stage() {
-    echo -e "\n${MAGENTA}━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━${NC}"
-    echo -e "${MAGENTA}  $1${NC}"
-    echo -e "${MAGENTA}━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━${NC}\n"
-}
-
-print_section() {
-    echo -e "\n${CYAN}▶ $1${NC}"
-}
-
-print_success() {
-    echo -e "${GREEN}✓ $1${NC}"
-}
-
-print_warning() {
-    echo -e "${YELLOW}⚠ $1${NC}"
-}
-
-print_error() {
-    echo -e "${RED}✗ $1${NC}"
-}
-
-# 创建实验元数据文件
-create_metadata() {
-    local metadata_path=$1
-
-    cat > "$metadata_path" << EOF
-{
-  "experiment_type": "$EXPERIMENT_TYPE",
-  "experiment_version": "1.0-parallel",
-  "strategy": "sma_cross_enhanced",
-  "created_at": "$(date -Iseconds)",
-  "script": "$(basename $0)",
-  "description": "SMA Enhanced策略贪心筛选超参组合测试（并发版本）",
-  "parallel_jobs": $PARALLEL_JOBS,
-  "config": {
-    "pool_path": "$POOL_PATH",
-    "data_dir": "$DATA_DIR",
-    "start_date": "$START_DATE",
-    "end_date": "$END_DATE",
-    "core_options": [
-$(printf '      "%s"' "${CORE_OPTIONS[0]}")
-$(for opt in "${CORE_OPTIONS[@]:1}"; do printf ',\n      "%s"' "$opt"; done)
-    ],
-    "fixed_params": {
-      "slope_lookback": $SLOPE_LOOKBACK,
-      "adx_period": $ADX_PERIOD,
-      "adx_threshold": $ADX_THRESHOLD,
-      "volume_period": $VOLUME_PERIOD,
-      "volume_ratio": $VOLUME_RATIO,
-      "confirm_bars_value": $CONFIRM_BARS_VALUE,
-      "max_consecutive_losses": $MAX_CONSECUTIVE_LOSSES,
-      "pause_bars": $PAUSE_BARS,
-      "trailing_stop_pct": $TRAILING_STOP_PCT,
-      "atr_period": $ATR_PERIOD,
-      "atr_multiplier": $ATR_MULTIPLIER
-    }
-  }
-}
-EOF
-
-    print_success "创建实验元数据: $metadata_path"
-}
-
-# ============================================================================
-# 实验执行函数（支持日志隔离）
-# ============================================================================
-
-# 单个实验执行函数（用于并发调用）
 run_single_experiment() {
     local exp_name=$1
     local options_str=$2  # 空格分隔的选项字符串
     local log_file="${LOGS_DIR}/${exp_name}.log"
-
     local output_dir="${BACKTEST_DIR}/${exp_name}"
 
     # 构建命令行
-    local cmd="./run_backtest.sh"
-    cmd="$cmd --stock-list \"$POOL_PATH\""
-    cmd="$cmd --strategy sma_cross_enhanced"
-    cmd="$cmd --optimize"
-    cmd="$cmd --data-dir \"$DATA_DIR\""
-    cmd="$cmd --save-params \"$TEMP_PARAMS_PATH\""
-    cmd="$cmd --output-dir \"$output_dir\""
-    cmd="$cmd --start-date $START_DATE"
-    cmd="$cmd --end-date $END_DATE"
+    local cmd=$(greedy_build_base_cmd "$STRATEGY_NAME" "$output_dir")
 
     # 添加选项开关
     if [ -n "$options_str" ]; then
@@ -282,720 +165,14 @@ run_single_experiment() {
 
 # 导出函数和变量供并发子进程使用
 export -f run_single_experiment
-export POOL_PATH DATA_DIR TEMP_PARAMS_PATH START_DATE END_DATE
+export POOL_PATH DATA_DIR TEMP_PARAMS_PATH START_DATE END_DATE STRATEGY_NAME
 export SLOPE_LOOKBACK ADX_PERIOD ADX_THRESHOLD VOLUME_PERIOD VOLUME_RATIO
 export MAX_CONSECUTIVE_LOSSES PAUSE_BARS TRAILING_STOP_PCT
 export ATR_PERIOD ATR_MULTIPLIER CONFIRM_BARS_VALUE
 
 # ============================================================================
-# 阶段0：Baseline测试（串行）
-# ============================================================================
-
-run_stage0_baseline() {
-    print_stage "阶段0：Baseline测试（无任何选项的纯SMA Enhanced策略）"
-
-    export BACKTEST_DIR LOGS_DIR COMMANDS_CSV
-
-    local baseline_name="baseline"
-    print_section "实验: ${baseline_name}"
-
-    local result=$(run_single_experiment "$baseline_name" "")
-    local exit_code=$?
-
-    if [ $exit_code -ne 0 ]; then
-        print_error "Baseline实验失败，终止流程"
-        echo "查看日志: ${LOGS_DIR}/${baseline_name}.log"
-        exit 1
-    fi
-
-    print_success "Baseline实验完成"
-
-    # 提取Baseline指标
-    print_section "提取Baseline性能指标"
-
-    python3 << 'PYTHON_EXTRACT_BASELINE'
-import os
-import sys
-import glob
-import pandas as pd
-import json
-
-BACKTEST_DIR = os.environ.get('BACKTEST_DIR')
-CANDIDATES_DIR = os.environ.get('CANDIDATES_DIR')
-
-baseline_dir = os.path.join(BACKTEST_DIR, 'baseline')
-summary_pattern = os.path.join(baseline_dir, 'summary', 'global_summary_*.csv')
-matches = glob.glob(summary_pattern)
-
-if not matches:
-    print(f"错误: 未找到Baseline的global_summary文件")
-    sys.exit(1)
-
-summary_path = matches[0]
-print(f"读取: {summary_path}")
-
-try:
-    df = pd.read_csv(summary_path, encoding='utf-8-sig')
-
-    # 支持中英文列名（扩展支持新指标）
-    col_mapping = {
-        'sharpe_mean': ['夏普-均值', 'Sharpe Ratio Mean'],
-        'sharpe_median': ['夏普-中位数', 'Sharpe Ratio Median'],
-        'win_rate_mean': ['胜率-均值(%)', 'Win Rate [%] Mean'],
-        'win_rate_median': ['胜率-中位数(%)', 'Win Rate [%] Median'],
-        'pl_ratio_mean': ['盈亏比-均值', 'Profit/Loss Ratio Mean'],
-        'pl_ratio_median': ['盈亏比-中位数', 'Profit/Loss Ratio Median'],
-        'trades_mean': ['交易次数-均值', '# Trades Mean'],
-        'trades_median': ['交易次数-中位数', '# Trades Median'],
-    }
-
-    baseline_metrics = {}
-
-    if len(df) == 1:
-        # 汇总格式
-        for key, possible_names in col_mapping.items():
-            for col_name in possible_names:
-                if col_name in df.columns:
-                    val = df[col_name].iloc[0]
-                    baseline_metrics[key] = float(val) if pd.notna(val) else None
-                    break
-            if key not in baseline_metrics:
-                baseline_metrics[key] = None
-    else:
-        # 详细格式，需要计算统计值
-        cols_variants = [
-            ['Sharpe Ratio'],
-            ['夏普比率']
-        ]
-
-        cols_found = None
-        for variant in cols_variants:
-            if all(col in df.columns for col in variant):
-                cols_found = variant
-                break
-
-        if not cols_found:
-            print(f"错误: 列格式不匹配，可用列: {df.columns.tolist()}")
-            sys.exit(1)
-
-        baseline_metrics['sharpe_mean'] = float(df[cols_found[0]].mean())
-        baseline_metrics['sharpe_median'] = float(df[cols_found[0]].median())
-
-        # 提取其他指标（详细格式）
-        for col in ['胜率(%)', 'Win Rate [%]']:
-            if col in df.columns:
-                baseline_metrics['win_rate_mean'] = float(df[col].mean())
-                baseline_metrics['win_rate_median'] = float(df[col].median())
-                break
-        for col in ['盈亏比', 'Profit/Loss Ratio']:
-            if col in df.columns:
-                baseline_metrics['pl_ratio_mean'] = float(df[col].dropna().mean()) if df[col].dropna().size else None
-                baseline_metrics['pl_ratio_median'] = float(df[col].dropna().median()) if df[col].dropna().size else None
-                break
-        for col in ['交易次数', '# Trades']:
-            if col in df.columns:
-                baseline_metrics['trades_mean'] = float(df[col].mean())
-                baseline_metrics['trades_median'] = float(df[col].median())
-                break
-
-    # 保存到JSON
-    baseline_json = os.path.join(CANDIDATES_DIR, 'baseline.json')
-    with open(baseline_json, 'w', encoding='utf-8') as f:
-        json.dump(baseline_metrics, f, indent=2, ensure_ascii=False)
-
-    print(f"✓ Baseline指标:")
-    print(f"  - 夏普均值: {baseline_metrics.get('sharpe_mean', 'N/A'):.4f}" if baseline_metrics.get('sharpe_mean') else "  - 夏普均值: N/A")
-    print(f"  - 夏普中位数: {baseline_metrics.get('sharpe_median', 'N/A'):.4f}" if baseline_metrics.get('sharpe_median') else "  - 夏普中位数: N/A")
-    print(f"  - 胜率均值: {baseline_metrics.get('win_rate_mean', 'N/A'):.2f}%" if baseline_metrics.get('win_rate_mean') else "  - 胜率均值: N/A")
-    print(f"  - 盈亏比均值: {baseline_metrics.get('pl_ratio_mean', 'N/A'):.2f}" if baseline_metrics.get('pl_ratio_mean') else "  - 盈亏比均值: N/A")
-    print(f"  - 交易次数均值: {baseline_metrics.get('trades_mean', 'N/A'):.1f}" if baseline_metrics.get('trades_mean') else "  - 交易次数均值: N/A")
-    print(f"✓ 已保存到: {baseline_json}")
-
-except Exception as e:
-    print(f"错误: {e}")
-    import traceback
-    traceback.print_exc()
-    sys.exit(1)
-
-PYTHON_EXTRACT_BASELINE
-
-    if [ $? -ne 0 ]; then
-        print_error "Baseline指标提取失败"
-        exit 1
-    fi
-
-    print_success "阶段0完成"
-}
-
-# ============================================================================
-# 阶段1：单变量筛选（并发执行）
-# ============================================================================
-
-run_stage1_single_var() {
-    print_stage "阶段1：单变量筛选（测试${#CORE_OPTIONS[@]}个独立选项，并发度=${PARALLEL_JOBS}）"
-
-    export BACKTEST_DIR LOGS_DIR COMMANDS_CSV
-
-    # 生成任务列表
-    local task_file="${OUTPUT_BASE_DIR}/.stage1_tasks.txt"
-    > "$task_file"
-    for opt in "${CORE_OPTIONS[@]}"; do
-        echo "single_${opt} $opt" >> "$task_file"
-    done
-
-    local total_tasks=$(wc -l < "$task_file")
-    print_section "开始并发执行 ${total_tasks} 个实验..."
-
-    # 并发执行并收集结果
-    local results_file="${OUTPUT_BASE_DIR}/.stage1_results.txt"
-    > "$results_file"
-
-    grep -v '^$' "$task_file" | xargs -P $PARALLEL_JOBS -I {} bash -c '
-        exp_name=$(echo "{}" | cut -d" " -f1)
-        options=$(echo "{}" | cut -d" " -f2-)
-        result=$(run_single_experiment "$exp_name" "$options")
-        echo "$result"
-    ' >> "$results_file"
-
-    # 统计结果
-    local success_count=$(grep -c "^SUCCESS:" "$results_file" || echo 0)
-    local fail_count=$(grep -c "^FAILED:" "$results_file" || echo 0)
-
-    echo ""
-    echo "阶段1统计: 成功=${success_count}, 失败=${fail_count}"
-
-    # 显示失败的实验
-    if [ $fail_count -gt 0 ]; then
-        print_warning "失败的实验:"
-        grep "^FAILED:" "$results_file" | sed 's/^FAILED:/  - /'
-    fi
-
-    # 调用Python脚本筛选候选
-    print_section "筛选优秀候选（OR逻辑：sharpe_mean > base OR sharpe_median > base）"
-
-    export CANDIDATES_DIR
-    export CORE_OPTIONS_STR="${CORE_OPTIONS[*]}"
-
-    python3 << 'PYTHON_FILTER_STAGE1'
-import os
-import sys
-import glob
-import pandas as pd
-import json
-from typing import List, Dict
-
-BACKTEST_DIR = os.environ.get('BACKTEST_DIR')
-CANDIDATES_DIR = os.environ.get('CANDIDATES_DIR')
-CORE_OPTIONS = os.environ.get('CORE_OPTIONS_STR').split()
-
-# 辅助函数：从global_summary提取所有指标
-def extract_metrics_from_summary(df):
-    """从global_summary DataFrame提取所有指标"""
-    metrics = {}
-
-    if len(df) == 1:
-        # 汇总格式
-        col_mapping = {
-            'sharpe_mean': ['夏普-均值', 'Sharpe Ratio Mean'],
-            'sharpe_median': ['夏普-中位数', 'Sharpe Ratio Median'],
-            'win_rate_mean': ['胜率-均值(%)', 'Win Rate [%] Mean'],
-            'win_rate_median': ['胜率-中位数(%)', 'Win Rate [%] Median'],
-            'pl_ratio_mean': ['盈亏比-均值', 'Profit/Loss Ratio Mean'],
-            'pl_ratio_median': ['盈亏比-中位数', 'Profit/Loss Ratio Median'],
-            'trades_mean': ['交易次数-均值', '# Trades Mean'],
-            'trades_median': ['交易次数-中位数', '# Trades Median'],
-        }
-        for key, possible_names in col_mapping.items():
-            for col_name in possible_names:
-                if col_name in df.columns:
-                    val = df[col_name].iloc[0]
-                    metrics[key] = float(val) if pd.notna(val) else None
-                    break
-            if key not in metrics:
-                metrics[key] = None
-    else:
-        # 详细格式
-        for col in ['Sharpe Ratio', '夏普比率']:
-            if col in df.columns:
-                metrics['sharpe_mean'] = float(df[col].mean())
-                metrics['sharpe_median'] = float(df[col].median())
-                break
-        for col in ['胜率(%)', 'Win Rate [%]']:
-            if col in df.columns:
-                metrics['win_rate_mean'] = float(df[col].mean())
-                metrics['win_rate_median'] = float(df[col].median())
-                break
-        for col in ['盈亏比', 'Profit/Loss Ratio']:
-            if col in df.columns:
-                metrics['pl_ratio_mean'] = float(df[col].dropna().mean()) if df[col].dropna().size else None
-                metrics['pl_ratio_median'] = float(df[col].dropna().median()) if df[col].dropna().size else None
-                break
-        for col in ['交易次数', '# Trades']:
-            if col in df.columns:
-                metrics['trades_mean'] = float(df[col].mean())
-                metrics['trades_median'] = float(df[col].median())
-                break
-
-    return metrics
-
-# 加载Baseline
-baseline_json = os.path.join(CANDIDATES_DIR, 'baseline.json')
-with open(baseline_json, 'r', encoding='utf-8') as f:
-    baseline = json.load(f)
-
-print(f"Baseline: sharpe={baseline.get('sharpe_mean', 'N/A'):.4f}/{baseline.get('sharpe_median', 'N/A'):.4f}, "
-      f"win_rate={baseline.get('win_rate_mean', 'N/A'):.1f}%, "
-      f"pl_ratio={baseline.get('pl_ratio_mean', 'N/A'):.2f}, "
-      f"trades={baseline.get('trades_mean', 'N/A'):.0f}" if all(baseline.get(k) for k in ['sharpe_mean', 'sharpe_median']) else "Baseline: 指标缺失")
-
-# 提取每个单变量的指标
-candidates = []
-
-for opt in CORE_OPTIONS:
-    exp_name = f"single_{opt}"
-    exp_dir = os.path.join(BACKTEST_DIR, exp_name)
-
-    summary_pattern = os.path.join(exp_dir, 'summary', 'global_summary_*.csv')
-    matches = glob.glob(summary_pattern)
-
-    if not matches:
-        print(f"  ⚠ {exp_name}: 未找到summary文件，跳过")
-        continue
-
-    summary_path = matches[0]
-
-    try:
-        df = pd.read_csv(summary_path, encoding='utf-8-sig')
-        metrics = extract_metrics_from_summary(df)
-
-        sharpe_mean = metrics.get('sharpe_mean')
-        sharpe_median = metrics.get('sharpe_median')
-
-        if sharpe_mean is None or sharpe_median is None:
-            print(f"  ⚠ {exp_name}: 无法提取夏普指标，跳过")
-            continue
-
-        # OR逻辑判断
-        passes = (sharpe_mean > baseline['sharpe_mean']) or (sharpe_median > baseline['sharpe_median'])
-
-        status = "✓ 通过" if passes else "✗ 未通过"
-        # 打印输出包含新指标
-        win_rate_str = f"{metrics.get('win_rate_mean', 0):.1f}%" if metrics.get('win_rate_mean') else "N/A"
-        pl_ratio_str = f"{metrics.get('pl_ratio_mean', 0):.2f}" if metrics.get('pl_ratio_mean') else "N/A"
-        trades_str = f"{metrics.get('trades_mean', 0):.0f}" if metrics.get('trades_mean') else "N/A"
-        print(f"  {status} {opt}: sharpe={sharpe_mean:.4f}/{sharpe_median:.4f}, win_rate={win_rate_str}, pl_ratio={pl_ratio_str}, trades={trades_str}")
-
-        if passes:
-            candidates.append({
-                'options': [opt],
-                'sharpe_mean': sharpe_mean,
-                'sharpe_median': sharpe_median,
-                'win_rate_mean': metrics.get('win_rate_mean'),
-                'win_rate_median': metrics.get('win_rate_median'),
-                'pl_ratio_mean': metrics.get('pl_ratio_mean'),
-                'pl_ratio_median': metrics.get('pl_ratio_median'),
-                'trades_mean': metrics.get('trades_mean'),
-                'trades_median': metrics.get('trades_median'),
-                'exp_name': exp_name
-            })
-
-    except Exception as e:
-        print(f"  ⚠ {exp_name}: 提取失败 - {e}")
-
-# 保存候选池
-if not candidates:
-    print("\n✗ 错误: 阶段1没有任何候选通过筛选，流程终止")
-    sys.exit(1)
-
-candidates_json = os.path.join(CANDIDATES_DIR, 'candidates_k1.json')
-with open(candidates_json, 'w', encoding='utf-8') as f:
-    json.dump(candidates, f, indent=2, ensure_ascii=False)
-
-print(f"\n✓ 阶段1完成: {len(candidates)}/{len(CORE_OPTIONS)} 个候选通过筛选")
-print(f"✓ 候选池已保存到: {candidates_json}")
-
-PYTHON_FILTER_STAGE1
-
-    if [ $? -ne 0 ]; then
-        print_error "阶段1筛选失败"
-        exit 1
-    fi
-
-    print_success "阶段1完成"
-}
-
-# ============================================================================
-# 阶段k：k变量筛选（k >= 2，并发执行）
-# ============================================================================
-
-run_stage_k() {
-    local k=$1
-    local prev_k=$((k - 1))
-
-    print_stage "阶段${k}：${k}变量筛选（严格递增剪枝，并发度=${PARALLEL_JOBS}）"
-
-    export BACKTEST_DIR LOGS_DIR COMMANDS_CSV CANDIDATES_DIR
-    export K=$k
-
-    # 检查前一阶段候选池是否存在
-    local prev_candidates_json="${CANDIDATES_DIR}/candidates_k${prev_k}.json"
-    if [ ! -f "$prev_candidates_json" ]; then
-        print_error "前一阶段候选池不存在: $prev_candidates_json"
-        return 1
-    fi
-
-    # 生成组合列表
-    print_section "从阶段${prev_k}的候选生成${k}变量组合"
-
-    local task_file="${OUTPUT_BASE_DIR}/.stage${k}_tasks.txt"
-
-    python3 << PYTHON_GEN_COMBOS > "$task_file"
-import os
-import json
-from itertools import combinations
-
-K = int(os.environ.get('K'))
-PREV_K = K - 1
-CANDIDATES_DIR = os.environ.get('CANDIDATES_DIR')
-
-prev_candidates_json = os.path.join(CANDIDATES_DIR, f'candidates_k{PREV_K}.json')
-with open(prev_candidates_json, 'r', encoding='utf-8') as f:
-    prev_candidates = json.load(f)
-
-all_options = set()
-for cand in prev_candidates:
-    all_options.update(cand['options'])
-all_options = sorted(list(all_options))
-
-k_combinations = list(combinations(all_options, K))
-
-experiments_to_run = []
-for combo in k_combinations:
-    combo_list = list(combo)
-    sub_combos = list(combinations(combo_list, PREV_K))
-    all_subs_passed = True
-
-    for sub in sub_combos:
-        sub_list = sorted(list(sub))
-        found = False
-        for cand in prev_candidates:
-            if sorted(cand['options']) == sub_list:
-                found = True
-                break
-        if not found:
-            all_subs_passed = False
-            break
-
-    if all_subs_passed:
-        experiments_to_run.append(combo_list)
-
-for combo in experiments_to_run:
-    exp_name = f"k{K}_" + "_".join(combo)
-    options_str = " ".join(combo)
-    print(f"{exp_name} {options_str}")
-PYTHON_GEN_COMBOS
-
-    local total_tasks=$(wc -l < "$task_file")
-
-    if [ $total_tasks -eq 0 ]; then
-        print_warning "阶段${k}: 无需测试的组合（所有组合的子组合都未全部通过前一阶段）"
-        return 2  # 返回2表示无组合需要测试（非错误，而是正常终止条件）
-    fi
-
-    print_section "开始并发执行 ${total_tasks} 个实验..."
-
-    # 并发执行并收集结果
-    local results_file="${OUTPUT_BASE_DIR}/.stage${k}_results.txt"
-    > "$results_file"
-
-    grep -v '^$' "$task_file" | xargs -P $PARALLEL_JOBS -I {} bash -c '
-        exp_name=$(echo "{}" | cut -d" " -f1)
-        options=$(echo "{}" | cut -d" " -f2-)
-        result=$(run_single_experiment "$exp_name" "$options")
-        echo "$result"
-    ' >> "$results_file"
-
-    # 统计结果
-    local success_count=$(grep -c "^SUCCESS:" "$results_file" || echo 0)
-    local fail_count=$(grep -c "^FAILED:" "$results_file" || echo 0)
-
-    echo ""
-    echo "阶段${k}统计: 成功=${success_count}, 失败=${fail_count}"
-
-    # 显示失败的实验
-    if [ $fail_count -gt 0 ]; then
-        print_warning "失败的实验:"
-        grep "^FAILED:" "$results_file" | sed 's/^FAILED:/  - /'
-    fi
-
-    # 筛选候选（严格递增）
-    print_section "筛选优秀候选（严格递增：两指标同时超过所有子组合最优值）"
-
-    python3 << 'PYTHON_FILTER_STAGE_K'
-import os
-import sys
-import glob
-import json
-import pandas as pd
-from itertools import combinations
-
-K = int(os.environ.get('K'))
-PREV_K = K - 1
-BACKTEST_DIR = os.environ.get('BACKTEST_DIR')
-CANDIDATES_DIR = os.environ.get('CANDIDATES_DIR')
-
-# 辅助函数：从global_summary提取所有指标
-def extract_metrics_from_summary(df):
-    """从global_summary DataFrame提取所有指标"""
-    metrics = {}
-
-    if len(df) == 1:
-        # 汇总格式
-        col_mapping = {
-            'sharpe_mean': ['夏普-均值', 'Sharpe Ratio Mean'],
-            'sharpe_median': ['夏普-中位数', 'Sharpe Ratio Median'],
-            'win_rate_mean': ['胜率-均值(%)', 'Win Rate [%] Mean'],
-            'win_rate_median': ['胜率-中位数(%)', 'Win Rate [%] Median'],
-            'pl_ratio_mean': ['盈亏比-均值', 'Profit/Loss Ratio Mean'],
-            'pl_ratio_median': ['盈亏比-中位数', 'Profit/Loss Ratio Median'],
-            'trades_mean': ['交易次数-均值', '# Trades Mean'],
-            'trades_median': ['交易次数-中位数', '# Trades Median'],
-        }
-        for key, possible_names in col_mapping.items():
-            for col_name in possible_names:
-                if col_name in df.columns:
-                    val = df[col_name].iloc[0]
-                    metrics[key] = float(val) if pd.notna(val) else None
-                    break
-            if key not in metrics:
-                metrics[key] = None
-    else:
-        # 详细格式
-        for col in ['Sharpe Ratio', '夏普比率']:
-            if col in df.columns:
-                metrics['sharpe_mean'] = float(df[col].mean())
-                metrics['sharpe_median'] = float(df[col].median())
-                break
-        for col in ['胜率(%)', 'Win Rate [%]']:
-            if col in df.columns:
-                metrics['win_rate_mean'] = float(df[col].mean())
-                metrics['win_rate_median'] = float(df[col].median())
-                break
-        for col in ['盈亏比', 'Profit/Loss Ratio']:
-            if col in df.columns:
-                metrics['pl_ratio_mean'] = float(df[col].dropna().mean()) if df[col].dropna().size else None
-                metrics['pl_ratio_median'] = float(df[col].dropna().median()) if df[col].dropna().size else None
-                break
-        for col in ['交易次数', '# Trades']:
-            if col in df.columns:
-                metrics['trades_mean'] = float(df[col].mean())
-                metrics['trades_median'] = float(df[col].median())
-                break
-
-    return metrics
-
-# 加载前一阶段候选池
-prev_candidates_json = os.path.join(CANDIDATES_DIR, f'candidates_k{PREV_K}.json')
-with open(prev_candidates_json, 'r', encoding='utf-8') as f:
-    prev_candidates = json.load(f)
-
-# 构建前一阶段候选的快速查找字典
-prev_dict = {}
-for cand in prev_candidates:
-    key = tuple(sorted(cand['options']))
-    prev_dict[key] = cand
-
-# 查找所有阶段k的实验目录
-stage_k_dirs = glob.glob(os.path.join(BACKTEST_DIR, f'k{K}_*'))
-
-candidates_k = []
-
-for exp_dir in stage_k_dirs:
-    exp_name = os.path.basename(exp_dir)
-
-    # 解析选项
-    options_str = exp_name[len(f'k{K}_'):]
-    options = options_str.split('_')
-
-    # 查找summary
-    summary_pattern = os.path.join(exp_dir, 'summary', 'global_summary_*.csv')
-    matches = glob.glob(summary_pattern)
-
-    if not matches:
-        print(f"  ⚠ {exp_name}: 未找到summary文件，跳过")
-        continue
-
-    summary_path = matches[0]
-
-    try:
-        df = pd.read_csv(summary_path, encoding='utf-8-sig')
-        metrics = extract_metrics_from_summary(df)
-
-        sharpe_mean = metrics.get('sharpe_mean')
-        sharpe_median = metrics.get('sharpe_median')
-
-        if sharpe_mean is None or sharpe_median is None:
-            print(f"  ⚠ {exp_name}: 无法提取夏普指标，跳过")
-            continue
-
-        # 严格递增判断：必须同时超过所有子组合的最优值
-        sub_combos = list(combinations(options, PREV_K))
-
-        max_sub_sharpe_mean = -float('inf')
-        max_sub_sharpe_median = -float('inf')
-
-        for sub in sub_combos:
-            sub_key = tuple(sorted(sub))
-            if sub_key in prev_dict:
-                sub_cand = prev_dict[sub_key]
-                max_sub_sharpe_mean = max(max_sub_sharpe_mean, sub_cand['sharpe_mean'])
-                max_sub_sharpe_median = max(max_sub_sharpe_median, sub_cand['sharpe_median'])
-
-        # 严格递增：两个指标都要超过
-        passes = (sharpe_mean > max_sub_sharpe_mean) and (sharpe_median > max_sub_sharpe_median)
-
-        status = "✓ 通过" if passes else "✗ 未通过"
-        # 打印输出包含新指标
-        win_rate_str = f"{metrics.get('win_rate_mean', 0):.1f}%" if metrics.get('win_rate_mean') else "N/A"
-        pl_ratio_str = f"{metrics.get('pl_ratio_mean', 0):.2f}" if metrics.get('pl_ratio_mean') else "N/A"
-        trades_str = f"{metrics.get('trades_mean', 0):.0f}" if metrics.get('trades_mean') else "N/A"
-        print(f"  {status} {options_str}:")
-        print(f"      当前: sharpe={sharpe_mean:.4f}/{sharpe_median:.4f}, win_rate={win_rate_str}, pl_ratio={pl_ratio_str}, trades={trades_str}")
-        print(f"      子组合最优: sharpe={max_sub_sharpe_mean:.4f}/{max_sub_sharpe_median:.4f}")
-
-        if passes:
-            candidates_k.append({
-                'options': options,
-                'sharpe_mean': sharpe_mean,
-                'sharpe_median': sharpe_median,
-                'win_rate_mean': metrics.get('win_rate_mean'),
-                'win_rate_median': metrics.get('win_rate_median'),
-                'pl_ratio_mean': metrics.get('pl_ratio_mean'),
-                'pl_ratio_median': metrics.get('pl_ratio_median'),
-                'trades_mean': metrics.get('trades_mean'),
-                'trades_median': metrics.get('trades_median'),
-                'exp_name': exp_name
-            })
-
-    except Exception as e:
-        print(f"  ⚠ {exp_name}: 提取失败 - {e}")
-
-# 保存候选池
-if not candidates_k:
-    print(f"\n✗ 阶段{K}: 没有任何候选通过严格递增筛选，流程终止")
-    sys.exit(1)
-
-candidates_json = os.path.join(CANDIDATES_DIR, f'candidates_k{K}.json')
-with open(candidates_json, 'w', encoding='utf-8') as f:
-    json.dump(candidates_k, f, indent=2, ensure_ascii=False)
-
-print(f"\n✓ 阶段{K}完成: {len(candidates_k)}/{len(stage_k_dirs)} 个候选通过筛选")
-print(f"✓ 候选池已保存到: {candidates_json}")
-
-PYTHON_FILTER_STAGE_K
-
-    local python_exit=$?
-    if [ $python_exit -eq 1 ]; then
-        print_warning "阶段${k}: 无候选通过筛选，终止递归"
-        return 1
-    fi
-
-    print_success "阶段${k}完成"
-    return 0
-}
-
-# ============================================================================
 # 主执行流程
 # ============================================================================
-
-# 仅收集结果模式
-collect_only_mode() {
-    local experiment_root=$1
-
-    if [ ! -d "$experiment_root" ]; then
-        print_error "实验目录不存在: $experiment_root"
-        exit 1
-    fi
-
-    print_header "仅收集模式：从已有实验目录收集结果"
-
-    # 尝试读取元数据文件
-    local metadata_file="$experiment_root/.experiment_metadata.json"
-    if [ -f "$metadata_file" ]; then
-        print_success "检测到实验元数据文件"
-
-        # 提取实验类型
-        local exp_type=$(python3 -c "import json; print(json.load(open('$metadata_file'))['experiment_type'])" 2>/dev/null)
-        if [ -n "$exp_type" ]; then
-            print_success "实验类型: $exp_type"
-        else
-            print_warning "无法解析实验类型，使用默认配置"
-        fi
-    else
-        print_warning "未找到元数据文件，使用启发式方法检测"
-    fi
-
-    # 自动检测backtests子目录
-    local backtest_dir="$experiment_root"
-    if [ -d "$experiment_root/backtests" ]; then
-        backtest_dir="$experiment_root/backtests"
-        print_success "检测到backtests子目录: $backtest_dir"
-    else
-        print_success "使用实验根目录: $backtest_dir"
-    fi
-
-    # 设置结果CSV路径
-    local result_csv="$experiment_root/mega_test_greedy_summary.csv"
-    if [ -f "$result_csv" ]; then
-        print_warning "结果文件已存在，将被覆盖: $result_csv"
-    fi
-
-    # 收集结果
-    print_section "开始收集实验结果"
-
-    export EXPERIMENT_DIR="$backtest_dir"
-    export OUTPUT_CSV="$result_csv"
-    export EXPERIMENT_METADATA_FILE="$metadata_file"
-
-    ./scripts/collect_mega_test_results.sh "$backtest_dir" "$result_csv"
-
-    if [ $? -eq 0 ]; then
-        print_success "结果汇总完成: $result_csv"
-
-        # 打印统计信息
-        print_header "收集完成"
-        local total_dirs=$(find "$backtest_dir" -mindepth 1 -maxdepth 1 -type d 2>/dev/null | wc -l)
-        echo "实验目录: ${experiment_root}"
-        echo "回测子目录: ${backtest_dir}"
-        echo "总实验数: ${total_dirs}"
-        echo "结果CSV: ${result_csv}"
-
-        if [ -f "$metadata_file" ]; then
-            echo ""
-            echo "实验元数据:"
-            python3 << PYTHON_PRINT_META
-import json
-try:
-    with open('$metadata_file', 'r') as f:
-        meta = json.load(f)
-    print(f"  类型: {meta.get('experiment_type', 'N/A')}")
-    print(f"  策略: {meta.get('strategy', 'N/A')}")
-    print(f"  创建时间: {meta.get('created_at', 'N/A')}")
-    print(f"  描述: {meta.get('description', 'N/A')}")
-    print(f"  并发度: {meta.get('parallel_jobs', 'N/A')}")
-except:
-    pass
-PYTHON_PRINT_META
-        fi
-
-        echo ""
-        print_success "可以使用以下命令查看结果："
-        echo "  column -t -s, \"$result_csv\" | less -S"
-    else
-        print_error "结果汇总失败"
-        exit 1
-    fi
-}
 
 main() {
     # 解析命令行参数
@@ -1007,17 +184,14 @@ main() {
                 ;;
             --collect-only)
                 if [ -z "$2" ]; then
-                    print_error "用法: $0 --collect-only <实验目录>"
-                    echo ""
-                    echo "示例:"
-                    echo "  $0 --collect-only results/mega_test_sma_enhanced_greedy_parallel_20251129_143022"
+                    greedy_print_error "用法: $0 --collect-only <实验目录>"
                     exit 1
                 fi
-                collect_only_mode "$2"
-                exit 0
+                greedy_collect_only_mode "$2"
+                exit $?
                 ;;
             *)
-                print_error "未知参数: $1"
+                greedy_print_error "未知参数: $1"
                 echo "用法: $0 [-j <并发度>] [--collect-only <实验目录>]"
                 exit 1
                 ;;
@@ -1025,106 +199,58 @@ main() {
     done
 
     # 正常执行模式
-    print_header "SMA Enhanced策略贪心筛选超参组合测试（并发版本）"
-    echo "策略: sma_cross_enhanced"
+    greedy_print_header "SMA Enhanced策略贪心筛选超参组合测试（并发版本）"
+    echo "策略: $STRATEGY_NAME"
     echo "并发度: ${PARALLEL_JOBS}"
     echo "核心超参数量: ${#CORE_OPTIONS[@]}"
 
-    # 创建目录
-    mkdir -p "$OUTPUT_BASE_DIR"
-    mkdir -p "$CANDIDATES_DIR"
-    mkdir -p "$REPORTS_DIR"
-    mkdir -p "$BACKTEST_DIR"
-    mkdir -p "$LOGS_DIR"
+    # 初始化目录
+    greedy_init_dirs "$OUTPUT_BASE_DIR"
 
-    print_success "创建输出目录: $OUTPUT_BASE_DIR"
-    print_success "日志目录: $LOGS_DIR"
+    # 创建元数据
+    greedy_create_metadata "$METADATA_FILE" "$EXPERIMENT_TYPE" "$STRATEGY_NAME" \
+        "$STRATEGY_DESCRIPTION" "$PARALLEL_JOBS" CORE_OPTIONS
 
-    # 创建实验元数据文件
-    create_metadata "$METADATA_FILE"
-
-    # 初始化实验命令记录CSV
-    echo "exp_name,command" > "$COMMANDS_CSV"
-    print_success "初始化命令记录文件: $COMMANDS_CSV"
-
-    # 导出环境变量供Python使用
-    export BACKTEST_DIR
-    export CANDIDATES_DIR
-    export LOGS_DIR
-    export COMMANDS_CSV
-    export CORE_OPTIONS_STR="${CORE_OPTIONS[*]}"
+    # 导出环境变量
+    export BACKTEST_DIR CANDIDATES_DIR LOGS_DIR COMMANDS_CSV OUTPUT_BASE_DIR
 
     # 记录开始时间
     local start_time=$(date +%s)
 
     # 阶段0: Baseline
-    run_stage0_baseline
+    greedy_run_stage0 "$STRATEGY_NAME"
+    [ $? -ne 0 ] && exit 1
 
     # 阶段1: 单变量筛选
-    run_stage1_single_var
+    greedy_run_stage1_parallel "$PARALLEL_JOBS" CORE_OPTIONS
+    [ $? -ne 0 ] && exit 1
 
     # 阶段k: k变量筛选（k >= 2，直到无候选通过）
     local k=2
     while true; do
-        export K=$k
-        run_stage_k $k
+        greedy_run_stage_k_parallel "$k" "$PARALLEL_JOBS"
         local exit_code=$?
 
         if [ $exit_code -eq 1 ]; then
-            print_warning "阶段${k}无候选通过筛选，贪心搜索终止"
+            greedy_print_warning "阶段${k}无候选通过筛选，贪心搜索终止"
             break
         elif [ $exit_code -eq 2 ]; then
-            print_warning "阶段${k}无组合需要测试（所有组合的子组合未全部通过前一阶段），贪心搜索终止"
+            greedy_print_warning "阶段${k}无组合需要测试，贪心搜索终止"
             break
         fi
 
         k=$((k + 1))
     done
 
-    # 收集所有实验结果
-    print_section "收集所有实验结果"
+    # 收集结果
+    greedy_collect_results
 
-    export EXPERIMENT_DIR="$BACKTEST_DIR"
-    export OUTPUT_CSV="$RESULT_CSV"
-
-    ./scripts/collect_mega_test_results.sh "$BACKTEST_DIR" "$RESULT_CSV"
-
-    if [ $? -eq 0 ]; then
-        print_success "结果汇总完成: $RESULT_CSV"
-    else
-        print_error "结果汇总失败"
-    fi
-
-    # 复制脚本自身到输出目录存档
+    # 存档脚本
     cp "$0" "${OUTPUT_BASE_DIR}/"
-    print_success "脚本已存档: ${OUTPUT_BASE_DIR}/$(basename $0)"
-
-    # 计算总耗时
-    local end_time=$(date +%s)
-    local duration=$((end_time - start_time))
-    local minutes=$((duration / 60))
-    local seconds=$((duration % 60))
+    greedy_print_success "脚本已存档: ${OUTPUT_BASE_DIR}/$(basename $0)"
 
     # 打印最终统计
-    print_header "贪心筛选完成"
-
-    local total_dirs=$(find "$BACKTEST_DIR" -mindepth 1 -maxdepth 1 -type d | wc -l)
-    echo "策略: sma_cross_enhanced"
-    echo "总实验数: ${total_dirs}"
-    echo "并发度: ${PARALLEL_JOBS}"
-    echo "总耗时: ${minutes}分${seconds}秒"
-    echo "输出目录: ${OUTPUT_BASE_DIR}"
-    echo "结果CSV: ${RESULT_CSV}"
-    echo "命令记录: ${COMMANDS_CSV}"
-    echo "日志目录: ${LOGS_DIR}"
-    echo ""
-    echo "核心超参:"
-    for opt in "${CORE_OPTIONS[@]}"; do
-        echo "  - ${opt}"
-    done
-    echo ""
-    echo "候选池文件:"
-    ls -1 "${CANDIDATES_DIR}"/candidates_k*.json 2>/dev/null || echo "  无"
+    greedy_print_final_stats "$STRATEGY_NAME" "$start_time" CORE_OPTIONS
 }
 
 # ============================================================================
@@ -1133,7 +259,7 @@ main() {
 
 # 检查Python3
 if ! command -v python3 &> /dev/null; then
-    print_error "需要Python3来执行筛选逻辑"
+    greedy_print_error "需要Python3来执行筛选逻辑"
     exit 1
 fi
 

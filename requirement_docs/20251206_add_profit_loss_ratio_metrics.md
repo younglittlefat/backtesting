@@ -346,3 +346,97 @@ csv_columns.extend([
 5. **旧格式崩溃风险**：`mega_test_{kama,macd}_greedy_parallel.sh` baseline 打印新指标未防御 None，遇到旧版 summary 缺列会 TypeError，需兜底。⏳ **暂缓** - 新版 summary 会输出新列，旧数据暂不处理
 6. **筛选逻辑未用新指标**：候选筛选仍只看夏普，新趋势跟踪约束（盈亏比>2、胜率 35%-50%、交易次数>20）未落地，容易放行高夏普但样本过少或盈亏比不足的组合。⏳ **暂缓** - 属于功能增强，不在本需求范围内
 7. **缺少测试**：未新增 `_stats` 新指标计算以及 summary/global CSV 新列存在性的测试，建议补充回归用例。⏳ **暂缓** - 待用户验证后补充
+
+---
+
+## 10. 模块化重构（2025-12-07）
+
+### 10.1 背景
+
+在添加新指标后，5个贪心搜索脚本存在大量重复代码（每个脚本700-1100行），维护困难：
+- `mega_test_kama_greedy.sh` (串行版)
+- `mega_test_macd_greedy.sh` (串行版)
+- `mega_test_kama_greedy_parallel.sh` (并行版)
+- `mega_test_macd_greedy_parallel.sh` (并行版)
+- `mega_test_sma_enhanced_greedy_parallel.sh` (并行版)
+
+### 10.2 重构方案
+
+创建 `greedy_search/` 模块，抽取公共逻辑：
+
+```
+greedy_search/
+├── __init__.py              # 模块入口
+├── metrics_extractor.py     # 指标提取（从CSV提取所有指标）
+├── candidate_filter.py      # 候选筛选（阶段1 OR逻辑、阶段k严格递增）
+├── combo_generator.py       # 组合生成（k变量组合）
+├── cli.py                   # CLI入口（供Shell脚本调用）
+└── greedy_lib.sh            # Shell公共函数库
+```
+
+### 10.3 模块功能
+
+#### Python模块
+
+| 模块 | 功能 |
+|------|------|
+| `metrics_extractor` | 从global_summary CSV提取标准化指标（夏普、胜率、盈亏比、交易次数等） |
+| `candidate_filter` | 阶段1 OR逻辑筛选、阶段k严格递增筛选 |
+| `combo_generator` | 从k-1阶段候选生成k变量组合 |
+| `cli` | 提供命令行接口供Shell脚本调用 |
+
+#### Shell公共函数
+
+| 函数 | 功能 |
+|------|------|
+| `greedy_print_*` | 彩色输出（header, stage, section, success, warning, error） |
+| `greedy_create_metadata` | 创建实验元数据JSON |
+| `greedy_init_dirs` | 初始化实验目录结构 |
+| `greedy_build_base_cmd` | 构建基础回测命令 |
+| `greedy_run_stage0` | 执行Baseline测试 |
+| `greedy_run_stage1_parallel` | 阶段1并发执行 |
+| `greedy_run_stage1_serial` | 阶段1串行执行 |
+| `greedy_run_stage_k_parallel` | 阶段k并发执行 |
+| `greedy_run_stage_k_serial` | 阶段k串行执行 |
+| `greedy_collect_results` | 收集实验结果 |
+| `greedy_collect_only_mode` | 仅收集模式 |
+| `greedy_print_final_stats` | 打印最终统计 |
+
+### 10.4 重构后脚本结构
+
+重构后每个策略脚本精简为：
+1. **策略特定配置**（~40行）：策略名、路径、超参列表
+2. **实验执行函数**（~60行）：`run_single_experiment()`，仅包含策略特定的参数映射
+3. **主执行流程**（~50行）：调用公共函数执行各阶段
+
+**代码行数对比**：
+
+| 脚本 | 重构前 | 重构后 | 减少 |
+|------|--------|--------|------|
+| mega_test_kama_greedy_parallel.sh | 961行 | 265行 | -72% |
+| mega_test_macd_greedy_parallel.sh | 915行 | 277行 | -70% |
+| mega_test_sma_enhanced_greedy_parallel.sh | 1142行 | 267行 | -77% |
+| mega_test_kama_greedy.sh | 969行 | 232行 | -76% |
+| mega_test_macd_greedy.sh | 970行 | 243行 | -75% |
+
+### 10.5 开发任务清单
+
+- [x] **Task R1**: 创建 `greedy_search/` 模块目录
+- [x] **Task R2**: 实现 `metrics_extractor.py` 指标提取模块
+- [x] **Task R3**: 实现 `candidate_filter.py` 候选筛选模块
+- [x] **Task R4**: 实现 `combo_generator.py` 组合生成模块
+- [x] **Task R5**: 实现 `cli.py` CLI入口
+- [x] **Task R6**: 实现 `greedy_lib.sh` Shell公共函数库
+- [x] **Task R7**: 重构 `mega_test_kama_greedy_parallel.sh`
+- [x] **Task R8**: 重构 `mega_test_macd_greedy_parallel.sh`
+- [x] **Task R9**: 重构 `mega_test_sma_enhanced_greedy_parallel.sh`
+- [x] **Task R10**: 重构 `mega_test_kama_greedy.sh`
+- [x] **Task R11**: 重构 `mega_test_macd_greedy.sh`
+- [ ] **Task R12**: 测试验证重构后脚本功能一致性
+
+### 10.6 变更记录
+
+| 日期 | 版本 | 描述 |
+|------|------|------|
+| 2025-12-07 | v2.0 | 完成模块化重构（Task R1-R11），待用户验证 |
+

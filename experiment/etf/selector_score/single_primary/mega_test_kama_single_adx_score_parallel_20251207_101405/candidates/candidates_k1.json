@@ -1,0 +1,114 @@
+[
+  {
+    "options": [
+      "enable-efficiency-filter"
+    ],
+    "sharpe_mean": 0.63,
+    "sharpe_median": 0.66,
+    "win_rate_mean": 56.82,
+    "win_rate_median": 50.0,
+    "pl_ratio_mean": 6.33,
+    "pl_ratio_median": 4.23,
+    "trades_mean": 4.2,
+    "trades_median": 3.5,
+    "exp_name": "single_enable-efficiency-filter"
+  },
+  {
+    "options": [
+      "enable-slope-confirmation"
+    ],
+    "sharpe_mean": 0.47,
+    "sharpe_median": 0.55,
+    "win_rate_mean": 51.37,
+    "win_rate_median": 47.22,
+    "pl_ratio_mean": 6.72,
+    "pl_ratio_median": 2.92,
+    "trades_mean": 7.3,
+    "trades_median": 6.5,
+    "exp_name": "single_enable-slope-confirmation"
+  },
+  {
+    "options": [
+      "enable-slope-filter"
+    ],
+    "sharpe_mean": 0.16,
+    "sharpe_median": 0.28,
+    "win_rate_mean": 36.21,
+    "win_rate_median": 31.25,
+    "pl_ratio_mean": 4.84,
+    "pl_ratio_median": 3.07,
+    "trades_mean": 13.2,
+    "trades_median": 12.0,
+    "exp_name": "single_enable-slope-filter"
+  },
+  {
+    "options": [
+      "enable-adx-filter"
+    ],
+    "sharpe_mean": 0.24,
+    "sharpe_median": 0.29,
+    "win_rate_mean": 30.47,
+    "win_rate_median": 31.66,
+    "pl_ratio_mean": 5.5,
+    "pl_ratio_median": 3.94,
+    "trades_mean": 11.6,
+    "trades_median": 12.0,
+    "exp_name": "single_enable-adx-filter"
+  },
+  {
+    "options": [
+      "enable-volume-filter"
+    ],
+    "sharpe_mean": 0.4,
+    "sharpe_median": 0.5,
+    "win_rate_mean": 46.32,
+    "win_rate_median": 41.43,
+    "pl_ratio_mean": 5.03,
+    "pl_ratio_median": 3.28,
+    "trades_mean": 6.4,
+    "trades_median": 6.0,
+    "exp_name": "single_enable-volume-filter"
+  },
+  {
+    "options": [
+      "enable-confirm-filter"
+    ],
+    "sharpe_mean": 0.02,
+    "sharpe_median": 0.25,
+    "win_rate_mean": 30.85,
+    "win_rate_median": 29.28,
+    "pl_ratio_mean": 4.82,
+    "pl_ratio_median": 2.66,
+    "trades_mean": 12.6,
+    "trades_median": 12.0,
+    "exp_name": "single_enable-confirm-filter"
+  },
+  {
+    "options": [
+      "enable-loss-protection"
+    ],
+    "sharpe_mean": 0.14,
+    "sharpe_median": 0.25,
+    "win_rate_mean": 33.06,
+    "win_rate_median": 30.62,
+    "pl_ratio_mean": 6.03,
+    "pl_ratio_median": 3.39,
+    "trades_mean": 16.6,
+    "trades_median": 16.0,
+    "exp_name": "single_enable-loss-protection"
+  },
+  {
+    "options": [
+      "enable-atr-stop"
+    ],
+    "sharpe_mean": 0.19,
+    "sharpe_median": 0.29,
+    "win_rate_mean": 38.96,
+    "win_rate_median": 37.86,
+    "pl_ratio_mean": 4.9,
+    "pl_ratio_median": 2.53,
+    "trades_mean": 15.0,
+    "trades_median": 14.0,
+    "exp_name": "single_enable-atr-stop"
+  }
+]
