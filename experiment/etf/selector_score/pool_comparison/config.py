@@ -48,7 +48,7 @@ BACKTEST_CONFIG = {
 # 扩展性设计：支持两种方式添加新的单维度Pool
 #
 # 方式1: 文件名约定自动发现（推荐，零配置）
-#   - 将CSV放入 pool/ 目录
+#   - 将CSV放入 pools/scoring_YYYY_YYYY/ 目录
 #   - 命名格式: single_{dimension}_pool*.csv (不含 _all_scores)
 #   - 系统自动发现并注册
 #

@@ -39,7 +39,7 @@ LABEL_EN = True
 PROJECT_ROOT = Path(__file__).parent.parent.parent.parent.parent
 DATA_DIR = PROJECT_ROOT / "data" / "chinese_etf" / "daily" / "etf"
 SELECTOR_SCORE_DIR = PROJECT_ROOT / "experiment" / "etf" / "selector_score"
-OUTPUT_DIR = SELECTOR_SCORE_DIR / "etf_plot"
+OUTPUT_DIR = SELECTOR_SCORE_DIR / "visualizations"
 
 
 def calculate_adx(df: pd.DataFrame, period: int = 14) -> pd.Series:

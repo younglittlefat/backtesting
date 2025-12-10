@@ -4,8 +4,8 @@ import json
 from pathlib import Path
 
 # 源配置目录和目标配置目录
-SOURCE_DIR = Path("/mnt/d/git/backtesting/experiment/etf/selector_score/pool")
-TARGET_DIR = Path("/mnt/d/git/backtesting/experiment/etf/selector_score/pool_2022_2023")
+SOURCE_DIR = Path("/mnt/d/git/backtesting/experiment/etf/selector_score/configs/scoring_2019_2021")
+TARGET_DIR = Path("/mnt/d/git/backtesting/experiment/etf/selector_score/configs/scoring_2022_2023")
 
 # 需要修改的配置文件列表
 CONFIG_FILES = [
@@ -32,8 +32,8 @@ def modify_config(config_data: dict, filename: str) -> dict:
 
     # 修改输出路径
     old_output = config_data["paths"]["output_path"]
-    # 替换pool/为pool_2022_2023/，并更新所有可能的时间戳格式
-    new_output = old_output.replace("pool/", "pool_2022_2023/")
+    # 替换pools/scoring_2019_2021/为pools/scoring_2022_2023/，并更新所有可能的时间戳格式
+    new_output = old_output.replace("pools/scoring_2019_2021/", "pools/scoring_2022_2023/")
     new_output = new_output.replace("_2019_2021", "_2022_2023")
     new_output = new_output.replace("_2019_2022", "_2022_2023")
     config_data["paths"]["output_path"] = new_output

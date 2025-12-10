@@ -6,7 +6,7 @@ Compare backtest performance across different ETF pools
 with varying scoring dimensions.
 
 Extensibility:
-- Auto-discovery: Place CSV files in pool/ directory with naming convention
+- Auto-discovery: Place CSV files in pools/scoring_YYYY_YYYY/ directory with naming convention
   single_{dimension}_pool*.csv (excluding _all_scores)
 - Manual registration: Use register_custom_pool() at runtime
 - Dimension labels: Add to DIMENSION_LABELS in config.py
