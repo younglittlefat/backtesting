@@ -15,6 +15,8 @@ import warnings
 
 import numpy as np
 import pandas as pd
+from scipy.cluster.hierarchy import linkage, fcluster
+from scipy.spatial.distance import squareform
 
 from .data_loader import ETFDataLoader
 from .config import IndustryKeywords
@@ -472,7 +474,10 @@ class PortfolioOptimizer:
         verbose: bool = True,
         diversify_v2: bool = False,
         score_diff_threshold: float = 0.05,
-        dedup_thresholds: List[float] = None
+        dedup_thresholds: List[float] = None,
+        enable_clustering_selection: bool = False,
+        clustering_method: str = 'ward',
+        clustering_min_score_percentile: float = 20.0
     ) -> List[Dict]:
         """组合优化：构建低相关性、分散化组合
 
@@ -489,6 +494,9 @@ class PortfolioOptimizer:
             diversify_v2: 是否启用V2分散逻辑（P0: max pairwise相关性, P1: Score优先去重）
             score_diff_threshold: 去重时Score差异阈值，超过则无条件保留高分（仅diversify_v2生效）
             dedup_thresholds: 去重相关性阈值序列
+            enable_clustering_selection: 是否启用聚类选择（替代贪心算法）
+            clustering_method: 聚类方法 (ward, average, complete, single)
+            clustering_min_score_percentile: 聚类时最低分数百分位阈值
 
         Returns:
             优化后的ETF组合列表，按原排序保持
@@ -501,6 +509,8 @@ class PortfolioOptimizer:
             print(f"  📊 候选ETF数量: {len(etf_candidates)}")
             print(f"  🎯 目标组合大小: {target_size}")
             print(f"  📈 相关性阈值: < {max_correlation}")
+            if enable_clustering_selection:
+                print(f"  🔬 聚类选择: 启用 (方法={clustering_method}, 最低分位={clustering_min_score_percentile:.0f}%)")
             if diversify_v2:
                 print(f"  🆕 分散V2模式: 启用 (max pairwise相关性 + Score优先去重)")
                 print(f"     Score差异阈值: {score_diff_threshold:.1%}")
@@ -546,14 +556,25 @@ class PortfolioOptimizer:
         if verbose:
             print(f"  ✅ 相关性矩阵计算完成 ({correlation_matrix.shape[0]}x{correlation_matrix.shape[1]})")
 
-        # 贪心算法选择低相关性组合
-        selected_portfolio = self._greedy_selection(
-            etf_candidates, correlation_matrix, max_correlation, target_size,
-            diversify_v2=diversify_v2
-        )
-
-        if verbose:
-            print(f"  🎯 贪心选择完成: {len(selected_portfolio)} 只ETF")
+        # 选择算法：聚类选择 或 贪心算法
+        if enable_clustering_selection:
+            # 使用聚类选择（数据驱动的行业分类）
+            selected_portfolio = self._clustering_selection(
+                working_candidates, correlation_matrix, target_size,
+                clustering_method=clustering_method,
+                min_score_percentile=clustering_min_score_percentile,
+                verbose=verbose
+            )
+            if verbose:
+                print(f"  🔬 聚类选择完成: {len(selected_portfolio)} 只ETF")
+        else:
+            # 使用贪心算法选择低相关性组合
+            selected_portfolio = self._greedy_selection(
+                working_candidates, correlation_matrix, max_correlation, target_size,
+                diversify_v2=diversify_v2
+            )
+            if verbose:
+                print(f"  🎯 贪心选择完成: {len(selected_portfolio)} 只ETF")
 
         # 行业平衡优化（如果启用）
         if balance_industries and len(selected_portfolio) > target_size:
@@ -677,6 +698,173 @@ class PortfolioOptimizer:
             except (KeyError, IndexError):
                 # 如果出现索引错误，跳过该ETF
                 continue
+
+        return selected
+
+    def _clustering_selection(
+        self,
+        etf_candidates: List[Dict],
+        correlation_matrix: pd.DataFrame,
+        target_size: int,
+        clustering_method: str = 'ward',
+        min_score_percentile: float = 20.0,
+        verbose: bool = False
+    ) -> List[Dict]:
+        """基于层次聚类的ETF选择（数据驱动的行业分类）
+
+        算法逻辑：
+        1. 使用 1 - correlation 作为距离矩阵
+        2. 层次聚类切分为 target_size 个簇
+        3. 每个簇内选择 Score 最高的 1 只 ETF
+        4. 如果簇内最高分低于全局 bottom N%，该簇留空
+
+        优势：
+        - 消除贪心算法的路径依赖性
+        - 自动识别走势相似的ETF（如光伏和储能）
+        - 无需维护硬编码的行业关键词
+
+        Args:
+            etf_candidates: ETF候选列表（已按Score排序）
+            correlation_matrix: 相关系数矩阵
+            target_size: 目标簇数量（即目标组合大小）
+            clustering_method: 聚类方法 (ward, average, complete, single)
+            min_score_percentile: 最低分数百分位阈值，低于此值的簇留空
+            verbose: 是否打印详细信息
+
+        Returns:
+            选中的ETF列表
+        """
+        # 对齐数据：只保留在相关性矩阵中的ETF
+        valid_candidates = [
+            etf for etf in etf_candidates
+            if etf['ts_code'] in correlation_matrix.index
+        ]
+
+        if len(valid_candidates) == 0:
+            if verbose:
+                print("    ⚠️ 聚类选择：无有效候选，降级返回原始列表")
+            return etf_candidates[:target_size]
+
+        valid_codes = [etf['ts_code'] for etf in valid_candidates]
+
+        # 如果候选数量不足，直接返回全部
+        if len(valid_codes) <= target_size:
+            if verbose:
+                print(f"    ⚠️ 聚类选择：候选数量({len(valid_codes)}) <= 目标({target_size})，返回全部")
+            return valid_candidates
+
+        # 提取子相关性矩阵
+        sub_corr = correlation_matrix.loc[valid_codes, valid_codes]
+
+        # 构建距离矩阵 (距离 = 1 - 相关性)
+        # 处理可能的负相关：使用 1 - corr，范围 [0, 2]
+        dist_matrix = 1 - sub_corr
+        np.fill_diagonal(dist_matrix.values, 0)
+
+        # 确保距离矩阵对称且无NaN
+        dist_matrix = dist_matrix.fillna(1.0)  # NaN视为不相关
+        dist_matrix = (dist_matrix + dist_matrix.T) / 2  # 确保对称
+
+        # 转换为压缩距离矩阵（scipy要求）
+        try:
+            condensed_dist = squareform(dist_matrix.values, checks=False)
+        except Exception as e:
+            if verbose:
+                print(f"    ⚠️ 聚类选择：距离矩阵转换失败 ({e})，降级到贪心算法")
+            return self._greedy_selection(
+                etf_candidates, correlation_matrix, 0.7, target_size
+            )
+
+        # 层次聚类
+        try:
+            Z = linkage(condensed_dist, method=clustering_method)
+        except Exception as e:
+            if verbose:
+                print(f"    ⚠️ 聚类选择：聚类失败 ({e})，降级到贪心算法")
+            return self._greedy_selection(
+                etf_candidates, correlation_matrix, 0.7, target_size
+            )
+
+        # 切分为 target_size 个簇
+        labels = fcluster(Z, t=target_size, criterion='maxclust')
+
+        # 构建簇映射
+        cluster_map = {code: label for code, label in zip(valid_codes, labels)}
+
+        # 计算分数阈值（全局 bottom N%）
+        scores = []
+        for etf in valid_candidates:
+            # 优先使用 final_score，其次 return_dd_ratio
+            score = etf.get('final_score', etf.get('return_dd_ratio', 0))
+            if pd.isna(score):
+                score = 0
+            scores.append(score)
+
+        if scores:
+            score_threshold = np.percentile(scores, min_score_percentile)
+        else:
+            score_threshold = 0
+
+        if verbose:
+            print(f"    📊 聚类选择：{len(valid_codes)} 只ETF → {target_size} 个簇")
+            print(f"    📊 分数阈值：{score_threshold:.4f} (bottom {min_score_percentile:.0f}%)")
+            print(f"    📊 聚类方法：{clustering_method}")
+
+        # 簇内选优：每个簇选择 Score 最高的 1 只
+        selected = []
+        cluster_stats = {}  # 用于诊断输出
+
+        for cluster_id in range(1, target_size + 1):
+            # 找出该簇内的所有ETF
+            cluster_etfs = [
+                etf for etf in valid_candidates
+                if cluster_map.get(etf['ts_code']) == cluster_id
+            ]
+
+            if not cluster_etfs:
+                cluster_stats[cluster_id] = {'count': 0, 'selected': None, 'reason': '空簇'}
+                continue
+
+            # 按分数排序，选择最高分
+            cluster_etfs_sorted = sorted(
+                cluster_etfs,
+                key=lambda x: x.get('final_score', x.get('return_dd_ratio', 0)) or 0,
+                reverse=True
+            )
+
+            best_etf = cluster_etfs_sorted[0]
+            best_score = best_etf.get('final_score', best_etf.get('return_dd_ratio', 0)) or 0
+
+            # 检查是否低于阈值
+            if best_score < score_threshold:
+                cluster_stats[cluster_id] = {
+                    'count': len(cluster_etfs),
+                    'selected': None,
+                    'reason': f'最高分 {best_score:.4f} < 阈值 {score_threshold:.4f}'
+                }
+                continue
+
+            selected.append(best_etf)
+            cluster_stats[cluster_id] = {
+                'count': len(cluster_etfs),
+                'selected': best_etf['ts_code'],
+                'score': best_score
+            }
+
+        if verbose:
+            # 打印簇统计
+            selected_count = len([s for s in cluster_stats.values() if s.get('selected')])
+            skipped_count = len(cluster_stats) - selected_count
+            print(f"    ✅ 选中 {selected_count} 只ETF，跳过 {skipped_count} 个低分簇")
+
+            # 打印详细簇信息（仅在非常详细模式下）
+            if len(selected) < target_size:
+                skipped_clusters = [
+                    (cid, info) for cid, info in cluster_stats.items()
+                    if not info.get('selected')
+                ]
+                for cid, info in skipped_clusters[:3]:  # 最多显示3个
+                    print(f"      簇{cid}: {info.get('reason', '未知原因')}")
 
         return selected
 

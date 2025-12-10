@@ -152,7 +152,10 @@ class TrendETFSelector:
                 verbose=verbose,
                 diversify_v2=diversify_v2,
                 score_diff_threshold=score_diff_threshold,
-                dedup_thresholds=self.config.dedup_thresholds
+                dedup_thresholds=self.config.dedup_thresholds,
+                enable_clustering_selection=self.config.enable_clustering_selection,
+                clustering_method=self.config.clustering_method,
+                clustering_min_score_percentile=self.config.clustering_min_score_percentile
             )
         except ImportError:
             if verbose:

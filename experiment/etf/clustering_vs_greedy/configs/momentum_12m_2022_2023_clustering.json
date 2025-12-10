@@ -1,0 +1,130 @@
+{
+  "version": "3.0",
+  "description": "聚类vs贪心实验: 12个月动量 | 牛市前筛选期 | 层次聚类选择",
+  "paths": {
+    "data_dir": "data/chinese_etf",
+    "output_path": "experiment/etf/clustering_vs_greedy/pools/momentum_12m_2022_2023_clustering.csv"
+  },
+  "time_range": {
+    "start_date": "20220102",
+    "end_date": "20231231"
+  },
+  "stage1_initial_filter": {
+    "min_turnover": 2000,
+    "min_listing_days": 180,
+    "turnover_lookback_days": 30
+  },
+  "stage2_core_filter": {
+    "adx": {
+      "period": 14,
+      "lookback_days": 250,
+      "percentile": 80.0
+    },
+    "ma_backtest": {
+      "enable": false,
+      "short_period": 20,
+      "long_period": 50,
+      "ret_dd_percentile": 70.0
+    },
+    "volatility": {
+      "min": 0.2,
+      "max": 0.6,
+      "lookback_days": 252
+    },
+    "momentum": {
+      "periods": [
+        63,
+        252
+      ],
+      "min_positive": true
+    },
+    "filter_mode": {
+      "skip_percentile_filtering": true,
+      "skip_range_filtering": true
+    }
+  },
+  "scoring_system": {
+    "enable_unbiased_scoring": true,
+    "benchmark": {
+      "ts_code": "510300.SH"
+    },
+    "windows": {
+      "excess_return": {
+        "short": 20,
+        "long": 60
+      },
+      "volume": {
+        "short": 20,
+        "long": 60
+      },
+      "trend_quality": 60,
+      "trend_consistency": 63,
+      "price_efficiency": 252,
+      "liquidity_score": 30
+    },
+    "weights": {
+      "trend": {
+        "weight": 0,
+        "sub_weights": {
+          "adx_score": 0,
+          "trend_consistency": 0,
+          "trend_quality": 0
+        }
+      },
+      "return": {
+        "weight": 1.0,
+        "sub_weights": {
+          "momentum_3m": 0,
+          "momentum_12m": 1.0,
+          "excess_return_20d": 0,
+          "excess_return_60d": 0
+        }
+      },
+      "liquidity": {
+        "weight": 0,
+        "sub_weights": {
+          "liquidity_score": 0,
+          "price_efficiency": 0,
+          "volume_trend": 0
+        }
+      },
+      "risk_adjusted": {
+        "weight": 0,
+        "sub_weights": {
+          "idr": 0
+        }
+      }
+    }
+  },
+  "stage3_diversification": {
+    "target_portfolio_size": 20,
+    "max_correlation": 0.7,
+    "min_industries": 3,
+    "deduplication": {
+      "enable": true,
+      "min_ratio": 0.8,
+      "thresholds": [
+        0.98,
+        0.95,
+        0.92,
+        0.9
+      ]
+    },
+    "diversify_v2": {
+      "enable": false,
+      "score_diff_threshold": 0.05
+    },
+    "clustering": {
+      "_description": "聚类选择：数据驱动的行业分类，替代贪心算法",
+      "enable": true,
+      "method": "ward",
+      "min_score_percentile": 20.0
+    },
+    "balance_industries": true
+  },
+  "output_options": {
+    "verbose": true,
+    "with_analysis": false,
+    "skip_portfolio_optimization": false
+  }
+}

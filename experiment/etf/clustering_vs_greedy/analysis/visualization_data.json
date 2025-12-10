@@ -1,0 +1,95 @@
+{
+  "summary": {
+    "total_backtests": 24,
+    "clustering_wins": 5,
+    "greedy_wins": 7,
+    "avg_sharpe_diff": -0.017262158869395687,
+    "avg_return_diff": -1.0581721978557506
+  },
+  "by_market": {
+    "bear": {
+      "clustering_wins": 3,
+      "greedy_wins": 3,
+      "avg_clustering_sharpe": -0.28250774853801164,
+      "avg_greedy_sharpe": -0.2840583333333333,
+      "avg_clustering_return": -2.2756202241715404,
+      "avg_greedy_return": -1.4310500000000002
+    },
+    "bull": {
+      "clustering_wins": 2,
+      "greedy_wins": 4,
+      "avg_clustering_sharpe": 0.035475097465886944,
+      "avg_greedy_sharpe": 0.07155,
+      "avg_clustering_return": 5.037642495126706,
+      "avg_greedy_return": 6.3094166666666665
+    }
+  },
+  "by_dimension": {
+    "adx_score": {
+      "clustering_wins": 1,
+      "greedy_wins": 1,
+      "avg_sharpe_diff": -0.066075,
+      "avg_return_diff": -1.3523000000000005
+    },
+    "liquidity_score": {
+      "clustering_wins": 2,
+      "greedy_wins": 0,
+      "avg_sharpe_diff": 0.21905307017543862,
+      "avg_return_diff": -2.2943725146198832
+    },
+    "momentum_12m": {
+      "clustering_wins": 1,
+      "greedy_wins": 1,
+      "avg_sharpe_diff": -0.11609999999999995,
+      "avg_return_diff": -1.0103250000000001
+    },
+    "price_efficiency": {
+      "clustering_wins": 0,
+      "greedy_wins": 2,
+      "avg_sharpe_diff": -0.11125000000000006,
+      "avg_return_diff": -1.931750000000001
+    },
+    "trend_consistency": {
+      "clustering_wins": 1,
+      "greedy_wins": 1,
+      "avg_sharpe_diff": 0.0560697368421053,
+      "avg_return_diff": 0.8771052631578957
+    },
+    "trend_quality": {
+      "clustering_wins": 0,
+      "greedy_wins": 2,
+      "avg_sharpe_diff": -0.08527076023391805,
+      "avg_return_diff": -0.637390935672514
+    }
+  },
+  "best_configs": {
+    "bear": {
+      "clustering": {
+        "dimension": "liquidity_score",
+        "sharpe": -0.0793333333333333,
+        "return": -0.2320555555555557,
+        "max_dd": -20.29888888888889
+      },
+      "greedy": {
+        "dimension": "momentum_12m",
+        "sharpe": 0.13135,
+        "return": 3.95715,
+        "max_dd": -20.8368
+      }
+    },
+    "bull": {
+      "clustering": {
+        "dimension": "adx_score",
+        "sharpe": 0.17345,
+        "return": 7.743499999999999,
+        "max_dd": -19.09475
+      },
+      "greedy": {
+        "dimension": "adx_score",
+        "sharpe": 0.42355,
+        "return": 12.46585,
+        "max_dd": -19.6723
+      }
+    }
+  }
+}

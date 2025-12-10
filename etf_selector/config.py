@@ -49,6 +49,11 @@ class FilterConfig:
     diversify_v2: bool = False  # 是否启用V2分散逻辑
     score_diff_threshold: float = 0.05  # Score差异阈值
 
+    # 聚类选择（替代贪心算法的数据驱动行业分类）
+    enable_clustering_selection: bool = False  # 是否启用聚类选择（默认关闭）
+    clustering_method: str = 'ward'  # 聚类方法：ward, average, complete, single
+    clustering_min_score_percentile: float = 20.0  # 最低分数百分位阈值，低于此值的簇留空
+
     # 行业平衡
     balance_industries: bool = True  # 是否平衡行业分布
 

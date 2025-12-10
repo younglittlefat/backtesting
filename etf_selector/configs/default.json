@@ -131,6 +131,13 @@
       "score_diff_threshold": 0.05
     },
 
+    "clustering": {
+      "_description": "聚类选择：数据驱动的行业分类，替代贪心算法",
+      "enable": false,
+      "method": "ward",
+      "min_score_percentile": 20.0
+    },
+
     "balance_industries": true
   },
 

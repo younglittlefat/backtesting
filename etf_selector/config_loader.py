@@ -120,6 +120,11 @@ class ConfigLoader:
         'stage3_diversification.diversify_v2.enable': 'diversify_v2',
         'stage3_diversification.diversify_v2.score_diff_threshold': 'score_diff_threshold',
 
+        # Stage 3: Clustering selection (数据驱动的行业分类)
+        'stage3_diversification.clustering.enable': 'enable_clustering_selection',
+        'stage3_diversification.clustering.method': 'clustering_method',
+        'stage3_diversification.clustering.min_score_percentile': 'clustering_min_score_percentile',
+
         # Stage 3: Industry balance
         'stage3_diversification.balance_industries': 'balance_industries',
 
@@ -494,6 +499,10 @@ class ConfigLoader:
         print(f"  V2分散逻辑:")
         print(f"    enable: {config.diversify_v2}")
         print(f"    score_diff_threshold: {config.score_diff_threshold}")
+        print(f"  聚类选择:")
+        print(f"    enable: {config.enable_clustering_selection}")
+        print(f"    method: {config.clustering_method}")
+        print(f"    min_score_percentile: {config.clustering_min_score_percentile}")
         print(f"  balance_industries: {config.balance_industries}")
         print()
         print("=" * 80)
