@@ -161,6 +161,10 @@ class PortfolioSimulator:
         # 等待买入信号的标的（调仓时新增的）
         self.waiting_for_signal: set = set()
 
+        # 待执行订单队列（T日信号 -> T+1日执行）
+        # 格式: {'symbol': str, 'side': 'buy'|'sell', 'signal_date': str}
+        self.pending_orders: List[Dict] = []
+
     def get_position_value(self, prices: Dict[str, float]) -> float:
         """计算持仓市值"""
         total = 0.0
@@ -268,6 +272,127 @@ class PortfolioSimulator:
             'trades_count': len(rotation_trades)
         }
 
+    def generate_signals(
+        self,
+        date: str,
+        prices: Dict[str, float],
+        kama_values: Dict[str, float],
+        suspended: List[str] = None
+    ) -> List[Dict]:
+        """
+        生成KAMA策略信号（不执行，加入待执行队列）
+
+        时序约定：T日收盘后计算信号，T+1日开盘执行
+        避免前视偏差：信号基于T日收盘价，执行使用T+1日开盘价
+
+        参数:
+            date: 日期（T日）
+            prices: T日收盘价
+            kama_values: T日KAMA值
+            suspended: 停牌标的
+
+        返回:
+            当日产生的信号列表（待T+1日执行）
+        """
+        suspended = suspended or []
+        signals = []
+
+        for symbol in self.current_pool:
+            if symbol in suspended or symbol not in prices or symbol not in kama_values:
+                continue
+
+            close = prices[symbol]
+            kama_val = kama_values[symbol]
+            prev_kama = self.prev_kama_values.get(symbol, kama_val)
+            prev_close = prices.get(f'{symbol}_prev_close', close)
+
+            # 判断金叉（价格上穿KAMA）
+            is_golden_cross = (close > kama_val) and (prev_close <= prev_kama)
+
+            # 判断死叉（价格下穿KAMA）
+            is_death_cross = (close < kama_val) and (prev_close >= prev_kama)
+
+            # 处理等待信号的新标的
+            if symbol in self.waiting_for_signal:
+                if is_golden_cross:
+                    # 买入信号 - 加入待执行队列
+                    signals.append({
+                        'symbol': symbol,
+                        'side': 'buy',
+                        'signal_date': date
+                    })
+
+            # 处理已持仓标的
+            elif symbol in self.positions and not self.positions[symbol].is_empty:
+                if is_death_cross:
+                    # 卖出信号 - 加入待执行队列
+                    signals.append({
+                        'symbol': symbol,
+                        'side': 'sell',
+                        'signal_date': date
+                    })
+
+            # 更新KAMA状态
+            self.prev_kama_values[symbol] = self.kama_values.get(symbol, kama_val)
+            self.kama_values[symbol] = kama_val
+
+        # 将信号加入待执行队列
+        self.pending_orders.extend(signals)
+
+        return signals
+
+    def execute_pending_orders(
+        self,
+        date: str,
+        open_prices: Dict[str, float],
+        suspended: List[str] = None
+    ) -> List[Trade]:
+        """
+        执行待执行订单（T+1日开盘执行）
+
+        参数:
+            date: 执行日期（T+1日）
+            open_prices: T+1日开盘价
+            suspended: 停牌标的
+
+        返回:
+            当日执行的交易列表
+        """
+        suspended = suspended or []
+        executed_trades = []
+        remaining_orders = []
+
+        for order in self.pending_orders:
+            symbol = order['symbol']
+
+            # 跳过停牌标的（保留订单到下一日）
+            if symbol in suspended:
+                remaining_orders.append(order)
+                continue
+
+            # 跳过无价格数据的标的
+            if symbol not in open_prices:
+                remaining_orders.append(order)
+                continue
+
+            open_price = open_prices[symbol]
+
+            if order['side'] == 'buy':
+                trade = self._execute_buy(symbol, date, open_price, use_open_price=True)
+                if trade:
+                    executed_trades.append(trade)
+                    self.waiting_for_signal.discard(symbol)
+            elif order['side'] == 'sell':
+                trade = self._execute_sell(symbol, date, open_price, "signal", use_open_price=True)
+                if trade:
+                    executed_trades.append(trade)
+                    self.waiting_for_signal.add(symbol)
+
+        # 更新待执行队列（移除已执行的订单）
+        self.pending_orders = remaining_orders
+
+        return executed_trades
+
     def process_signals(
         self,
         date: str,
@@ -276,7 +401,10 @@ class PortfolioSimulator:
         suspended: List[str] = None
     ) -> List[Trade]:
         """
-        处理KAMA策略信号
+        处理KAMA策略信号（兼容旧接口，但已弃用）
+
+        注意：此方法保留用于向后兼容，但存在前视偏差。
+        新代码应使用 generate_signals() + execute_pending_orders() 组合。
 
         参数:
             date: 日期
@@ -328,8 +456,15 @@ class PortfolioSimulator:
 
         return day_trades
 
-    def _execute_buy(self, symbol: str, date: str, price: float) -> Optional[Trade]:
-        """执行买入操作"""
+    def _execute_buy(self, symbol: str, date: str, price: float, use_open_price: bool = False) -> Optional[Trade]:
+        """执行买入操作
+
+        参数:
+            symbol: 标的代码
+            date: 执行日期
+            price: 基准价格（收盘价或开盘价）
+            use_open_price: 是否使用开盘价（True=T+1开盘执行，无前视偏差）
+        """
         # 计算可用于该标的的资金（等权分配给所有等待信号的标的）
         waiting_count = len(self.waiting_for_signal)
         if waiting_count == 0:
@@ -338,7 +473,7 @@ class PortfolioSimulator:
         # 每个标的分配的资金 = 可用现金 / 等待数量
         allocation = self.cash / waiting_count
 
-        # 买入价 = 收盘价 × (1 + 滑点)
+        # 买入价 = 基准价 × (1 + 滑点)
         buy_price = price * (1 + self.cost_config.slippage_rate)
 
         # 计算可买股数（考虑成本）
@@ -379,14 +514,22 @@ class PortfolioSimulator:
         self.trades.append(trade)
         return trade
 
-    def _execute_sell(self, symbol: str, date: str, price: float, trade_type: str) -> Optional[Trade]:
-        """执行卖出操作"""
+    def _execute_sell(self, symbol: str, date: str, price: float, trade_type: str, use_open_price: bool = False) -> Optional[Trade]:
+        """执行卖出操作
+
+        参数:
+            symbol: 标的代码
+            date: 执行日期
+            price: 基准价格（收盘价或开盘价）
+            trade_type: 交易类型（"signal" 或 "rotation"）
+            use_open_price: 是否使用开盘价（True=T+1开盘执行，无前视偏差）
+        """
         if symbol not in self.positions or self.positions[symbol].is_empty:
             return None
 
         pos = self.positions[symbol]
 
-        # 卖出价 = 收盘价 × (1 - 滑点)
+        # 卖出价 = 基准价 × (1 - 滑点)
         sell_price = price * (1 - self.cost_config.slippage_rate)
         amount = pos.shares * sell_price
         commission, slippage, total_cost = self.cost_config.calc_sell_cost(amount)

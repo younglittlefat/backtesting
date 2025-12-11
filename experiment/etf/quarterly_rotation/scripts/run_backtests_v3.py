@@ -237,9 +237,16 @@ class V3BacktestRunner:
         rotation_records = []
         processed_rotations = {first_rotation_date}
 
-        # 逐日回测
+        # 逐日回测（无前视偏差时序：T日收盘算信号 -> T+1日开盘执行）
         for i, date in enumerate(trading_calendar):
-            # 检查是否为调仓日（非首日）
+            current_pool = self.simulator.current_pool
+
+            # 1. 执行待执行订单（来自T-1日的信号，T日开盘执行）
+            if self.simulator.pending_orders:
+                open_prices = self.data_loader.get_prices_for_date(current_pool, date, 'adj_open')
+                executed_trades = self.simulator.execute_pending_orders(date, open_prices)
+
+            # 2. 检查是否为调仓日（非首日）- 调仓在开盘时执行
             if date in rotation_map and date not in processed_rotations:
                 new_pool = rotation_map[date]
                 prices = self.data_loader.get_prices_for_date(
@@ -256,8 +263,10 @@ class V3BacktestRunner:
                       f"新增观察{len(result['added_to_watchlist'])}只, "
                       f"保持{len(result['kept'])}只")
 
-            # 获取当日数据
-            current_pool = self.simulator.current_pool
+                # 更新current_pool
+                current_pool = self.simulator.current_pool
+
+            # 3. 获取当日收盘数据
             close_prices = self.data_loader.get_prices_for_date(current_pool, date, 'adj_close')
             kama_values = self.data_loader.get_kama_for_date(current_pool, date, self.kama_params)
             prev_closes = self.data_loader.get_prev_close(current_pool, date)
@@ -266,10 +275,10 @@ class V3BacktestRunner:
             for symbol, prev_close in prev_closes.items():
                 close_prices[f'{symbol}_prev_close'] = prev_close
 
-            # 处理策略信号
-            day_trades = self.simulator.process_signals(date, close_prices, kama_values)
+            # 4. 生成策略信号（T日收盘后计算，加入待执行队列，T+1日执行）
+            signals = self.simulator.generate_signals(date, close_prices, kama_values)
 
-            # 记录净值
+            # 5. 记录净值（使用收盘价）
             self.simulator.record_nav(date, close_prices)
 
             # 进度显示

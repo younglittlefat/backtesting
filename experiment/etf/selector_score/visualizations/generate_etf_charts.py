@@ -12,16 +12,23 @@ ETF趋势可视化工具
 用于验证趋势分数在基准期和未来期的预测能力。
 """
 
+import argparse
+import concurrent.futures
+import glob
 import os
 import sys
-import glob
 import re
+from dataclasses import dataclass
 from pathlib import Path
 from datetime import datetime
-from typing import Dict, List, Tuple, Optional
+from typing import Dict, List, Tuple, Optional, Iterable
 
 import pandas as pd
 import numpy as np
+import matplotlib
+
+# 使用无界面的后端，避免多进程下 X server 相关错误
+matplotlib.use("Agg")
 import matplotlib.pyplot as plt
 import matplotlib.dates as mdates
 from matplotlib.patches import Rectangle
@@ -39,7 +46,23 @@ LABEL_EN = True
 PROJECT_ROOT = Path(__file__).parent.parent.parent.parent.parent
 DATA_DIR = PROJECT_ROOT / "data" / "chinese_etf" / "daily" / "etf"
 SELECTOR_SCORE_DIR = PROJECT_ROOT / "experiment" / "etf" / "selector_score"
+POOLS_DIR = SELECTOR_SCORE_DIR / "pools"
 OUTPUT_DIR = SELECTOR_SCORE_DIR / "visualizations"
+
+
+@dataclass(frozen=True)
+class ChartTask:
+    ts_code: str
+    name: str
+    score: float
+    rank: int
+    base_start: str
+    base_end: str
+    future_start: str
+    future_end: str
+    output_path: Path
+    score_type: str
+    pool_dir_name: str
 
 
 def calculate_adx(df: pd.DataFrame, period: int = 14) -> pd.Series:
@@ -113,6 +136,58 @@ def calculate_adx(df: pd.DataFrame, period: int = 14) -> pd.Series:
     return pd.Series(adx, index=df.index)
 
 
+def calculate_efficiency_ratio(close: pd.Series, window: int) -> float:
+    """
+    计算Kaufman Efficiency Ratio (KER)
+    使用给定窗口，若数据不足则使用实际长度。
+    """
+    if close.empty or len(close) < 2:
+        return np.nan
+
+    effective_window = min(window, len(close) - 1)
+    if effective_window <= 0:
+        return np.nan
+
+    start_price = close.iloc[-(effective_window + 1)]
+    end_price = close.iloc[-1]
+    numerator = abs(end_price - start_price)
+    denominator = close.diff().abs().iloc[-effective_window:].sum()
+
+    if denominator == 0:
+        return np.nan
+
+    return numerator / denominator
+
+
+def calculate_trend_r2(close: pd.Series) -> Tuple[float, float, float]:
+    """
+    对对数价格进行线性回归，返回 (R^2, 斜率, 年化斜率)
+    斜率为日对数变动率(%)，年化斜率转换为年化收益率(%)
+    """
+    if close.empty or len(close) < 2:
+        return np.nan, np.nan, np.nan
+
+    close = close.dropna()
+    close = close[close > 0]
+    if len(close) < 2:
+        return np.nan, np.nan, np.nan
+
+    x = np.arange(len(close))
+    log_price = np.log(close.values)
+
+    slope, intercept = np.polyfit(x, log_price, 1)
+    fitted = slope * x + intercept
+
+    ss_tot = np.sum((log_price - log_price.mean()) ** 2)
+    ss_res = np.sum((log_price - fitted) ** 2)
+    r2 = 1 - ss_res / ss_tot if ss_tot != 0 else np.nan
+
+    slope_pct = slope * 100  # 日对数斜率近似日涨幅(%)
+    slope_annualized = (np.exp(slope * 252) - 1) * 100
+
+    return r2, slope_pct, slope_annualized
+
+
 def calculate_stats(df: pd.DataFrame) -> Dict:
     """计算关键统计指标"""
     if df.empty or len(df) < 2:
@@ -122,7 +197,13 @@ def calculate_stats(df: pd.DataFrame) -> Dict:
             'max_drawdown': 0,
             'sharpe': 0,
             'volatility': 0,
-            'trend_days': 0
+            'trend_days': 0,
+            'ker20': 0,
+            'ker60': 0,
+            'r2': 0,
+            'slope': 0,
+            'slope_annualized': 0,
+            'information_ratio': 0
         }
 
     close = df['adj_close']
@@ -157,13 +238,34 @@ def calculate_stats(df: pd.DataFrame) -> Dict:
     else:
         trend_days = 0
 
+    # KER
+    ker20 = calculate_efficiency_ratio(close, 20)
+    ker60 = calculate_efficiency_ratio(close, 60)
+
+    # R^2 / 斜率
+    r2, slope, slope_annualized = calculate_trend_r2(close)
+
+    # 信息系数（扣除2%无风险利率）
+    risk_free_rate = 0.02
+    info_ratio_denominator = (volatility / 100) if volatility else 0
+    if info_ratio_denominator > 0:
+        information_ratio = (annualized_return / 100 - risk_free_rate) / info_ratio_denominator
+    else:
+        information_ratio = 0
+
     return {
         'return': total_return,
         'annualized_return': annualized_return,
         'max_drawdown': max_drawdown,
         'sharpe': sharpe,
         'volatility': volatility,
-        'trend_days': trend_days
+        'trend_days': trend_days,
+        'ker20': ker20,
+        'ker60': ker60,
+        'r2': r2,
+        'slope': slope,
+        'slope_annualized': slope_annualized,
+        'information_ratio': information_ratio
     }
 
 
@@ -239,13 +341,15 @@ def plot_adx(ax, df: pd.DataFrame):
     adx = df['adx']
 
     # 绘制ADX线
-    ax.plot(x, adx, color='#E67E22', linewidth=1.2, label='ADX')
+    adx_line_color = '#D35400'
+    adx_fill_color = '#F5CBA7'
+    ax.plot(x, adx, color=adx_line_color, linewidth=1.3, label='ADX')
 
     # 绘制25阈值线
     ax.axhline(y=25, color='#95A5A6', linestyle='--', linewidth=0.8, label='Threshold=25')
 
     # 填充ADX>25的区域
-    ax.fill_between(x, 0, adx, where=adx > 25, color='#E67E22', alpha=0.3)
+    ax.fill_between(x, 0, adx, where=adx > 25, color=adx_fill_color, alpha=0.35)
 
     ax.set_ylim(0, max(60, adx.max() * 1.1) if not adx.isna().all() else 60)
     ax.set_ylabel('ADX', fontsize=9)
@@ -262,25 +366,42 @@ def add_stats_panel(ax, stats_base: Dict, stats_future: Dict, score: float, rank
     """添加统计指标面板"""
     ax.axis('off')
 
+    def fmt(val, signed: bool = False) -> str:
+        val = np.nan_to_num(val, nan=0.0)
+        return f"{val:+.2f}" if signed else f"{val:.2f}"
+
+    def line(label: str, value: str) -> str:
+        return f"  {label:<12}{value}\n"
+
     # 使用英文标签
-    text = f"[Selection Info]\n"
-    text += f"  Score: {score:.4f}  Rank: #{rank}\n\n"
-
-    text += f"[Base Period Stats]\n"
-    text += f"  Return: {stats_base['return']:+.2f}%\n"
-    text += f"  Annual: {stats_base['annualized_return']:+.2f}%\n"
-    text += f"  MaxDD: {stats_base['max_drawdown']:.2f}%\n"
-    text += f"  Sharpe: {stats_base['sharpe']:.2f}\n"
-    text += f"  Volatility: {stats_base['volatility']:.1f}%\n"
-    text += f"  Trend Days: {stats_base['trend_days']}\n\n"
-
-    text += f"[Future Period Stats]\n"
-    text += f"  Return: {stats_future['return']:+.2f}%\n"
-    text += f"  Annual: {stats_future['annualized_return']:+.2f}%\n"
-    text += f"  MaxDD: {stats_future['max_drawdown']:.2f}%\n"
-    text += f"  Sharpe: {stats_future['sharpe']:.2f}\n"
-    text += f"  Volatility: {stats_future['volatility']:.1f}%\n"
-    text += f"  Trend Days: {stats_future['trend_days']}"
+    text = "[Selection Info]\n"
+    text += line("Score:", f"{score:.4f}    Rank: #{rank}")
+    text += "\n[Base Period Stats]\n"
+    text += line("Return:", f"{fmt(stats_base['return'], signed=True)}%")
+    text += line("Annual:", f"{fmt(stats_base['annualized_return'], signed=True)}%")
+    text += line("MaxDD:", f"{fmt(stats_base['max_drawdown'])}%")
+    text += line("Volatility:", f"{fmt(stats_base['volatility'])}%")
+    text += line("Sharpe:", f"{fmt(stats_base['sharpe'])}")
+    text += line("Info:", f"{fmt(stats_base['information_ratio'])}")
+    text += line("KER20/60:", f"{fmt(stats_base['ker20'])} / {fmt(stats_base['ker60'])}")
+    text += line(
+        "R2/Slope:",
+        f"{fmt(stats_base['r2'])}  |  {fmt(stats_base['slope'])}%  |  {fmt(stats_base['slope_annualized'])}%"
+    )
+    text += line("Trend Days:", f"{stats_base['trend_days']}")
+    text += "\n[Future Period Stats]\n"
+    text += line("Return:", f"{fmt(stats_future['return'], signed=True)}%")
+    text += line("Annual:", f"{fmt(stats_future['annualized_return'], signed=True)}%")
+    text += line("MaxDD:", f"{fmt(stats_future['max_drawdown'])}%")
+    text += line("Volatility:", f"{fmt(stats_future['volatility'])}%")
+    text += line("Sharpe:", f"{fmt(stats_future['sharpe'])}")
+    text += line("Info:", f"{fmt(stats_future['information_ratio'])}")
+    text += line("KER20/60:", f"{fmt(stats_future['ker20'])} / {fmt(stats_future['ker60'])}")
+    text += line(
+        "R2/Slope:",
+        f"{fmt(stats_future['r2'])}  |  {fmt(stats_future['slope'])}%  |  {fmt(stats_future['slope_annualized'])}%"
+    )
+    text += line("Trend Days:", f"{stats_future['trend_days']}")
 
     ax.text(0.05, 0.95, text, transform=ax.transAxes, fontsize=8,
             verticalalignment='top', fontfamily='monospace',
@@ -297,14 +418,16 @@ def generate_etf_chart(
     future_start: str,
     future_end: str,
     output_path: Path,
-    score_type: str
+    score_type: str,
+    verbose: bool = True
 ):
     """生成单个ETF的完整图表"""
 
     # 读取数据
     data_file = DATA_DIR / f"{ts_code}.csv"
     if not data_file.exists():
-        print(f"  [SKIP] 数据文件不存在: {ts_code}")
+        if verbose:
+            print(f"  [SKIP] 数据文件不存在: {ts_code}")
         return False
 
     df = pd.read_csv(data_file)
@@ -324,7 +447,8 @@ def generate_etf_chart(
     df_future = df[(df.index >= future_start_dt) & (df.index <= future_end_dt)].copy()
 
     if df_base.empty and df_future.empty:
-        print(f"  [SKIP] 无有效数据: {ts_code}")
+        if verbose:
+            print(f"  [SKIP] 无有效数据: {ts_code}")
         return False
 
     # 计算统计指标
@@ -335,7 +459,7 @@ def generate_etf_chart(
     fig = plt.figure(figsize=(19.2, 10.8))  # 1920x1080
 
     # 使用GridSpec布局
-    gs = gridspec.GridSpec(4, 3, height_ratios=[3, 1, 3, 1], width_ratios=[1, 1, 0.4],
+    gs = gridspec.GridSpec(4, 3, height_ratios=[3, 1, 3, 1], width_ratios=[1, 1, 0.45],
                            hspace=0.3, wspace=0.15)
 
     # 基准期K线
@@ -404,71 +528,144 @@ def get_future_period(base_end_year: str) -> Tuple[str, str]:
     return future_start, future_end
 
 
-def process_pool_csv(csv_path: Path, pool_dir_name: str):
-    """处理单个池子CSV文件，为Top20生成图表"""
+def list_scoring_dirs(selected: Optional[List[str]] = None) -> List[Path]:
+    """列出需要处理的 scoring 目录"""
+    if not POOLS_DIR.exists():
+        return []
+    dirs = sorted(
+        [d for d in POOLS_DIR.iterdir() if d.is_dir() and d.name.startswith("scoring_")]
+    )
+    if selected:
+        allowed = set(selected)
+        dirs = [d for d in dirs if d.name in allowed]
+    return dirs
 
-    score_type, start_year, end_year = parse_pool_info(csv_path)
-    if not score_type:
-        print(f"  [SKIP] 无法解析文件名: {csv_path.name}")
-        return
 
-    # 读取CSV
+def load_top_n(csv_path: Path, top_n: int) -> pd.DataFrame:
+    """读取CSV并返回前top_n行"""
     df = pd.read_csv(csv_path)
-
-    # 取前20行（按CSV原顺序）
-    top20 = df.head(20)
-
-    if top20.empty:
-        print(f"  [SKIP] CSV为空: {csv_path.name}")
-        return
-
-    # 确定时间范围
-    base_start = f"{start_year}0101"
-    base_end = f"{end_year}1231"
-    future_start_year, future_end_year = get_future_period(end_year)
-    future_start = f"{future_start_year}0101"
-    future_end = f"{future_end_year}1231"
-
-    # 创建输出目录
-    output_subdir = OUTPUT_DIR / pool_dir_name / score_type
-    output_subdir.mkdir(parents=True, exist_ok=True)
-
-    print(f"\n处理: {score_type} ({start_year}-{end_year} -> {future_start_year}-{future_end_year})")
-    print(f"  输出目录: {output_subdir}")
-
-    success_count = 0
-    for idx, row in top20.iterrows():
-        ts_code = row['ts_code']
-        name = row['name']
-        score = row['final_score']
-        rank = idx + 1
-
-        output_path = output_subdir / f"rank{rank:02d}_{ts_code.replace('.', '_')}.png"
-
-        print(f"  [{rank:02d}/20] {ts_code} {name}...", end=" ")
-
-        if generate_etf_chart(
-            ts_code=ts_code,
-            name=name,
-            score=score,
-            rank=rank,
-            base_start=base_start,
-            base_end=base_end,
-            future_start=future_start,
-            future_end=future_end,
-            output_path=output_path,
-            score_type=score_type
-        ):
-            print("OK")
-            success_count += 1
-        else:
-            print("SKIPPED")
-
-    print(f"  完成: {success_count}/20")
-    return success_count
+    return df.head(top_n)
 
 
-def generate_summary_scatter(pool_dir: Path, pool_dir_name: str):
+def build_tasks_for_scoring_dir(
+    scoring_dir: Path,
+    top_n: int,
+    score_type_filter: Optional[List[str]] = None,
+    ts_code_filter: Optional[List[str]] = None,
+) -> List[ChartTask]:
+    """从指定 scoring 目录构建任务列表"""
+    csv_files = list(scoring_dir.glob("single_*_pool_*.csv"))
+    csv_files = [f for f in csv_files if "_all_scores" not in f.name]
+
+    if score_type_filter:
+        csv_files = [
+            f for f in csv_files
+            if any(st in f.name for st in score_type_filter)
+        ]
+
+    tasks: List[ChartTask] = []
+    for csv_path in csv_files:
+        score_type, start_year, end_year = parse_pool_info(csv_path)
+        if not score_type:
+            continue
+
+        df = load_top_n(csv_path, top_n=top_n)
+        if df.empty:
+            continue
+
+        base_start = f"{start_year}0101"
+        base_end = f"{end_year}1231"
+        future_start_year, future_end_year = get_future_period(end_year)
+        future_start = f"{future_start_year}0101"
+        future_end = f"{future_end_year}1231"
+
+        output_subdir = OUTPUT_DIR / scoring_dir.name / score_type
+
+        for idx, row in df.iterrows():
+            ts_code = row['ts_code']
+            if ts_code_filter and ts_code not in ts_code_filter:
+                continue
+            name = row.get('name', '')
+            score = row.get('final_score', np.nan)
+            rank = idx + 1
+
+            output_path = output_subdir / f"rank{rank:02d}_{ts_code.replace('.', '_')}.png"
+
+            tasks.append(
+                ChartTask(
+                    ts_code=ts_code,
+                    name=name,
+                    score=score,
+                    rank=rank,
+                    base_start=base_start,
+                    base_end=base_end,
+                    future_start=future_start,
+                    future_end=future_end,
+                    output_path=output_path,
+                    score_type=score_type,
+                    pool_dir_name=scoring_dir.name,
+                )
+            )
+
+    return tasks
+
+
+def run_chart_task(task: ChartTask) -> Tuple[bool, Optional[str]]:
+    """子进程执行单个任务"""
+    try:
+        ok = generate_etf_chart(
+            ts_code=task.ts_code,
+            name=task.name,
+            score=task.score,
+            rank=task.rank,
+            base_start=task.base_start,
+            base_end=task.base_end,
+            future_start=task.future_start,
+            future_end=task.future_end,
+            output_path=task.output_path,
+            score_type=task.score_type,
+            verbose=False
+        )
+        return ok, None if ok else "generate_etf_chart returned False"
+    except Exception as exc:  # pragma: no cover - defensive
+        return False, repr(exc)
+
+
+def run_tasks_concurrently(tasks: List[ChartTask], max_workers: int) -> Tuple[int, List[Tuple[ChartTask, str]]]:
+    """并发执行任务并返回成功数和失败列表"""
+    if not tasks:
+        return 0, []
+
+    total = len(tasks)
+    print(f"  开始并发生成 {total} 张图，进程数: {max_workers}")
+
+    successes = 0
+    failures: List[Tuple[ChartTask, str]] = []
+
+    with concurrent.futures.ProcessPoolExecutor(max_workers=max_workers) as executor:
+        future_to_task = {executor.submit(run_chart_task, task): task for task in tasks}
+        for idx, future in enumerate(concurrent.futures.as_completed(future_to_task), 1):
+            task = future_to_task[future]
+            ok = False
+            msg: Optional[str] = None
+            try:
+                ok, msg = future.result()
+            except Exception as exc:  # pragma: no cover - defensive
+                ok = False
+                msg = repr(exc)
+
+            if ok:
+                successes += 1
+            else:
+                failures.append((task, msg or "Unknown error"))
+
+            if idx % 10 == 0 or not ok or idx == total:
+                print(f"  Progress: {idx}/{total} (ok: {successes}, fail: {len(failures)})")
+
+    return successes, failures
+
+
+def generate_summary_scatter(pool_dir: Path, pool_dir_name: str, top_n: int, score_type_filter: Optional[List[str]] = None):
     """生成池子级别的汇总散点图（分数 vs 未来收益）"""
 
     print(f"\n生成汇总分析图: {pool_dir_name}")
@@ -476,6 +673,11 @@ def generate_summary_scatter(pool_dir: Path, pool_dir_name: str):
     # 收集所有池子的数据
     csv_files = list(pool_dir.glob("single_*_pool_*.csv"))
     csv_files = [f for f in csv_files if "_all_scores" not in f.name]
+    if score_type_filter:
+        csv_files = [
+            f for f in csv_files
+            if any(st in f.name for st in score_type_filter)
+        ]
 
     if not csv_files:
         print("  [SKIP] 无有效CSV文件")
@@ -488,7 +690,7 @@ def generate_summary_scatter(pool_dir: Path, pool_dir_name: str):
         if not score_type:
             continue
 
-        df = pd.read_csv(csv_path).head(20)
+        df = pd.read_csv(csv_path).head(top_n)
         future_start_year, future_end_year = get_future_period(end_year)
 
         for idx, row in df.iterrows():
@@ -584,41 +786,62 @@ def generate_summary_scatter(pool_dir: Path, pool_dir_name: str):
     print(f"  保存: {output_path}")
 
 
+def parse_args() -> argparse.Namespace:
+    parser = argparse.ArgumentParser(description="Generate ETF charts concurrently.")
+    parser.add_argument("--max-workers", type=int, default=max(1, min(4, os.cpu_count() or 1)),
+                        help="并发进程数（默认: min(4, CPU核数))")
+    parser.add_argument("--top-n", type=int, default=20, help="每个池子取前N名 (默认: 20)")
+    parser.add_argument("--scoring-dir", action="append", help="仅处理指定 scoring 目录名（可多次传入）")
+    parser.add_argument("--score-type", action="append", help="仅处理匹配的 score_type（子串匹配，可多次）")
+    parser.add_argument("--ts-code", action="append", help="仅处理指定 ts_code（可多次传入）")
+    parser.add_argument("--skip-summary", action="store_true", help="跳过汇总散点图")
+    parser.add_argument("--dry-run", action="store_true", help="仅打印将要处理的任务，不生成图")
+    return parser.parse_args()
+
+
 def main():
     """主函数"""
+    args = parse_args()
+
     print("=" * 60)
-    print("ETF趋势可视化工具")
+    print("ETF趋势可视化工具（并发版）")
     print("=" * 60)
 
-    # 处理 pool 目录 (2019-2021/2022 基准期)
-    pool_dir = SELECTOR_SCORE_DIR / "pool"
-    if pool_dir.exists():
+    scoring_dirs = list_scoring_dirs(args.scoring_dir)
+    if not scoring_dirs:
+        print("未找到 scoring_* 目录，请检查输入路径。")
+        return
+
+    for scoring_dir in scoring_dirs:
+        pool_dir_name = scoring_dir.name
         print(f"\n\n{'='*60}")
-        print(f"处理目录: pool")
+        print(f"处理目录: {pool_dir_name}")
         print(f"{'='*60}")
 
-        csv_files = list(pool_dir.glob("single_*_pool_*.csv"))
-        csv_files = [f for f in csv_files if "_all_scores" not in f.name]
+        tasks = build_tasks_for_scoring_dir(
+            scoring_dir=scoring_dir,
+            top_n=args.top_n,
+            score_type_filter=args.score_type,
+            ts_code_filter=args.ts_code,
+        )
 
-        for csv_path in csv_files:
-            process_pool_csv(csv_path, "pool")
+        print(f"  构建任务: {len(tasks)} 条")
+        if args.dry_run:
+            for t in tasks[:5]:
+                print(f"    - {t.score_type} #{t.rank} {t.ts_code} -> {t.output_path}")
+            if len(tasks) > 5:
+                print(f"    ... 省略 {len(tasks) - 5} 条")
+            continue
 
-        generate_summary_scatter(pool_dir, "pool")
+        successes, failures = run_tasks_concurrently(tasks, max_workers=args.max_workers)
+        print(f"  完成: {successes}/{len(tasks)}，失败: {len(failures)}")
+        if failures:
+            print("  失败列表（前5条）：")
+            for task, msg in failures[:5]:
+                print(f"    - {task.score_type} #{task.rank} {task.ts_code}: {msg}")
 
-    # 处理 pool_2022_2023 目录
-    pool_2022_2023_dir = SELECTOR_SCORE_DIR / "pool_2022_2023"
-    if pool_2022_2023_dir.exists():
-        print(f"\n\n{'='*60}")
-        print(f"处理目录: pool_2022_2023")
-        print(f"{'='*60}")
-
-        csv_files = list(pool_2022_2023_dir.glob("single_*_pool_*.csv"))
-        csv_files = [f for f in csv_files if "_all_scores" not in f.name]
-
-        for csv_path in csv_files:
-            process_pool_csv(csv_path, "pool_2022_2023")
-
-        generate_summary_scatter(pool_2022_2023_dir, "pool_2022_2023")
+        if not args.skip_summary:
+            generate_summary_scatter(scoring_dir, pool_dir_name, top_n=args.top_n, score_type_filter=args.score_type)
 
     print(f"\n\n{'='*60}")
     print("全部完成!")
