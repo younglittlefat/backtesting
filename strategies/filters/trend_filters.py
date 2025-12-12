@@ -143,6 +143,17 @@ class ADXFilter(BaseFilter):
         Returns:
             bool: True表示信号通过过滤
         """
+        # 优先使用策略预计算的 ADX 指标（通过 self.I() 注册）
+        # 这是正确的实现方式，避免动态计算时的 pandas 索引问题
+        if hasattr(strategy, 'adx') and strategy.adx is not None:
+            if len(strategy.adx) == 0:
+                return False
+            current_adx = strategy.adx[-1]
+            if pd.isna(current_adx):
+                return False
+            return current_adx > self.threshold
+
+        # 后备方案：动态计算（但在回测中可能无法正常工作）
         # 获取价格数据
         if not hasattr(strategy, 'data'):
             return True

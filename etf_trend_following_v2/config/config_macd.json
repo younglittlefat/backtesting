@@ -1,0 +1,75 @@
+{
+  "strategy": {
+    "type": "macd",
+    "kama": {
+      "period": 20,
+      "fast_sc": 2,
+      "slow_sc": 30,
+      "lookback": 3
+    },
+    "macd": {
+      "fast_period": 12,
+      "slow_period": 26,
+      "signal_period": 9
+    }
+  },
+  "scoring": {
+    "lookback_periods": [20, 60, 120],
+    "weights": [0.4, 0.3, 0.3],
+    "min_data_points": 120
+  },
+  "buffer": {
+    "buy_top_n": 10,
+    "hold_until_rank": 15
+  },
+  "clustering": {
+    "enabled": true,
+    "correlation_threshold": 0.5,
+    "correlation_window": 60,
+    "max_per_cluster": 2,
+    "method": "hierarchical",
+    "linkage": "average"
+  },
+  "position_sizing": {
+    "method": "inverse_volatility",
+    "target_risk_per_position": 0.005,
+    "max_position_size": 0.20,
+    "max_total_exposure": 1.0,
+    "atr_period": 14,
+    "min_weight": 0.01
+  },
+  "risk": {
+    "atr_period": 14,
+    "atr_multiplier": 3.0,
+    "time_stop_days": 20,
+    "circuit_breaker_threshold": 0.05,
+    "max_drawdown_threshold": 0.20
+  },
+  "trading": {
+    "commission_rate": 0.0003,
+    "min_commission": 5.0,
+    "slippage_rate": 0.001,
+    "stamptax_rate": 0.0
+  },
+  "backtest": {
+    "initial_capital": 1000000.0,
+    "start_date": "2023-11-01",
+    "end_date": "2025-11-30",
+    "rebalance_frequency": "daily",
+    "verbose": true
+  },
+  "data": {
+    "data_dir": "../data/chinese_etf/daily",
+    "etf_pool_file": "../results/trend_etf_pool.csv",
+    "price_field": "close",
+    "use_adjusted": true
+  },
+  "output": {
+    "results_dir": "results",
+    "signals_dir": "signals",
+    "positions_dir": "positions",
+    "save_trades": true,
+    "save_daily_positions": true,
+    "save_signals": true
+  }
+}

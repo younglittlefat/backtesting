@@ -1,0 +1,160 @@
+# Risk Module Quick Reference
+
+## Quick Start
+
+```python
+from risk import RiskManager
+
+# Initialize
+config = {'atr_multiplier': 3.0, 'time_stop_days': 20}
+rm = RiskManager(config)
+
+# Check single position
+result = rm.check_position_risk(symbol, df, position)
+
+# Check portfolio
+result = rm.check_portfolio_risk(data_dict, positions, market_df, equity)
+```
+
+## Core Functions
+
+### ATR Calculation
+```python
+calculate_atr(df, period=14, method='sma')  # or 'ema'
+```
+
+### Stop Line (Chandelier Exit)
+```python
+calculate_stop_line(
+    df, entry_date, entry_price,
+    atr_multiplier=3.0, atr_period=14
+)
+# Returns: DataFrame with stop_line, highest_since_entry, atr
+```
+
+### Check ATR Stop
+```python
+check_stop_loss(df, entry_date, entry_price, atr_multiplier=3.0)
+# Returns: {'triggered': bool, 'trigger_date': str, 'days_held': int, ...}
+```
+
+### Check Time Stop
+```python
+check_time_stop(
+    df, entry_date, entry_price,
+    max_hold_days=20, min_profit_atr=1.0
+)
+# Returns: {'triggered': bool, 'days_held': int, 'profit_atr': float, ...}
+```
+
+### Circuit Breaker
+```python
+check_circuit_breaker(
+    market_df=market_df,
+    account_equity=equity_series,
+    market_drop_threshold=-0.05,
+    account_drawdown_threshold=-0.03
+)
+# Returns: {'triggered': bool, 'reason': str, 'recommendations': list}
+```
+
+### Liquidity Check
+```python
+check_liquidity(df, min_amount=50_000_000, max_spread_pct=0.005)
+# Returns: {'sufficient': bool, 'avg_amount': float, 'reason': str}
+```
+
+### T+1 Constraint
+```python
+check_t_plus_1(entry_date, check_date, trading_calendar=None)
+# Returns: bool (True if can sell)
+```
+
+## Common Patterns
+
+### Daily Position Monitoring
+```python
+for symbol, position in positions.items():
+    risk = rm.check_position_risk(symbol, data[symbol], position)
+
+    if 'sell_atr_stop' in risk['actions']:
+        execute_sell(symbol, 'atr_stop')
+    elif 'sell_time_stop' in risk['actions']:
+        execute_sell(symbol, 'time_stop')
+```
+
+### Portfolio Protection
+```python
+portfolio_risk = rm.check_portfolio_risk(data, positions, market, equity)
+
+if portfolio_risk['circuit_breaker']['triggered']:
+    allow_new_positions = False
+
+if portfolio_risk['summary']['atr_stops_triggered'] > 3:
+    reduce_overall_exposure()
+```
+
+## Return Structures
+
+### Position Risk Result
+```python
+{
+    'symbol': str,
+    'atr_stop': {...},
+    'time_stop': {...},
+    'liquidity': {...},
+    'can_sell_today': bool,
+    'actions': ['hold' | 'sell_atr_stop' | 'sell_time_stop' | ...]
+}
+```
+
+### Portfolio Risk Result
+```python
+{
+    'circuit_breaker': {...},
+    'position_risks': {symbol: {...}, ...},
+    'portfolio_actions': [...],
+    'summary': {
+        'total_positions': int,
+        'atr_stops_triggered': int,
+        'time_stops_triggered': int,
+        'circuit_breaker_active': bool
+    }
+}
+```
+
+## Default Parameters
+
+| Parameter | Default | Notes |
+|-----------|---------|-------|
+| ATR Period | 14 | Wilder's original |
+| ATR Multiplier | 3.0 | Chandelier Exit standard |
+| Time Stop Days | 20 | ~1 month trading |
+| Min Profit ATR | 1.0 | 1× ATR minimum |
+| Market Drop | -5% | Daily drop threshold |
+| Account Drawdown | -3% | From peak |
+| Min Liquidity | 50M yuan | Daily trading amount |
+
+## Tips
+
+1. **ATR Method**: Use SMA for simplicity, EMA for responsiveness
+2. **Tight Stops**: Use 2× ATR for aggressive, 4× for conservative
+3. **Time Stops**: Adjust based on strategy holding period
+4. **Circuit Breaker**: Test with historical market crashes
+5. **T+1**: Always use trading calendar in production
+
+## Error Handling
+
+All functions raise `ValueError` for invalid inputs:
+- Missing required DataFrame columns
+- Invalid date ranges
+- Empty data
+- Parameter out of range
+
+Handle with try-except:
+```python
+try:
+    result = check_stop_loss(df, entry_date, entry_price)
+except ValueError as e:
+    logger.error(f"Risk check failed: {e}")
+```

@@ -1,0 +1,213 @@
+# IO Utilities - Quick Reference
+
+One-page reference for the io_utils module.
+
+## Import
+
+```python
+from io_utils import *
+```
+
+## Common Usage Patterns
+
+### 1. Setup Logging (Do This First!)
+
+```python
+logger = setup_logging(log_dir='./logs', log_level='INFO')
+```
+
+### 2. Daily Workflow: Signals → Orders → Positions
+
+```python
+# Generate and save signals
+signals = {'159994.SZ': 1, '159941.SZ': -1}
+save_signals(signals, 'signals.json', '2025-12-11', format='json')
+
+# Save trade orders
+orders = [{'action': 'BUY', 'symbol': '159994.SZ', 'shares': 100, ...}]
+save_trade_orders(orders, 'orders.csv', '2025-12-11')
+
+# Save position snapshot
+positions = {'159994.SZ': {'shares': 100, 'entry_price': 1.658, ...}}
+save_snapshot(positions, './snapshots', '2025-12-11', prefix='portfolio')
+```
+
+### 3. Load Latest State
+
+```python
+# Load latest positions from snapshot directory
+positions = load_latest_positions('./snapshots', prefix='portfolio')
+
+# Load specific signal file
+signals = load_signals('signals_20251211.json')
+
+# Load trade orders
+orders = load_trade_orders('orders_20251211.csv')
+```
+
+### 4. Generate Performance Report
+
+```python
+stats = {'total_return': 0.35, 'sharpe_ratio': 1.69, ...}
+equity_df = pd.DataFrame({'date': [...], 'equity': [...]})
+trades_df = pd.DataFrame({'date': [...], 'symbol': [...], 'action': [...]})
+
+save_performance_report(stats, equity_df, trades_df, './results')
+print(generate_summary_text(stats))
+```
+
+### 5. Validate Data Before Processing
+
+```python
+# Validate OHLCV data
+errors = validate_ohlcv_df(df, symbol='159994.SZ')
+if errors:
+    for error in errors:
+        logger.error(error)
+    raise ValueError("Invalid OHLCV data")
+```
+
+## Quick Function Reference
+
+| Task | Function | Example |
+|------|----------|---------|
+| Setup logging | `setup_logging()` | `logger = setup_logging(log_dir='./logs')` |
+| Save signals (JSON) | `save_signals()` | `save_signals(signals, 'sig.json', '2025-12-11', 'json')` |
+| Load signals | `load_signals()` | `signals = load_signals('sig.json')` |
+| Save positions | `save_positions()` | `save_positions(pos, 'pos.json', '2025-12-11')` |
+| Load positions | `load_positions()` | `pos = load_positions('pos.json')` |
+| Save snapshot | `save_snapshot()` | `save_snapshot(pos, './snap', '2025-12-11', 'port')` |
+| Load latest | `load_latest_positions()` | `pos = load_latest_positions('./snap', 'port')` |
+| Save orders | `save_trade_orders()` | `save_trade_orders(orders, 'ord.csv', '2025-12-11')` |
+| Load orders | `load_trade_orders()` | `orders = load_trade_orders('ord.csv')` |
+| Save report | `save_performance_report()` | `save_performance_report(stats, eq, trades, './res')` |
+| Summary text | `generate_summary_text()` | `txt = generate_summary_text(stats)` |
+| Validate OHLCV | `validate_ohlcv_df()` | `errors = validate_ohlcv_df(df, 'SYM')` |
+| Validate paths | `validate_config_paths()` | `errors = validate_config_paths(config)` |
+| Create dir | `ensure_dir()` | `ensure_dir('./results')` |
+| Dated filename | `get_dated_filename()` | `fn = get_dated_filename('port', '2025-12-11', 'json')` |
+| Find latest | `find_latest_snapshot()` | `path = find_latest_snapshot('./snap', 'port')` |
+
+## Data Structures
+
+### Signals Dictionary
+```python
+signals = {
+    'symbol': signal_value  # 1=buy, -1=sell, 0=hold
+}
+```
+
+### Positions Dictionary
+```python
+positions = {
+    'symbol': {
+        'shares': int,
+        'entry_price': float,
+        'entry_date': str,  # 'YYYY-MM-DD'
+        'cost': float
+    }
+}
+```
+
+### Trade Orders List
+```python
+orders = [{
+    'action': str,      # 'BUY' or 'SELL'
+    'symbol': str,
+    'shares': int,
+    'price': float,
+    'amount': float,
+    'commission': float,
+    'reason': str
+}]
+```
+
+### Statistics Dictionary
+```python
+statistics = {
+    'total_return': float,
+    'annual_return': float,
+    'sharpe_ratio': float,
+    'max_drawdown': float,
+    'win_rate': float,
+    'num_trades': int,
+    'avg_trade_return': float,
+    'best_trade': float,
+    'worst_trade': float,
+    'start_date': str,
+    'end_date': str,
+    'duration_days': int
+}
+```
+
+## File Naming Conventions
+
+| Type | Format | Example |
+|------|--------|---------|
+| Signal CSV | `signals_YYYYMMDD.csv` | `signals_20251211.csv` |
+| Signal JSON | `signals_YYYYMMDD.json` | `signals_20251211.json` |
+| Positions | `positions_YYYYMMDD.json` | `positions_20251211.json` |
+| Snapshot | `{prefix}_YYYYMMDD.json` | `portfolio_20251211.json` |
+| Orders | `orders_YYYYMMDD.csv` | `orders_20251211.csv` |
+| Statistics | `statistics.json` | (in report dir) |
+| Equity | `equity_curve.csv` | (in report dir) |
+| Trades | `trade_log.csv` | (in report dir) |
+| Logs | `etf_trend_following.log.YYYYMMDD` | Auto-rotated |
+
+## Common Pitfalls
+
+❌ **Don't**: Use relative paths in WSL environment
+✅ **Do**: Use absolute paths or ensure working directory is correct
+
+❌ **Don't**: Skip data validation
+✅ **Do**: Always validate OHLCV data before processing
+
+❌ **Don't**: Hardcode log levels
+✅ **Do**: Configure via config file or environment variables
+
+❌ **Don't**: Forget to check validation errors
+✅ **Do**: Handle error lists explicitly
+
+## Error Handling Template
+
+```python
+from io_utils import *
+
+# Setup logging first
+logger = setup_logging(log_dir='./logs', log_level='INFO')
+
+try:
+    # Load data
+    positions = load_latest_positions('./snapshots', 'portfolio')
+
+    # Validate
+    for symbol, data in positions.items():
+        if 'shares' not in data:
+            raise ValueError(f"Missing shares for {symbol}")
+
+    # Process...
+
+except FileNotFoundError as e:
+    logger.error(f"File not found: {e}")
+    raise
+except ValueError as e:
+    logger.error(f"Validation error: {e}")
+    raise
+except Exception as e:
+    logger.exception(f"Unexpected error: {e}")
+    raise
+```
+
+## Testing
+
+```bash
+# Run tests
+pytest etf_trend_following_v2/tests/test_io_utils.py -v
+
+# Run examples
+python etf_trend_following_v2/examples/io_utils_example.py
+```
+
+---
+
+**Tip**: Always configure logging first, then validate inputs before processing!

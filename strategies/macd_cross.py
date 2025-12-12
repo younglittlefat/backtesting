@@ -309,7 +309,52 @@ class MacdCross(Strategy):
         self.signal_line = signal_line
         self.histogram = histogram
 
-        # Phase 2: 初始化过滤器
+        # Phase 2: 预计算 ADX 指标（使用 self.I() 确保正确的渐进式数据访问）
+        # 修复：原实现在 filter_signal() 中动态计算 ADX，由于 pandas 索引问题导致 NaN
+        self.adx = None
+        if self.enable_adx_filter:
+            def _calculate_adx(high, low, close, period):
+                """计算 ADX 指标"""
+                high = pd.Series(high)
+                low = pd.Series(low)
+                close = pd.Series(close)
+
+                # 计算+DM和-DM
+                high_diff = high.diff()
+                low_diff = -low.diff()
+
+                plus_dm = np.where((high_diff > low_diff) & (high_diff > 0), high_diff, 0)
+                minus_dm = np.where((low_diff > high_diff) & (low_diff > 0), low_diff, 0)
+
+                # 计算TR (True Range)
+                tr1 = high - low
+                tr2 = abs(high - close.shift(1))
+                tr3 = abs(low - close.shift(1))
+                tr = pd.DataFrame({'tr1': tr1, 'tr2': tr2, 'tr3': tr3}).max(axis=1)
+
+                # 平滑+DM, -DM和TR
+                atr = tr.rolling(window=period).mean()
+                plus_di = 100 * pd.Series(plus_dm).rolling(window=period).mean() / atr
+                minus_di = 100 * pd.Series(minus_dm).rolling(window=period).mean() / atr
+
+                # 计算DX
+                dx = 100 * abs(plus_di - minus_di) / (plus_di + minus_di)
+
+                # 计算ADX (DX的移动平均)
+                adx = dx.rolling(window=period).mean()
+
+                return adx.values
+
+            self.adx = self.I(
+                _calculate_adx,
+                self.data.High,
+                self.data.Low,
+                self.data.Close,
+                self.adx_period,
+                name='ADX'
+            )
+
+        # Phase 2: 初始化过滤器（ADX 过滤器将使用预计算的 self.adx）
         self.adx_filter = ADXFilter(
             enabled=self.enable_adx_filter,
             period=self.adx_period,
