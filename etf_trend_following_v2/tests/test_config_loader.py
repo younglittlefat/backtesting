@@ -24,6 +24,7 @@ from config_loader import (
     PositionSizingConfig,
     ExecutionConfig,
     IOConfig,
+    RotationConfig,
     load_config,
     validate_config,
     save_config,
@@ -115,6 +116,49 @@ class TestUniverseConfig:
         )
         errors = config.validate()
         assert any("min_avg_volume" in e for e in errors)
+
+
+class TestRotationConfig:
+    """Test RotationConfig validation and Config interplay"""
+
+    def test_rotation_requires_schedule_when_enabled(self):
+        config = RotationConfig(enabled=True, schedule_path=None)
+        errors = config.validate()
+        assert any("schedule_path" in e for e in errors)
+
+    def test_rotation_allows_missing_universe_pool(self):
+        cfg = Config(
+            env=EnvConfig(root_dir="/test"),
+            modes=ModesConfig(run_mode="backtest", lookback_days=10),
+            universe=UniverseConfig(pool_file=None, pool_list=None),
+            rotation=RotationConfig(enabled=True, schedule_path="results/rotation_schedules/rotation_5d.json"),
+            strategies=[KAMAStrategyConfig()],
+            scoring=ScoringConfig(),
+            clustering=ClusteringConfig(),
+            risk=RiskConfig(),
+            position_sizing=PositionSizingConfig(),
+            execution=ExecutionConfig(),
+            io=IOConfig(),
+        )
+        errors = cfg.validate()
+        assert not any("pool_file" in e for e in errors)
+
+    def test_rotation_rejects_static_pool_when_enabled(self):
+        cfg = Config(
+            env=EnvConfig(root_dir="/test"),
+            modes=ModesConfig(run_mode="backtest", lookback_days=10),
+            universe=UniverseConfig(pool_list=["AAA"]),
+            rotation=RotationConfig(enabled=True, schedule_path="results/rotation_schedules/rotation_5d.json"),
+            strategies=[KAMAStrategyConfig()],
+            scoring=ScoringConfig(),
+            clustering=ClusteringConfig(),
+            risk=RiskConfig(),
+            position_sizing=PositionSizingConfig(),
+            execution=ExecutionConfig(),
+            io=IOConfig(),
+        )
+        errors = cfg.validate()
+        assert any("rotation.enabled is true" in e for e in errors)
 
 
 class TestMACDStrategyConfig:

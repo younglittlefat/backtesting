@@ -1,0 +1,18 @@
+{
+  "metadata": {
+    "rotation_period": 3,
+    "pool_size": 3,
+    "start_date": "2023-01-01",
+    "end_date": "2023-01-10",
+    "total_rotations": 3,
+    "generated_at": "2023-01-01 00:00:00"
+  },
+  "schedule": {
+    "2023-01-01": ["TEST_TREND_1.SH", "TEST_TREND_2.SH", "TEST_CHOPPY_1.SH"],
+    "2023-01-04": ["TEST_TREND_2.SH", "TEST_TREND_3.SH", "TEST_CHOPPY_1.SH"],
+    "2023-01-07": ["TEST_TREND_3.SH", "TEST_CHOPPY_2.SH", "TEST_TREND_1.SH"]
+  },
+  "statistics": {
+    "total_rotations": 3
+  }
+}

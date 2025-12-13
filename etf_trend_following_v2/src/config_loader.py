@@ -88,10 +88,10 @@ class UniverseConfig:
     blacklist: List[str] = field(default_factory=list)
     handle_delisted: Literal["exclude", "keep_until_delist", "warn"] = "exclude"
 
-    def validate(self) -> List[str]:
+    def validate(self, require_pool: bool = True) -> List[str]:
         """Validate universe configuration"""
         errors = []
-        if not self.pool_file and not self.pool_list:
+        if require_pool and not self.pool_file and not self.pool_list:
             errors.append("universe.pool_file or universe.pool_list must be specified")
 
         if self.pool_file and self.pool_list:
@@ -106,6 +106,29 @@ class UniverseConfig:
         if not 0 <= self.liquidity_threshold.get("min_turnover_rate", 0) <= 1:
             errors.append("universe.liquidity_threshold.min_turnover_rate must be in [0, 1]")
 
+        return errors
+
+
+# ============================================================================
+# Rotation Configuration
+# ============================================================================
+
+@dataclass
+class RotationConfig:
+    """Dynamic rotation schedule configuration"""
+    enabled: bool = False
+    schedule_path: Optional[str] = None
+    period_days: int = 5
+    pool_size: int = 20
+
+    def validate(self) -> List[str]:
+        errors: List[str] = []
+        if self.enabled and not self.schedule_path:
+            errors.append("rotation.schedule_path is required when rotation.enabled is true")
+        if self.period_days is not None and self.period_days < 1:
+            errors.append(f"rotation.period_days must be positive, got {self.period_days}")
+        if self.pool_size is not None and self.pool_size < 1:
+            errors.append(f"rotation.pool_size must be positive, got {self.pool_size}")
         return errors
 
 
@@ -493,6 +516,7 @@ class Config:
     position_sizing: PositionSizingConfig
     execution: ExecutionConfig
     io: IOConfig
+    rotation: RotationConfig = field(default_factory=RotationConfig)
 
     def validate(self) -> List[str]:
         """Validate entire configuration"""
@@ -501,7 +525,9 @@ class Config:
         # Validate each section
         errors.extend([f"env: {e}" for e in self.env.validate()])
         errors.extend([f"modes: {e}" for e in self.modes.validate()])
-        errors.extend([f"universe: {e}" for e in self.universe.validate()])
+        universe_errors = self.universe.validate(require_pool=not getattr(self.rotation, "enabled", False))
+        errors.extend([f"universe: {e}" for e in universe_errors])
+        errors.extend([f"rotation: {e}" for e in self.rotation.validate()])
         errors.extend([f"scoring: {e}" for e in self.scoring.validate()])
         errors.extend([f"clustering: {e}" for e in self.clustering.validate()])
         errors.extend([f"risk: {e}" for e in self.risk.validate()])
@@ -523,6 +549,12 @@ class Config:
                 f"scoring.buy_top_n ({self.scoring.buffer_thresholds['buy_top_n']}) "
                 f"should not exceed position_sizing.max_positions ({self.position_sizing.max_positions})"
             )
+
+        if getattr(self.rotation, "enabled", False):
+            if self.universe.pool_file or self.universe.pool_list:
+                errors.append("rotation.enabled is true: universe.pool_file/pool_list must be omitted")
+            if not self.rotation.schedule_path:
+                errors.append("rotation.enabled is true: rotation.schedule_path is required")
 
         return errors
 
@@ -582,6 +614,7 @@ def load_config(path: Union[str, Path]) -> Config:
     env = EnvConfig(**config_dict.get("env", {}))
     modes = ModesConfig(**config_dict.get("modes", {}))
     universe = UniverseConfig(**config_dict.get("universe", {}))
+    rotation = RotationConfig(**config_dict.get("rotation", {}))
 
     # Parse strategies
     strategies_list = config_dict.get("strategies", [])
@@ -603,6 +636,7 @@ def load_config(path: Union[str, Path]) -> Config:
         env=env,
         modes=modes,
         universe=universe,
+        rotation=rotation,
         strategies=strategies,
         scoring=scoring,
         clustering=clustering,
@@ -659,6 +693,7 @@ def create_default_config(root_dir: str = ".") -> Config:
         env=EnvConfig(root_dir=root_dir),
         modes=ModesConfig(),
         universe=UniverseConfig(pool_file="results/trend_etf_pool.csv"),
+        rotation=RotationConfig(),
         strategies=[
             KAMAStrategyConfig()  # KAMA is recommended based on experiments
         ],
@@ -718,6 +753,7 @@ def load_config_from_dict(config_dict: Dict[str, Any]) -> Config:
     env = EnvConfig(**config_dict.get("env", {}))
     modes = ModesConfig(**config_dict.get("modes", {}))
     universe = UniverseConfig(**config_dict.get("universe", {}))
+    rotation = RotationConfig(**config_dict.get("rotation", {}))
 
     strategies_list = config_dict.get("strategies", [])
     strategies = [_parse_strategy(s) for s in strategies_list]
@@ -733,6 +769,7 @@ def load_config_from_dict(config_dict: Dict[str, Any]) -> Config:
         env=env,
         modes=modes,
         universe=universe,
+        rotation=rotation,
         strategies=strategies,
         scoring=scoring,
         clustering=clustering,

@@ -13,11 +13,12 @@ Key design goals:
 
 from __future__ import annotations
 
+import json
 import logging
 from dataclasses import asdict
 from datetime import timedelta
 from pathlib import Path
-from typing import Any, Dict, List, Optional, Tuple
+from typing import Any, Dict, List, Optional, Set, Tuple
 
 import numpy as np
 import pandas as pd
@@ -247,6 +248,76 @@ class PortfolioBacktestRunner:
 
         return data_dict
 
+    def _load_rotation_schedule(self, schedule_path: str) -> Dict[pd.Timestamp, List[str]]:
+        """
+        Load precomputed rotation schedule from JSON.
+
+        Expected format:
+        {
+            "metadata": {"rotation_period": 5, ...},
+            "schedule": {"YYYY-MM-DD": ["ETF1", "ETF2", ...]},
+            "statistics": {...}
+        }
+        """
+        path = Path(schedule_path)
+        if not path.exists():
+            raise FileNotFoundError(f"Rotation schedule not found: {schedule_path}")
+
+        with open(path, "r", encoding="utf-8") as f:
+            data = json.load(f)
+
+        schedule = data.get("schedule")
+        if not isinstance(schedule, dict) or not schedule:
+            raise ValueError("Rotation schedule file is missing non-empty 'schedule' section")
+
+        parsed: Dict[pd.Timestamp, List[str]] = {}
+        for date_str, pool in schedule.items():
+            try:
+                dt = pd.to_datetime(date_str).normalize()
+            except Exception as exc:  # pragma: no cover - defensive
+                raise ValueError(f"Invalid rotation date '{date_str}': {exc}") from exc
+            if not isinstance(pool, list):
+                raise ValueError(f"Rotation schedule entry for {date_str} must be a list of symbols")
+            cleaned = [str(sym) for sym in pool if sym]
+            parsed[dt] = cleaned
+
+        if not parsed:
+            raise ValueError("Rotation schedule contains no dated pools")
+
+        # Stash metadata for downstream reporting.
+        self._rotation_metadata = data.get("metadata", {})
+        return parsed
+
+    def _load_rotation_data(
+        self,
+        rotation_schedule: Dict[pd.Timestamp, List[str]],
+        start_date: str,
+        end_date: str,
+    ) -> Dict[str, pd.DataFrame]:
+        """Load union of symbols from rotation schedule without applying secondary liquidity filters."""
+        start_dt = pd.to_datetime(start_date)
+        lookback_days = int(self.config.modes.lookback_days)
+        data_start = (start_dt - timedelta(days=lookback_days)).strftime("%Y-%m-%d")
+
+        all_symbols = sorted({sym for pool in rotation_schedule.values() for sym in pool})
+        blacklist = set(self.config.universe.blacklist)
+        if blacklist:
+            all_symbols = [s for s in all_symbols if s not in blacklist]
+
+        if not all_symbols:
+            raise ValueError("Rotation schedule provided no symbols to load after filtering")
+
+        data_dict = load_universe(
+            symbols=all_symbols,
+            data_dir=self.config.env.data_dir,
+            start_date=data_start,
+            end_date=end_date,
+            use_adj=True,
+            skip_errors=True,
+        )
+
+        return data_dict
+
     def _precompute_signals(self, data_dict: Dict[str, pd.DataFrame]) -> None:
         self._signal_events.clear()
         self._trend_state.clear()
@@ -317,9 +388,12 @@ class PortfolioBacktestRunner:
         self,
         data_dict: Dict[str, pd.DataFrame],
         decision_date: pd.Timestamp,
+        allowed_pool: Optional[Set[str]] = None,
     ) -> List[str]:
         eligible = []
         for symbol, df in data_dict.items():
+            if allowed_pool is not None and symbol not in allowed_pool:
+                continue
             if decision_date not in df.index:
                 continue
             state = self._trend_state.get(symbol)
@@ -503,15 +577,49 @@ class PortfolioBacktestRunner:
         - cluster_exposure: DataFrame (daily cluster exposure summary)
         - stats: dict (summary statistics)
         """
-        data_dict = self._load_data(start_date, end_date)
+        start_dt = pd.to_datetime(start_date)
+        end_dt = pd.to_datetime(end_date)
+
+        rotation_cfg = getattr(self.config, "rotation", None)
+        rotation_enabled = bool(rotation_cfg and getattr(rotation_cfg, "enabled", False))
+        rotation_schedule: Dict[pd.Timestamp, List[str]] = {}
+        rotation_dates: List[pd.Timestamp] = []
+        active_pool: Optional[Set[str]] = None
+
+        if rotation_enabled:
+            if not rotation_cfg.schedule_path:
+                raise ValueError("rotation.schedule_path is required when rotation.enabled is true")
+
+            rotation_schedule = self._load_rotation_schedule(rotation_cfg.schedule_path)
+            rotation_dates = sorted(rotation_schedule.keys())
+            if not rotation_dates:
+                raise ValueError("Rotation schedule is empty")
+
+            earliest_rotation = rotation_dates[0]
+            if start_dt < earliest_rotation:
+                raise ValueError(
+                    f"Backtest start_date {start_date} precedes first rotation date "
+                    f"{earliest_rotation.date()}"
+                )
+
+            for rot_dt in rotation_dates:
+                if rot_dt <= start_dt:
+                    active_pool = set(rotation_schedule[rot_dt])
+                else:
+                    break
+
+            if not active_pool:
+                raise ValueError("No rotation pool available for start_date; check schedule coverage")
+
+            data_dict = self._load_rotation_data(rotation_schedule, start_date, end_date)
+        else:
+            data_dict = self._load_data(start_date, end_date)
         if not data_dict:
             raise ValueError("No data loaded after filtering")
 
         self._precompute_signals(data_dict)
 
         all_dates = sorted(set().union(*[df.index for df in data_dict.values()]))
-        start_dt = pd.to_datetime(start_date)
-        end_dt = pd.to_datetime(end_date)
         dates = [d for d in all_dates if start_dt <= d <= end_dt]
         if len(dates) < 2:
             raise ValueError("Insufficient trading dates in backtest window")
@@ -538,8 +646,27 @@ class PortfolioBacktestRunner:
 
         slippage_bps = float(self.config.position_sizing.slippage_bps)
 
+        rotation_pools: Dict[pd.Timestamp, Set[str]] = (
+            {dt: set(pool) for dt, pool in rotation_schedule.items()} if rotation_enabled else {}
+        )
+        last_rotation_dt: Optional[pd.Timestamp] = (
+            max([dt for dt in rotation_dates if dt <= start_dt], default=None) if rotation_enabled else None
+        )
+
         for i, date in enumerate(dates):
             date_str = date.strftime("%Y-%m-%d")
+            date_norm = date.normalize()
+            is_rotation_day = False
+
+            if rotation_enabled:
+                if date_norm in rotation_pools:
+                    active_pool = set(rotation_pools[date_norm])
+                    last_rotation_dt = date_norm
+                    is_rotation_day = True
+                    logger.info("Rotation day %s: pool size=%d", date_str, len(active_pool))
+
+                if active_pool is None:
+                    raise ValueError(f"No active rotation pool available for {date_str}")
 
             def _valid_prices_for(symbols: List[str], field: str) -> Dict[str, float]:
                 out: Dict[str, float] = {}
@@ -620,7 +747,11 @@ class PortfolioBacktestRunner:
                 exec_date = dates[i + 1] if exec_mode == "open" else date
                 exec_date_str = exec_date.strftime("%Y-%m-%d")
 
-                is_rebalance_day = last_rebalance_idx is None or (i - last_rebalance_idx) >= rebalance_freq
+                is_rebalance_day = (
+                    is_rotation_day
+                    or last_rebalance_idx is None
+                    or (i - last_rebalance_idx) >= rebalance_freq
+                )
 
                 forced_sell_syms, forced_sell_reasons = self._forced_sells(
                     portfolio, data_dict, decision_date=date
@@ -637,10 +768,27 @@ class PortfolioBacktestRunner:
                     s: r for s, r in forced_sell_reasons.items() if s in set(forced_sell_syms)
                 }
 
+                if rotation_enabled and active_pool:
+                    rotation_excluded = [
+                        s for s in portfolio.positions.keys() if s not in active_pool
+                    ]
+                    rotation_excluded = [
+                        s for s in rotation_excluded if s in close_prices_for_holdings
+                    ]
+                    for sym in rotation_excluded:
+                        if sym not in forced_sell_syms:
+                            forced_sell_syms.append(sym)
+                        forced_sell_reasons[sym] = "rotation_excluded"
+
                 if is_rebalance_day or forced_sell_syms:
                     # Update clusters on rebalance days (or if never computed).
-                    if is_rebalance_day or not self._cluster_assignments:
-                        self._update_clusters_if_needed(data_dict, date, i)
+                    cluster_universe = data_dict
+                    if rotation_enabled and active_pool:
+                        cluster_universe = {
+                            s: data_dict[s] for s in active_pool if s in data_dict
+                        }
+                    if (is_rebalance_day or not self._cluster_assignments) and cluster_universe:
+                        self._update_clusters_if_needed(cluster_universe, date, i)
 
                     current_holdings = list(portfolio.positions.keys())
 
@@ -662,33 +810,41 @@ class PortfolioBacktestRunner:
                             sell_reasons=forced_sell_reasons.copy(),
                         )
                     else:
-                        eligible = self._eligible_symbols(data_dict, date)
+                        allowed_pool = active_pool if rotation_enabled else None
+                        eligible = self._eligible_symbols(
+                            data_dict, date, allowed_pool=allowed_pool
+                        )
                         eligible_dict = {s: data_dict[s] for s in eligible}
 
-                        scores_df = calculate_universe_scores(
-                            eligible_dict,
-                            as_of_date=date_str,
-                            periods=[20, 60, 120],
-                            weights=[
-                                float(self.config.scoring.momentum_weights.get("20d", 0.4)),
-                                float(self.config.scoring.momentum_weights.get("60d", 0.3)),
-                                float(self.config.scoring.momentum_weights.get("120d", 0.3)),
-                            ],
-                            min_periods_required=20,
-                        )
+                        if not eligible_dict:
+                            scores_df = pd.DataFrame(columns=["symbol", "raw_score", "rank"])
+                            desired_syms = []
+                            sell_reasons = {}
+                        else:
+                            scores_df = calculate_universe_scores(
+                                eligible_dict,
+                                as_of_date=date_str,
+                                periods=[20, 60, 120],
+                                weights=[
+                                    float(self.config.scoring.momentum_weights.get("20d", 0.4)),
+                                    float(self.config.scoring.momentum_weights.get("60d", 0.3)),
+                                    float(self.config.scoring.momentum_weights.get("120d", 0.3)),
+                                ],
+                                min_periods_required=20,
+                            )
 
-                        scores_df = apply_inertia_bonus(
-                            scores_df,
-                            current_holdings=[s for s in current_holdings if s in eligible],
-                            bonus_pct=float(self.config.scoring.inertia_bonus),
-                            bonus_mode="multiplicative",
-                        )
+                            scores_df = apply_inertia_bonus(
+                                scores_df,
+                                current_holdings=[s for s in current_holdings if s in eligible],
+                                bonus_pct=float(self.config.scoring.inertia_bonus),
+                                bonus_mode="multiplicative",
+                            )
 
-                        desired_syms, sell_reasons = self._select_symbols(
-                            scores_df=scores_df,
-                            current_holdings=current_holdings,
-                            forced_sells=forced_sell_syms,
-                        )
+                            desired_syms, sell_reasons = self._select_symbols(
+                                scores_df=scores_df,
+                                current_holdings=current_holdings,
+                                forced_sells=forced_sell_syms,
+                            )
 
                         # Turn selection into position sizing.
                         total_equity = portfolio.get_total_equity()
@@ -873,6 +1029,9 @@ class PortfolioBacktestRunner:
                 "num_symbols": len(data_dict),
                 "execution_mode": exec_mode,
                 "config": self.config.to_dict(),
+                "rotation_enabled": rotation_enabled,
+                "rotation_schedule_path": rotation_cfg.schedule_path if rotation_enabled else None,
+                "rotation_metadata": getattr(self, "_rotation_metadata", None) if rotation_enabled else None,
             },
         }
 
