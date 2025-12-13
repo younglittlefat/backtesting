@@ -255,8 +255,8 @@ log_info "Output directory: $OUTPUT_DIR"
 activate_conda_env
 
 # Check if Python module is accessible
-if ! python -c "import sys; sys.path.insert(0, '$ETF_V2_DIR'); from src.backtest_runner import run_backtest" 2>/dev/null; then
-    log_error "Failed to import backtest_runner module"
+if ! python -c "import sys; sys.path.insert(0, '$ETF_V2_DIR'); from src.portfolio_backtest_runner import run_portfolio_backtest" 2>/dev/null; then
+    log_error "Failed to import portfolio_backtest_runner module"
     log_error "Please ensure the project is properly set up"
     exit 1
 fi
@@ -268,7 +268,7 @@ fi
 PYTHON_CMD="python -c \"
 import sys
 sys.path.insert(0, '$ETF_V2_DIR')
-from src.backtest_runner import run_backtest
+from src.portfolio_backtest_runner import run_portfolio_backtest
 import logging
 import json
 from pathlib import Path
@@ -281,10 +281,10 @@ logging.basicConfig(
 try:
     print('Starting backtest...')
     print(f'Period: $START_DATE to $END_DATE')
-    print(f'Initial Capital: ${INITIAL_CAPITAL:,}')
+    print(f'Initial Capital: {float($INITIAL_CAPITAL):,.0f}')
     print()
 
-    results = run_backtest(
+    results = run_portfolio_backtest(
         config_path='$CONFIG_PATH',
         start_date='$START_DATE',
         end_date='$END_DATE',
@@ -301,7 +301,7 @@ try:
     stats = results.get('stats', {})
 
     print(f'Backtest Period: $START_DATE to $END_DATE')
-    print(f'Initial Capital: ${INITIAL_CAPITAL:,}')
+    print(f'Initial Capital: {float($INITIAL_CAPITAL):,.0f}')
     print()
 
     print('Performance Metrics:')
@@ -323,7 +323,7 @@ try:
     print(f'  Total Trades: {stats.get(\\\"num_trades\\\", 0)}')
     print(f'  Win Rate: {stats.get(\\\"win_rate\\\", 0)*100:.1f}%')
     print(f'  Profit Factor: {stats.get(\\\"profit_factor\\\", 0):.2f}')
-    print(f'  Average Trade P&L: ${stats.get(\\\"avg_trade_pnl\\\", 0):,.2f}')
+    print(f'  Average Trade P&L: {stats.get(\\\"avg_trade_pnl\\\", 0):,.2f}')
     print(f'  Average Holding Period: {stats.get(\\\"avg_holding_period\\\", 0):.1f} days')
     print(f'  Turnover Rate: {stats.get(\\\"turnover_rate\\\", 0)*100:.1f}%')
     print()
@@ -344,7 +344,6 @@ try:
         'trades.csv',
         'positions.csv',
         'performance_summary.json',
-        'performance_report.html',
         'cluster_exposure.csv'
     ]
 

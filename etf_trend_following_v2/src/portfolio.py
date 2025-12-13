@@ -612,6 +612,8 @@ class Portfolio:
         for i, order in enumerate(orders):
             try:
                 price = execution_prices.get(order.symbol, order.price)
+                # Persist the actual execution price so downstream logs/stats reflect reality.
+                order.price = price
 
                 if order.action == 'buy':
                     # Check if position already exists

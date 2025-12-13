@@ -291,9 +291,15 @@ runner.generate_report(output_dir='results/')
 
 ### 16.4 已知问题与限制
 
-1. **ADX 过滤器偏差**: 需要进一步调试（不影响 baseline 使用）
-2. **Combo 策略简化**: 当前为简化实现
-3. **投资组合级别功能**: 当前为单标的独立回测，不支持动态仓位分配、簇限制、动量排名选优
+1. **ADX 过滤器（旧框架问题）**: v2 实现已验证正确；旧框架 `strategies/filters/trend_filters.py` 存在 pandas
+   索引对齐 bug，导致 ADX 过滤器在回测中实际不起作用（详见
+   `etf_trend_following_v2/tests/ADX_FILTER_ROOT_CAUSE_ANALYSIS.md`）。如需公平对比，建议在 V1 中禁用 ADX。
+2. **Combo 策略**: 当前为简化实现（功能可用，但仍有扩展空间）
+3. **投资组合级别回测**:
+   - 单标回测：`BacktestRunner` 仍为“单标的独立回测”（依赖 backtesting.py 单标引擎），用于与旧框架结果对齐。
+   - ✅ 组合级回测：新增 `PortfolioBacktestRunner`（`etf_trend_following_v2/src/portfolio_backtest_runner.py`），支持
+     TopN+缓冲带、分簇限额、波动率倒数仓位、佣金+固定滑点，并通过 `etf_trend_following_v2/scripts/run_backtest.sh` 输出结果文件。
+   - ⚠️ 限制：组合级回测仍基于静态池文件/列表（非全池动态筛选），且与 backtesting.py 引擎路径独立（因 backtesting.py 原生为单标引擎）。
 
 ### 16.5 生产就绪状态
 
@@ -301,6 +307,7 @@ runner.generate_report(output_dir='results/')
 - ✅ Trailing Stop 功能
 - ✅ Loss Protection 功能
 - ✅ ADX 过滤器（v2 正确实现）
+- ✅ 组合级回测（PortfolioBacktestRunner：TopN/缓冲/簇限额/波动率倒数仓位/成本模型）
 
 ---
 
@@ -321,7 +328,8 @@ runner.generate_report(output_dir='results/')
 ### 中期任务（P1）
 1. **修复现有策略的 ADX 过滤器 bug**: 修改 `strategies/macd_cross.py` 使用 `self.I()` 预注册 ADX 指标，参考 v2 包装器实现
 2. **完善 Combo 策略**: 实现完整的组合策略逻辑
-3. **组合级回测落地**：补上虚拟 ETF/PortfolioStrategy 方案，使 backtest 端覆盖 TopN/缓冲/簇限额/波动率倒数权重，或明确文档约束"回测仅单标，组合逻辑只在信号端"，避免与 Gemini 设计脱节。
+3. ✅ **组合级回测落地**：已新增 `PortfolioBacktestRunner`（`etf_trend_following_v2/src/portfolio_backtest_runner.py`），并由
+   `etf_trend_following_v2/scripts/run_backtest.sh` 作为统一入口；覆盖 TopN/缓冲/簇限额/波动率倒数仓位 + 佣金/滑点，已补充单测。
 4. **并行优化**: 实现多标的并行回测
 5. ✅ **添加单元测试**: 补齐 backtest_wrappers / runner 的回归与边界测试。**已完成**（2025-12-11）：
    - `test_backtest_wrappers.py`: 48 个测试，覆盖 MACD/KAMA/Combo 策略的初始化、信号生成、过滤器、止损保护、跟踪止损等

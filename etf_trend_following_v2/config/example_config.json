@@ -17,10 +17,10 @@
     }
   },
   "universe": {
-    "pool_file": "results/trend_etf_pool.csv",
+    "pool_file": "results/trend_etf_pool_2021_2023_optimized.csv",
     "pool_list": null,
     "liquidity_threshold": {
-      "min_avg_volume": 1000000,
+      "min_avg_volume": 500000,
       "min_avg_amount": 5000000,
       "min_turnover_rate": 0.001
     },

@@ -293,11 +293,14 @@ class TestTimeStop(unittest.TestCase):
         dates = pd.date_range('2024-01-01', periods=30, freq='D')
         np.random.seed(42)
 
-        # Create sideways/stagnant price
-        close = 10.0 + np.random.randn(30) * 0.05  # Small noise around 10.0
-        high = close + 0.1
+        # Create stagnant price action that never makes a new high above entry.
+        # Requirement: time stop triggers only when profit is small AND no new high since entry.
+        close = np.empty(30, dtype=float)
+        close[0] = 10.0
+        close[1:] = 10.0 - np.abs(np.random.randn(29)) * 0.05  # Always <= entry_price
+        high = close.copy()
         low = close - 0.1
-        open_price = close + np.random.randn(30) * 0.02
+        open_price = close.copy()
 
         self.df = pd.DataFrame({
             'open': open_price,

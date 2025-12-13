@@ -1,5 +1,5 @@
 {
-  "cash": 793090.55437,
+  "cash": 595049.05399,
   "positions": [
     {
       "ts_code": "159994.SZ",
@@ -28,7 +28,35 @@
       "entry_price": 0.697,
       "entry_date": "2025-12-04",
       "cost": 49845.467099999994
+    },
+    {
+      "ts_code": "159922.SZ",
+      "shares": 17200,
+      "entry_price": 2.872,
+      "entry_date": "2025-12-12",
+      "cost": 49408.27968
+    },
+    {
+      "ts_code": "159825.SZ",
+      "shares": 60900,
+      "entry_price": 0.814,
+      "entry_date": "2025-12-12",
+      "cost": 49582.514520000004
+    },
+    {
+      "ts_code": "159845.SZ",
+      "shares": 16300,
+      "entry_price": 3.039,
+      "entry_date": "2025-12-12",
+      "cost": 49545.60714
+    },
+    {
+      "ts_code": "159996.SZ",
+      "shares": 32800,
+      "entry_price": 1.509,
+      "entry_date": "2025-12-12",
+      "cost": 49505.09904
     }
   ],
-  "last_update": "2025-12-12 09:01:33"
+  "last_update": "2025-12-13 09:01:36"
 }
