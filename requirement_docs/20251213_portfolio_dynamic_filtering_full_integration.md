@@ -48,10 +48,10 @@
 
 ### 1.3 目标
 
-1. **实现真正的全池动态筛选**：在回测期间能够按指定频率（如每5/10/20天）重新筛选ETF池
+1. **实现真正的全池动态筛选**：基于预计算轮动表，在回测期间按指定频率（如每5/10/20天）更新ETF池
 2. **最大化复用 backtesting.py**：在单标策略执行层面复用 backtesting.py 的信号生成和撮合逻辑
 3. **统一架构**：设计清晰的分层架构，明确哪些部分复用 backtesting.py，哪些部分需要独立实现
-4. **轮动周期可配置**：支持灵活设置轮动周期，方便日后回测不同周期效果
+4. **轮动周期可配置**：支持灵活设置轮动周期，方便回测不同周期效果对比
 
 ---
 
@@ -86,9 +86,9 @@
 │                                    │                                    │
 │                                    ▼                                    │
 │  ┌─────────────────────────────────────────────────────────────────┐   │
-│  │  ETF动态筛选器 (复用 etf_selector/)                             │   │
-│  │  - 按时点调用ETF筛选（避免未来信息）                             │   │
-│  │  - 生成轮动表或实时筛选                                         │   │
+│  │  预计算轮动表 (复用 etf_selector/ 生成)                         │   │
+│  │  - 回测前一次性生成，确保可复现                                 │   │
+│  │  - 严格按 as_of_date 筛选，避免未来信息                         │   │
 │  └─────────────────────────────────────────────────────────────────┘   │
 └─────────────────────────────────────────────────────────────────────────┘
                                     │
@@ -147,7 +147,7 @@
 | 单标信号生成 | ✅ (可选) | ✅ | 可用 `BacktestStrategy` 或独立 `SignalGenerator` |
 | 单标完整回测 | ✅ | - | 用于单标验证和参数优化 |
 | 全池信号扫描 | - | ✅ | `SignalGenerator` 高效扫描 |
-| 动态ETF筛选 | - | ✅ | 复用 `etf_selector/` |
+| 轮动表预生成 | - | ✅ | 复用 `etf_selector/`，独立工具生成 |
 | 投资组合撮合 | - | ✅ | `Portfolio` 类 |
 | 组合级统计 | - | ✅ | 自定义聚合逻辑 |
 
@@ -175,14 +175,15 @@
 
 **决策**: 采用**选项A（预计算轮动表）**，与现有动态轮动策略实验保持一致。
 
-#### 决策2: 全池数据加载策略
+#### 决策2: 候选池数据加载策略
 
-**问题**: 全池（1600+ ETF）数据量大，全部预加载内存占用高
+**背景**: 全池范围为**预过滤后的候选池（约150-200只ETF）**，非全市场1600+
+- 流动性过滤：日均成交额 ≥ 5万元
+- 上市时间过滤：上市 ≥ 60天
 
-**方案**: 分层加载
-1. **预筛选层**: 加载所有ETF的基础信息（代码、名称、上市日期、最新规模）
-2. **候选层**: 仅加载当前轮动周期候选池（50-100只）的完整OHLCV
-3. **持仓层**: 持仓标的始终保留在内存
+**方案**: 直接加载候选池全部数据
+- 150-200只ETF的OHLCV数据量可控（约100-200MB）
+- 无需复杂的分层加载，简化实现
 
 #### 决策3: 复用 backtesting.py 的边界
 
@@ -207,7 +208,7 @@ class DynamicPoolPortfolioRunner:
     全池动态筛选投资组合回测运行器。
 
     核心功能:
-    1. 按轮动周期调用ETF筛选器（或读取预计算轮动表）
+    1. 加载预计算的轮动表（不支持实时筛选，确保可复现性）
     2. 在每个交易日执行信号扫描和组合决策
     3. 管理投资组合状态和交易执行
     4. 生成组合级绩效统计
@@ -216,7 +217,7 @@ class DynamicPoolPortfolioRunner:
     - 扩展自 PortfolioBacktestRunner
     - 复用 SignalPipeline 进行信号生成
     - 复用 Portfolio 进行持仓管理
-    - 复用 etf_selector/ 进行动态筛选
+    - 轮动表由独立工具预生成（复用 etf_selector/）
     """
 
     def __init__(self, config: Config):
@@ -225,28 +226,14 @@ class DynamicPoolPortfolioRunner:
         self.signal_pipeline = SignalPipeline(config)
 
         # 动态筛选配置
-        self.rotation_period_days: int = config.rotation.period_days  # 例如 30/60/90
+        self.rotation_period_days: int = config.rotation.period_days  # 例如 5/10/20
         self.pool_size: int = config.rotation.pool_size  # 例如 20
-        self.enable_dynamic_filtering: bool = config.rotation.enable_dynamic
 
-        # 轮动表（预计算或实时生成）
+        # 轮动表（预计算）
         self.rotation_schedule: Dict[str, List[str]] = {}
 
     def load_rotation_schedule(self, schedule_path: str) -> None:
         """加载预计算的轮动表"""
-        ...
-
-    def generate_rotation_schedule(
-        self,
-        start_date: str,
-        end_date: str,
-        full_universe_dir: str
-    ) -> Dict[str, List[str]]:
-        """
-        实时生成轮动表（仅在需要时调用）。
-
-        调用 etf_selector/ 模块，按轮动周期生成每个时点的Top N池。
-        """
         ...
 
     def run(
@@ -260,15 +247,15 @@ class DynamicPoolPortfolioRunner:
         执行全池动态筛选回测。
 
         流程:
-        1. 加载或生成轮动表
-        2. 逐日迭代:
+        1. 加载预计算的轮动表
+        2. 加载候选池全部OHLCV数据
+        3. 逐日迭代:
            a. 检查是否为轮动日 → 更新可交易池
-           b. 加载当前池的OHLCV数据
-           c. 执行信号扫描
-           d. 生成交易指令
-           e. 执行交易并更新持仓
-           f. 记录权益曲线
-        3. 生成绩效报告
+           b. 执行信号扫描
+           c. 生成交易指令
+           d. 执行交易并更新持仓
+           e. 记录权益曲线
+        4. 生成绩效报告
         """
         ...
 ```
@@ -280,16 +267,9 @@ class DynamicPoolPortfolioRunner:
 
 {
   "rotation": {
-    "enable_dynamic": true,
     "period_days": 5,
     "pool_size": 20,
-    "schedule_path": "results/rotation_schedules/rotation_5d.json",
-    "filtering": {
-      "use_precomputed_schedule": true,
-      "full_universe_dir": "data/chinese_etf/daily",
-      "min_listing_days": 60,
-      "min_avg_amount": 50000
-    }
+    "schedule_path": "results/rotation_schedules/rotation_5d.json"
   }
 }
 ```
@@ -312,18 +292,17 @@ class DynamicPoolPortfolioRunner:
 - `scripts/prepare_rotation_schedule.py` (轮动表生成)
 - `backtest_runner/data/virtual_etf_builder.py` (数据加载)
 
-#### Phase 2: 动态筛选集成
+#### Phase 2: 轮动表生成工具
 
-**目标**: 支持在回测期间实时调用ETF筛选器
+**目标**: 提供轮动表预计算工具，支持不同轮动周期
 
 **工作项**:
-1. 封装 `etf_selector/` 调用接口，确保时间一致性（避免未来信息）
-2. 实现筛选缓存，避免重复计算
-3. 集成到 `DynamicPoolPortfolioRunner`
-4. 性能优化（分层数据加载）
-5. 集成测试
+1. 扩展轮动表生成脚本，支持可配置周期（5/10/20天）
+2. 封装 `etf_selector/` 调用接口，确保严格的 `as_of_date` 约束（避免未来信息）
+3. 生成多个周期的轮动表文件，便于后续对比实验
+4. 单元测试验证无前视偏差
 
-**预计工时**: 16小时
+**预计工时**: 8小时
 
 #### Phase 3: 统一接口和文档
 
@@ -362,50 +341,45 @@ def filter_etfs_as_of(self, as_of_date: str) -> List[str]:
 ### 4.2 轮动日判定逻辑
 
 ```python
-def is_rotation_day(self, current_date: str, last_rotation_date: Optional[str]) -> bool:
+def is_rotation_day(self, current_date: str) -> bool:
     """
     判断是否为轮动日。
 
-    条件:
-    1. 如果使用预计算轮动表：current_date 在轮动表中
-    2. 如果使用实时筛选：距离上次轮动 >= rotation_period_days
-    3. 第一个交易日始终为轮动日
+    条件: current_date 在预计算的轮动表中
     """
-    if self.use_precomputed_schedule:
-        return current_date in self.rotation_schedule
-
-    if last_rotation_date is None:
-        return True
-
-    days_since_last = (pd.to_datetime(current_date) -
-                       pd.to_datetime(last_rotation_date)).days
-    return days_since_last >= self.rotation_period_days
+    return current_date in self.rotation_schedule
 ```
 
-### 4.3 数据加载优化
+### 4.3 数据加载
 
 ```python
-class LazyDataLoader:
+class CandidatePoolDataLoader:
     """
-    延迟加载数据管理器。
+    候选池数据加载器。
 
     策略:
-    1. 维护内存中的数据缓存（LRU）
-    2. 当前持仓标的始终保留
-    3. 超出缓存限制时，卸载非持仓、非候选池的数据
+    - 直接加载预过滤候选池（150-200只）的全部OHLCV数据
+    - 数据量可控，无需复杂的分层加载
     """
 
-    def __init__(self, cache_size: int = 100):
-        self.cache: Dict[str, pd.DataFrame] = {}
-        self.cache_size = cache_size
-        self.access_order: List[str] = []  # LRU 顺序
+    def __init__(self, data_dir: str):
+        self.data_dir = data_dir
+        self.data_cache: Dict[str, pd.DataFrame] = {}
 
-    def get_data(self, symbol: str, start_date: str, end_date: str) -> pd.DataFrame:
-        """获取数据，优先从缓存读取"""
-        ...
+    def load_candidate_pool(
+        self,
+        symbols: List[str],
+        start_date: str,
+        end_date: str
+    ) -> Dict[str, pd.DataFrame]:
+        """一次性加载候选池全部数据"""
+        for symbol in symbols:
+            if symbol not in self.data_cache:
+                self.data_cache[symbol] = self._load_single(symbol, start_date, end_date)
+        return {s: self.data_cache[s] for s in symbols}
 
-    def preload_symbols(self, symbols: List[str], start_date: str, end_date: str) -> None:
-        """预加载一批标的数据"""
+    def _load_single(self, symbol: str, start_date: str, end_date: str) -> pd.DataFrame:
+        """加载单只ETF数据"""
         ...
 ```
 
@@ -430,6 +404,7 @@ etf_trend_following_v2/src/
 ├── backtest_runner.py           # 单标回测（复用 backtesting.py）✅ 已有
 ├── portfolio_backtest_runner.py # 静态池组合回测 ✅ 已有
 ├── dynamic_pool_runner.py       # 🆕 全池动态筛选组合回测
+├── rotation_schedule_generator.py # 🆕 轮动表预生成工具
 ├── signal_pipeline.py           # 信号管线 ✅ 已有
 ├── portfolio.py                 # 持仓管理 ✅ 已有
 └── strategies/
@@ -444,9 +419,9 @@ etf_trend_following_v2/src/
 
 | 风险 | 影响 | 缓解措施 |
 |-----|------|---------|
-| 性能问题（全池数据量大） | 中 | 分层加载 + LRU缓存 |
-| 与现有代码冲突 | 低 | 新增模块，不修改现有逻辑 |
 | 筛选器时间一致性 | 高 | 严格的 as_of_date 约束 + 单测 |
+| 与现有代码冲突 | 低 | 新增模块，不修改现有逻辑 |
+| 轮动表生成耗时 | 中 | 预计算 + 缓存轮动表文件 |
 | 复杂度增加 | 中 | 清晰的分层架构 + 文档 |
 
 ---
@@ -456,7 +431,6 @@ etf_trend_following_v2/src/
 ### 7.1 功能验收
 
 - [ ] 支持预计算轮动表加载
-- [ ] 支持实时动态筛选（可选）
 - [ ] 轮动周期可配置（5/10/20天等，默认5天）
 - [ ] 池子大小可配置（10-50只）
 - [ ] 无未来信息泄露（通过单测验证）
@@ -464,8 +438,8 @@ etf_trend_following_v2/src/
 
 ### 7.2 性能验收
 
-- [ ] 全池（1600+ ETF）2年回测 < 30分钟
-- [ ] 内存占用 < 4GB
+- [ ] 候选池（150-200只ETF）2年回测 < 10分钟
+- [ ] 内存占用 < 1GB
 
 ### 7.3 兼容性验收
 
