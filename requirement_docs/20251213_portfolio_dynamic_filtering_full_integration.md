@@ -681,3 +681,33 @@ etf_trend_following_v2/src/
 ---
 
 **本节总结**：v2已实现Gemini CTA最佳实践的90%+，旧轮动实验失败是因为设计过于简化。本次全池动态筛选将复用v2模块，补齐动态筛选能力，预期能验证现代CTA方法在A股ETF的有效性。
+
+---
+
+## 11. Q&A 更新（2025-12-13）
+
+1) 动态模式开关  
+- 采用 `rotation.enabled` 显式开关，与静态池互斥；开启后必须提供 `rotation.schedule_path`，否则报错；开启后忽略 `universe.pool_file/pool_list`（不回退）。
+
+2) 调仓节奏  
+- 轮动日：更新可交易池（由轮动表日期决定）。  
+- 每日：检查止损/时间止损/趋势 OFF → 强制卖出。  
+- `rebalance_frequency`：控制评分排名与调仓节奏，可与 `period_days` 对齐（推荐 5/5），也可更频繁。
+
+3) 池子剔除处理  
+- 轮动日新池不包含的持仓即卖出（即使趋势仍 ON），卖出原因标记为 `rotation_excluded`/`rank_out`。  
+- 默认采用“增量调整”模式，不提供 CLI 开关；如需全平重建可后续加 `rotation.rebalance_mode`。
+
+4) 轮动表格式与缺口处理  
+- 格式沿用生成脚本：顶层含 `metadata`、`schedule`、`statistics`；从 `schedule` 读取池。  
+- 回测首日早于轮动表首日 → 报错要求重新生成；回测末日晚于轮动表末日 → 允许沿用最后一期池。  
+- 当日缺失时沿用最近历史轮动日池，禁止使用未来日期避免前视偏差。
+
+5) 数据加载与流动性  
+- 动态模式下加载轮动表全集符号，跳过二次流动性过滤（信任轮动表生成时的过滤）；静态模式保持原逻辑。
+
+6) SignalPipeline 复用策略  
+- 不修改 `SignalPipeline`；在现有 `_strategy_generator + calculate_universe_scores` 路径上扩展，新增 `DynamicPoolPortfolioRunner`（继承或组合 `PortfolioBacktestRunner`），覆盖 `_load_data` 与主循环轮动日逻辑。
+
+7) 测试轮动表 Fixture  
+- 在 `etf_trend_following_v2/tests/fixtures/` 新增 `test_rotation_schedule.json`（或生成脚本），示例包含 3~4 个轮动日、池子大小 3；复用现有测试 OHLCV 符号。
