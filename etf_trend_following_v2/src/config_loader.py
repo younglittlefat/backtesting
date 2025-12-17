@@ -87,12 +87,23 @@ class UniverseConfig:
     })
     blacklist: List[str] = field(default_factory=list)
     handle_delisted: Literal["exclude", "keep_until_delist", "warn"] = "exclude"
+    # Dynamic pool configuration
+    dynamic_pool: bool = False  # If True, dynamically filter ETFs by liquidity on each rebalance day
+    all_etf_data_dir: Optional[str] = None  # Directory containing all ETF data for dynamic filtering
+    min_listing_days: int = 60  # Minimum listing days for dynamic pool (default: 60 days)
 
     def validate(self, require_pool: bool = True) -> List[str]:
         """Validate universe configuration"""
         errors = []
-        if require_pool and not self.pool_file and not self.pool_list:
-            errors.append("universe.pool_file or universe.pool_list must be specified")
+
+        # If dynamic_pool is enabled, pool_file and pool_list are optional
+        if not self.dynamic_pool:
+            if require_pool and not self.pool_file and not self.pool_list:
+                errors.append("universe.pool_file or universe.pool_list must be specified when dynamic_pool is False")
+        else:
+            # Dynamic pool mode: all_etf_data_dir is required
+            if not self.all_etf_data_dir:
+                errors.append("universe.all_etf_data_dir is required when dynamic_pool is True")
 
         if self.pool_file and self.pool_list:
             errors.append("universe.pool_file and universe.pool_list are mutually exclusive")
@@ -105,6 +116,9 @@ class UniverseConfig:
 
         if not 0 <= self.liquidity_threshold.get("min_turnover_rate", 0) <= 1:
             errors.append("universe.liquidity_threshold.min_turnover_rate must be in [0, 1]")
+
+        if self.min_listing_days < 0:
+            errors.append(f"universe.min_listing_days must be non-negative, got {self.min_listing_days}")
 
         return errors
 
@@ -525,7 +539,9 @@ class Config:
         # Validate each section
         errors.extend([f"env: {e}" for e in self.env.validate()])
         errors.extend([f"modes: {e}" for e in self.modes.validate()])
-        universe_errors = self.universe.validate(require_pool=not getattr(self.rotation, "enabled", False))
+        # Allow no pool requirement if rotation or dynamic_pool is enabled
+        require_pool = not (getattr(self.rotation, "enabled", False) or getattr(self.universe, "dynamic_pool", False))
+        universe_errors = self.universe.validate(require_pool=require_pool)
         errors.extend([f"universe: {e}" for e in universe_errors])
         errors.extend([f"rotation: {e}" for e in self.rotation.validate()])
         errors.extend([f"scoring: {e}" for e in self.scoring.validate()])

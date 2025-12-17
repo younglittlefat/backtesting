@@ -1,0 +1,75 @@
+{
+  "date": "20251215",
+  "trades": [
+    {
+      "ts_code": "159941.SZ",
+      "action": "SELL",
+      "shares": 34600,
+      "price": 1.414,
+      "amount": 48919.50755999999,
+      "commission": 4.89244,
+      "date": "2025-12-15",
+      "reason": "KAMA卖出信号！价格下穿KAMA"
+    },
+    {
+      "ts_code": "159922.SZ",
+      "action": "SELL",
+      "shares": 17200,
+      "price": 2.852,
+      "amount": 49049.49455999999,
+      "commission": 4.90544,
+      "date": "2025-12-15",
+      "reason": "KAMA卖出信号！价格下穿KAMA"
+    },
+    {
+      "ts_code": "159845.SZ",
+      "action": "SELL",
+      "shares": 16300,
+      "price": 3.014,
+      "amount": 49123.28718,
+      "commission": 4.91282,
+      "date": "2025-12-15",
+      "reason": "KAMA卖出信号！价格下穿KAMA"
+    },
+    {
+      "ts_code": "159996.SZ",
+      "action": "SELL",
+      "shares": 32800,
+      "price": 1.504,
+      "amount": 49326.266879999996,
+      "commission": 4.93312,
+      "date": "2025-12-15",
+      "reason": "KAMA卖出信号！价格下穿KAMA"
+    },
+    {
+      "ts_code": "159745.SZ",
+      "action": "BUY",
+      "shares": 76000,
+      "price": 0.653,
+      "amount": -49637.9256,
+      "commission": 4.9628000000000005,
+      "date": "2025-12-15",
+      "reason": "KAMA持续确认买入信号（n=0）！价格上穿KAMA"
+    },
+    {
+      "ts_code": "159842.SZ",
+      "action": "BUY",
+      "shares": 43400,
+      "price": 1.142,
+      "amount": -49572.71255999999,
+      "commission": 4.95628,
+      "date": "2025-12-15",
+      "reason": "KAMA持续确认买入信号（n=0）！价格上穿KAMA"
+    }
+  ],
+  "trade_count": 6,
+  "timestamp": "2025-12-16 09:01:33",
+  "execution_time": "2025-12-16T09:01:33.103461",
+  "execution_context": {
+    "status": "executed",
+    "strategy": "kama_cross",
+    "sell_count": 4,
+    "buy_count": 2,
+    "forced": false
+  }
+}

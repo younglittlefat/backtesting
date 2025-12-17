@@ -25,7 +25,7 @@ import pandas as pd
 
 from .clustering import get_cluster_assignments, get_cluster_exposure
 from .config_loader import Config, KAMAStrategyConfig, MACDStrategyConfig
-from .data_loader import filter_by_liquidity, load_universe, load_universe_from_file
+from .data_loader import filter_by_liquidity, load_universe, load_universe_from_file, scan_all_etfs, filter_by_dynamic_liquidity
 from .portfolio import Portfolio, TradeOrder
 from .position_sizing import calculate_portfolio_positions
 from .risk import check_stop_loss, check_time_stop
@@ -123,6 +123,9 @@ class PortfolioBacktestRunner:
         self._trend_state: Dict[str, pd.Series] = {}
         self._cluster_assignments: Dict[str, int] = {}
         self._last_cluster_update_idx: Optional[int] = None
+        # Liquidity scaling factors (inferred from data)
+        self._liquidity_vol_scale: float = 1.0
+        self._liquidity_amt_scale: float = 1.0
 
         self._strategy_generator = self._init_signal_generator()
 
@@ -172,7 +175,33 @@ class PortfolioBacktestRunner:
         lookback_days = int(self.config.modes.lookback_days)
         data_start = (start_dt - timedelta(days=lookback_days)).strftime("%Y-%m-%d")
 
-        if self.config.universe.pool_file:
+        # Dynamic pool mode: scan all ETFs from all_etf_data_dir
+        if self.config.universe.dynamic_pool:
+            if not self.config.universe.all_etf_data_dir:
+                raise ValueError("universe.all_etf_data_dir is required when dynamic_pool is True")
+
+            logger.info("Dynamic pool mode enabled: scanning all ETFs from %s", self.config.universe.all_etf_data_dir)
+            all_symbols = scan_all_etfs(self.config.universe.all_etf_data_dir)
+
+            # Apply blacklist
+            blacklist = set(self.config.universe.blacklist)
+            if blacklist:
+                all_symbols = [s for s in all_symbols if s not in blacklist]
+                logger.info("Applied blacklist: %d symbols remaining", len(all_symbols))
+
+            # Load all ETF data (will be filtered dynamically on each rebalance day)
+            data_dict = load_universe(
+                symbols=all_symbols,
+                data_dir=self.config.universe.all_etf_data_dir,
+                start_date=data_start,
+                end_date=end_date,
+                use_adj=True,
+                skip_errors=True,
+            )
+            logger.info("Loaded %d ETF data files for dynamic filtering", len(data_dict))
+
+        # Static pool mode: use pool_file or pool_list
+        elif self.config.universe.pool_file:
             data_dict = load_universe_from_file(
                 pool_file=self.config.universe.pool_file,
                 data_dir=self.config.env.data_dir,
@@ -191,7 +220,7 @@ class PortfolioBacktestRunner:
                 skip_errors=True,
             )
         else:
-            raise ValueError("No universe configured (pool_file or pool_list required)")
+            raise ValueError("No universe configured (pool_file, pool_list, or dynamic_pool required)")
 
         def _infer_liquidity_scaling(sample_df: pd.DataFrame) -> Tuple[float, float]:
             """
@@ -233,18 +262,20 @@ class PortfolioBacktestRunner:
             )
             return 1.0, 1.0
 
-        # Liquidity filter (static filter based on trailing window of loaded data)
-        lt = self.config.universe.liquidity_threshold or {}
+        # Store liquidity scaling for later use in dynamic filtering
         sample_df = next(iter(data_dict.values()), pd.DataFrame())
-        vol_scale, amt_scale = _infer_liquidity_scaling(sample_df)
+        self._liquidity_vol_scale, self._liquidity_amt_scale = _infer_liquidity_scaling(sample_df)
 
-        data_dict = filter_by_liquidity(
-            data_dict,
-            min_amount=(lt.get("min_avg_amount") * amt_scale if lt.get("min_avg_amount") else None),
-            min_volume=(lt.get("min_avg_volume") * vol_scale if lt.get("min_avg_volume") else None),
-            lookback_days=20,
-            min_valid_days=15,
-        )
+        # Static liquidity filter (only applied in non-dynamic mode)
+        if not self.config.universe.dynamic_pool:
+            lt = self.config.universe.liquidity_threshold or {}
+            data_dict = filter_by_liquidity(
+                data_dict,
+                min_amount=(lt.get("min_avg_amount") * self._liquidity_amt_scale if lt.get("min_avg_amount") else None),
+                min_volume=(lt.get("min_avg_volume") * self._liquidity_vol_scale if lt.get("min_avg_volume") else None),
+                lookback_days=20,
+                min_valid_days=15,
+            )
 
         return data_dict
 
@@ -384,16 +415,82 @@ class PortfolioBacktestRunner:
             f"Updated clusters on {decision_date.date()}: {len(set(clusters.values()))} clusters"
         )
 
+    def _apply_dynamic_pool_filter(
+        self,
+        data_dict: Dict[str, pd.DataFrame],
+        decision_date: pd.Timestamp,
+    ) -> Set[str]:
+        """
+        Apply dynamic liquidity filtering on a specific date.
+
+        Returns:
+            Set of symbols that pass liquidity criteria on decision_date
+        """
+        if not self.config.universe.dynamic_pool:
+            # Static mode: return all symbols
+            return set(data_dict.keys())
+
+        lt = self.config.universe.liquidity_threshold or {}
+        min_amount = lt.get("min_avg_amount")
+        min_volume = lt.get("min_avg_volume")
+
+        # Convert thresholds to data units
+        if min_amount is not None:
+            min_amount = min_amount * self._liquidity_amt_scale
+        if min_volume is not None:
+            min_volume = min_volume * self._liquidity_vol_scale
+
+        # Use filter_by_dynamic_liquidity to get symbols passing criteria
+        all_symbols = list(data_dict.keys())
+        data_dir = self.config.universe.all_etf_data_dir
+
+        passed_symbols = filter_by_dynamic_liquidity(
+            symbols=all_symbols,
+            data_dir=data_dir,
+            as_of_date=decision_date.strftime("%Y-%m-%d"),
+            min_amount=min_amount,
+            min_volume=min_volume,
+            lookback_days=5,  # MA5 as specified in requirement
+            min_listing_days=self.config.universe.min_listing_days,
+            use_adj=True,
+        )
+
+        logger.info(
+            f"Dynamic pool filter (date={decision_date.date()}): "
+            f"{len(passed_symbols)}/{len(all_symbols)} ETFs passed"
+        )
+
+        return set(passed_symbols)
+
     def _eligible_symbols(
         self,
         data_dict: Dict[str, pd.DataFrame],
         decision_date: pd.Timestamp,
         allowed_pool: Optional[Set[str]] = None,
+        dynamic_pool: Optional[Set[str]] = None,
     ) -> List[str]:
+        """
+        Get eligible symbols for trading on decision_date.
+
+        Args:
+            data_dict: Full ETF data dictionary
+            decision_date: Date to check eligibility
+            allowed_pool: Optional explicit pool (for rotation mode)
+            dynamic_pool: Optional dynamic liquidity filter result
+
+        Returns:
+            List of eligible symbols (trend-on + in allowed/dynamic pool)
+        """
         eligible = []
         for symbol, df in data_dict.items():
+            # Check allowed pool (rotation mode)
             if allowed_pool is not None and symbol not in allowed_pool:
                 continue
+
+            # Check dynamic pool (dynamic liquidity mode)
+            if dynamic_pool is not None and symbol not in dynamic_pool:
+                continue
+
             if decision_date not in df.index:
                 continue
             state = self._trend_state.get(symbol)
@@ -781,11 +878,33 @@ class PortfolioBacktestRunner:
                         forced_sell_reasons[sym] = "rotation_excluded"
 
                 if is_rebalance_day or forced_sell_syms:
+                    # Apply dynamic pool filter on rebalance days
+                    dynamic_pool_filter: Optional[Set[str]] = None
+                    if self.config.universe.dynamic_pool and is_rebalance_day:
+                        dynamic_pool_filter = self._apply_dynamic_pool_filter(data_dict, date)
+
+                    # Force sell positions not in dynamic pool
+                    if dynamic_pool_filter is not None:
+                        pool_excluded = [
+                            s for s in portfolio.positions.keys() if s not in dynamic_pool_filter
+                        ]
+                        pool_excluded = [
+                            s for s in pool_excluded if s in close_prices_for_holdings
+                        ]
+                        for sym in pool_excluded:
+                            if sym not in forced_sell_syms:
+                                forced_sell_syms.append(sym)
+                            forced_sell_reasons[sym] = "dynamic_pool_excluded"
+
                     # Update clusters on rebalance days (or if never computed).
                     cluster_universe = data_dict
                     if rotation_enabled and active_pool:
                         cluster_universe = {
                             s: data_dict[s] for s in active_pool if s in data_dict
+                        }
+                    elif dynamic_pool_filter is not None:
+                        cluster_universe = {
+                            s: data_dict[s] for s in dynamic_pool_filter if s in data_dict
                         }
                     if (is_rebalance_day or not self._cluster_assignments) and cluster_universe:
                         self._update_clusters_if_needed(cluster_universe, date, i)
@@ -812,7 +931,7 @@ class PortfolioBacktestRunner:
                     else:
                         allowed_pool = active_pool if rotation_enabled else None
                         eligible = self._eligible_symbols(
-                            data_dict, date, allowed_pool=allowed_pool
+                            data_dict, date, allowed_pool=allowed_pool, dynamic_pool=dynamic_pool_filter
                         )
                         eligible_dict = {s: data_dict[s] for s in eligible}
 

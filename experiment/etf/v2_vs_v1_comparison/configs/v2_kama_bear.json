@@ -1,0 +1,104 @@
+{
+  "env": {
+    "root_dir": "/mnt/d/git/backtesting",
+    "data_dir": "data/chinese_etf/daily",
+    "results_dir": "results",
+    "log_dir": "logs",
+    "timezone": "Asia/Shanghai",
+    "trading_calendar": "SSE"
+  },
+  "modes": {
+    "run_mode": "backtest",
+    "as_of_date": null,
+    "lookback_days": 500,
+    "calendar_offsets": {
+      "signal_generation": -1,
+      "execution": 0
+    }
+  },
+  "universe": {
+    "pool_file": "results/trend_etf_pool_2019_2021.csv",
+    "pool_list": null,
+    "liquidity_threshold": {
+      "min_avg_volume": 500000,
+      "min_avg_amount": 5000000,
+      "min_turnover_rate": 0.001
+    },
+    "blacklist": [],
+    "handle_delisted": "exclude"
+  },
+  "strategies": [
+    {
+      "type": "kama",
+      "kama_period": 20,
+      "kama_fast": 2,
+      "kama_slow": 30,
+      "enable_efficiency_filter": false,
+      "min_efficiency_ratio": 0.3,
+      "enable_slope_confirmation": false,
+      "min_slope_periods": 3,
+      "enable_adx_filter": false,
+      "adx_period": 14,
+      "adx_threshold": 25.0,
+      "enable_volume_filter": false,
+      "volume_period": 20,
+      "volume_ratio": 1.2
+    }
+  ],
+  "scoring": {
+    "momentum_weights": {
+      "20d": 0.3,
+      "60d": 0.4,
+      "120d": 0.3
+    },
+    "buffer_thresholds": {
+      "buy_top_n": 10,
+      "hold_until_rank": 15
+    },
+    "inertia_bonus": 0.05,
+    "rebalance_frequency": 5
+  },
+  "clustering": {
+    "correlation_window": 60,
+    "distance_metric": "correlation",
+    "linkage_method": "average",
+    "cut_threshold": 0.5,
+    "max_positions_per_cluster": 2,
+    "update_frequency": 20
+  },
+  "risk": {
+    "atr_window": 14,
+    "atr_multiplier": 2.0,
+    "time_stop_days": 60,
+    "time_stop_threshold": -0.05,
+    "circuit_breaker_threshold": -0.1,
+    "min_liquidity_threshold": 1000000,
+    "enable_t1_restriction": true
+  },
+  "position_sizing": {
+    "target_risk_per_position": 0.02,
+    "volatility_method": "ewma",
+    "ewma_lambda": 0.94,
+    "max_positions": 20,
+    "max_position_size": 0.15,
+    "max_cluster_size": 0.3,
+    "max_total_exposure": 0.95,
+    "min_cash_reserve": 0.05,
+    "commission_rate": 0.0003,
+    "slippage_bps": 5.0
+  },
+  "execution": {
+    "order_time_strategy": "close",
+    "matching_assumption": "next_bar",
+    "slippage_model": "fixed",
+    "handle_t1_restriction": true
+  },
+  "io": {
+    "signal_output_path": "signals/signals_{date}.csv",
+    "position_snapshot_path": "positions/positions_{date}.json",
+    "performance_report_path": "reports/performance_{date}.html",
+    "log_level": "INFO",
+    "log_format": "%(asctime)s - %(name)s - %(levelname)s - %(message)s",
+    "save_intermediate_results": true
+  }
+}

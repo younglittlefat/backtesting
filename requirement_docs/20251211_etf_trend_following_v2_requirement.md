@@ -1,7 +1,8 @@
 # ETF 趋势跟踪 v2 开发需求（etf_trend_following_v2）
 
 **文档日期**: 2025-12-11
-**状态**: ✅ 一期完成，✅ 二期完成
+**最后更新**: 2025-12-15
+**状态**: ✅ 一期完成，✅ 二期完成，✅ 全池动态筛选完成
 **适用目录**: `/mnt/d/git/backtesting/etf_trend_following_v2`
 **默认数据源**: `data/chinese_etf/daily`（需可在 `config.json` 中修改）
 
@@ -296,10 +297,16 @@ runner.generate_report(output_dir='results/')
    `etf_trend_following_v2/tests/ADX_FILTER_ROOT_CAUSE_ANALYSIS.md`）。如需公平对比，建议在 V1 中禁用 ADX。
 2. **Combo 策略**: 当前为简化实现（功能可用，但仍有扩展空间）
 3. **投资组合级别回测**:
-   - 单标回测：`BacktestRunner` 仍为“单标的独立回测”（依赖 backtesting.py 单标引擎），用于与旧框架结果对齐。
+   - 单标回测：`BacktestRunner` 仍为"单标的独立回测"（依赖 backtesting.py 单标引擎），用于与旧框架结果对齐。
    - ✅ 组合级回测：新增 `PortfolioBacktestRunner`（`etf_trend_following_v2/src/portfolio_backtest_runner.py`），支持
      TopN+缓冲带、分簇限额、波动率倒数仓位、佣金+固定滑点，并通过 `etf_trend_following_v2/scripts/run_backtest.sh` 输出结果文件。
-   - ⚠️ 限制：组合级回测仍基于静态池文件/列表（非全池动态筛选），且与 backtesting.py 引擎路径独立（因 backtesting.py 原生为单标引擎）。
+   - ✅ **全池动态筛选**（2025-12-13实现）：新增 `DynamicPoolPortfolioRunner`（`etf_trend_following_v2/src/dynamic_pool_runner.py`），支持：
+     - 预计算轮动表加载（`rotation.schedule_path` 配置）
+     - 轮动周期可配置（默认5天，支持5/10/20天等）
+     - 轮动日自动更新可交易池，非池内持仓强制卖出（标记 `rotation_excluded`）
+     - 与静态池模式互斥（`rotation.enabled` 开关）
+     - 单元测试覆盖：`test_dynamic_pool_runner.py`、`test_config_loader.py`
+   - ⚠️ 剩余限制：性能/全量兼容性尚未实测（需后续跑全量回归与大样本回测确认）。
 
 ### 16.5 生产就绪状态
 
@@ -308,6 +315,7 @@ runner.generate_report(output_dir='results/')
 - ✅ Loss Protection 功能
 - ✅ ADX 过滤器（v2 正确实现）
 - ✅ 组合级回测（PortfolioBacktestRunner：TopN/缓冲/簇限额/波动率倒数仓位/成本模型）
+- ✅ 全池动态筛选（DynamicPoolPortfolioRunner：预计算轮动表/可配置周期/自动池更新）
 
 ---
 
@@ -330,12 +338,20 @@ runner.generate_report(output_dir='results/')
 2. **完善 Combo 策略**: 实现完整的组合策略逻辑
 3. ✅ **组合级回测落地**：已新增 `PortfolioBacktestRunner`（`etf_trend_following_v2/src/portfolio_backtest_runner.py`），并由
    `etf_trend_following_v2/scripts/run_backtest.sh` 作为统一入口；覆盖 TopN/缓冲/簇限额/波动率倒数仓位 + 佣金/滑点，已补充单测。
-4. **并行优化**: 实现多标的并行回测
-5. ✅ **添加单元测试**: 补齐 backtest_wrappers / runner 的回归与边界测试。**已完成**（2025-12-11）：
+4. ✅ **全池动态筛选落地**（2025-12-13）：新增 `DynamicPoolPortfolioRunner`（`etf_trend_following_v2/src/dynamic_pool_runner.py`），支持：
+   - 预计算轮动表加载与解析
+   - 轮动周期可配置（5/10/20天等）
+   - 轮动日自动更新可交易池
+   - 非池内持仓强制卖出（标记 `rotation_excluded`）
+   - 配置互斥：`rotation.enabled` 与静态池二选一
+   - 单元测试覆盖：`test_dynamic_pool_runner.py`、`test_config_loader.py`
+   - 详见需求文档：`20251213_portfolio_dynamic_filtering_full_integration.md`
+5. **并行优化**: 实现多标的并行回测
+6. ✅ **添加单元测试**: 补齐 backtest_wrappers / runner 的回归与边界测试。**已完成**（2025-12-11）：
    - `test_backtest_wrappers.py`: 48 个测试，覆盖 MACD/KAMA/Combo 策略的初始化、信号生成、过滤器、止损保护、跟踪止损等
    - `test_backtest_runner.py`: 33 个测试，覆盖 BacktestRunner 的初始化、参数提取、单标/多标回测、聚合统计、报告生成等
    - 总计 **81 个测试全部通过**，执行时间约 3 秒
-6. **性能测试**: 对比改造前后的回测速度。
+7. **性能测试**: 对比改造前后的回测速度。
 
 ### 长期任务（P2）
 1. **实盘集成**: 确保回测与实盘信号生成的一致性
@@ -348,6 +364,7 @@ runner.generate_report(output_dir='results/')
 
 - **详细验收报告**: `/mnt/d/git/backtesting/etf_trend_following_v2/PHASE2_ACCEPTANCE_REPORT.md`
 - **动态轮动策略**: `/mnt/d/git/backtesting/requirement_docs/20251112_dynamic_pool_rotation_strategy.md`
+- **全池动态筛选方案**: `/mnt/d/git/backtesting/requirement_docs/20251213_portfolio_dynamic_filtering_full_integration.md` ⭐ 新增
 - **现有策略参考**:
   - `/mnt/d/git/backtesting/strategies/macd_cross.py`
   - `/mnt/d/git/backtesting/strategies/kama_cross.py`

@@ -521,3 +521,144 @@ def validate_data_quality(
         )
 
     return result
+
+
+def scan_all_etfs(data_dir: str) -> List[str]:
+    """
+    Scan directory to find all available ETF symbols.
+
+    Args:
+        data_dir: Directory containing ETF CSV files (e.g., 'data/chinese_etf/daily')
+
+    Returns:
+        List of ETF symbols (e.g., ['159915.SZ', '510050.SH', ...])
+    """
+    etf_subdir = Path(data_dir) / 'etf'
+    if not etf_subdir.exists():
+        # Try direct path if etf subdirectory doesn't exist
+        etf_subdir = Path(data_dir)
+
+    if not etf_subdir.exists():
+        logger.warning(f"ETF data directory not found: {etf_subdir}")
+        return []
+
+    # Find all CSV files
+    csv_files = list(etf_subdir.glob("*.csv"))
+    symbols = []
+
+    for csv_file in csv_files:
+        # Extract symbol from filename (e.g., '159915.SZ.csv' -> '159915.SZ')
+        symbol = csv_file.stem
+        # Filter out non-ETF files (e.g., metadata files)
+        if '.' in symbol:  # Valid symbols should have format 'XXXXXX.SZ' or 'XXXXXX.SH'
+            symbols.append(symbol)
+
+    logger.info(f"Scanned {etf_subdir}: found {len(symbols)} ETF symbols")
+    return sorted(symbols)
+
+
+def filter_by_dynamic_liquidity(
+    symbols: List[str],
+    data_dir: str,
+    as_of_date: str,
+    min_amount: Optional[float] = None,
+    min_volume: Optional[float] = None,
+    lookback_days: int = 5,
+    min_listing_days: int = 60,
+    use_adj: bool = True
+) -> List[str]:
+    """
+    Dynamically filter ETFs by liquidity criteria on a specific date.
+
+    This function loads historical data for each symbol and checks:
+    1. Whether the ETF has been listed for at least min_listing_days
+    2. Whether the moving average (MA) of trading amount/volume meets thresholds
+
+    Args:
+        symbols: List of ETF symbols to filter
+        data_dir: Directory containing ETF CSV files
+        as_of_date: Date to calculate liquidity (format: 'YYYY-MM-DD')
+        min_amount: Minimum average daily trading amount (in yuan) over lookback period
+        min_volume: Minimum average daily trading volume (in shares) over lookback period
+        lookback_days: Number of days to calculate moving average (default: 5)
+        min_listing_days: Minimum number of days since listing (default: 60)
+        use_adj: Whether to use adjusted prices
+
+    Returns:
+        List of symbols that meet liquidity criteria
+    """
+    if not symbols:
+        return []
+
+    as_of_dt = pd.to_datetime(as_of_date)
+    passed = []
+    failed_reasons: Dict[str, str] = {}
+
+    for symbol in symbols:
+        try:
+            # Load data up to as_of_date
+            df = load_single_etf(
+                symbol=symbol,
+                data_dir=data_dir,
+                start_date=None,  # Load all available data
+                end_date=as_of_date,
+                use_adj=use_adj
+            )
+
+            # Check 1: Minimum listing days
+            if len(df) < min_listing_days:
+                failed_reasons[symbol] = f'insufficient_listing_days_{len(df)}'
+                continue
+
+            # Check 2: Must have data on as_of_date
+            if as_of_dt not in df.index:
+                failed_reasons[symbol] = 'no_data_on_as_of_date'
+                continue
+
+            # Get recent data for liquidity calculation (last lookback_days)
+            recent_df = df[df.index <= as_of_dt].tail(lookback_days)
+
+            if len(recent_df) < lookback_days:
+                failed_reasons[symbol] = f'insufficient_recent_data_{len(recent_df)}'
+                continue
+
+            # Check 3: Amount filter
+            if min_amount is not None:
+                if 'amount' not in df.columns:
+                    failed_reasons[symbol] = 'no_amount_column'
+                    continue
+
+                avg_amount = recent_df['amount'].mean()
+                if pd.isna(avg_amount) or avg_amount < min_amount:
+                    failed_reasons[symbol] = f'low_amount_{avg_amount:.0f}'
+                    continue
+
+            # Check 4: Volume filter
+            if min_volume is not None:
+                avg_volume = recent_df['volume'].mean()
+                if pd.isna(avg_volume) or avg_volume < min_volume:
+                    failed_reasons[symbol] = f'low_volume_{avg_volume:.0f}'
+                    continue
+
+            # Passed all filters
+            passed.append(symbol)
+
+        except Exception as e:
+            logger.debug(f"{symbol}: Failed to load or filter: {e}")
+            failed_reasons[symbol] = f'load_error'
+
+    logger.info(
+        f"Dynamic liquidity filter (as_of={as_of_date}): "
+        f"{len(passed)}/{len(symbols)} passed. "
+        f"Failed: {len(failed_reasons)}"
+    )
+
+    if logger.isEnabledFor(logging.DEBUG):
+        # Log sample of failed reasons
+        reason_counts = {}
+        for reason in failed_reasons.values():
+            reason_type = reason.split('_')[0]
+            reason_counts[reason_type] = reason_counts.get(reason_type, 0) + 1
+        logger.debug(f"Failure breakdown: {reason_counts}")
+
+    return passed
