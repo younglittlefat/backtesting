@@ -1,0 +1,67 @@
+{
+  "date": "20251218",
+  "timestamp": "2025-12-20 09:02:08",
+  "snapshot_type": "pre_execute",
+  "portfolio": {
+    "cash": 592677.5621200001,
+    "positions": [
+      {
+        "ts_code": "159994.SZ",
+        "shares": 30100,
+        "entry_price": 1.658,
+        "entry_date": "2025-11-26",
+        "cost": 49915.78115999999
+      },
+      {
+        "ts_code": "159825.SZ",
+        "shares": 60900,
+        "entry_price": 0.814,
+        "entry_date": "2025-12-12",
+        "cost": 49582.514520000004
+      },
+      {
+        "ts_code": "159819.SZ",
+        "shares": 33100,
+        "entry_price": 1.493,
+        "entry_date": "2025-12-17",
+        "cost": 49428.18366000001
+      },
+      {
+        "ts_code": "159807.SZ",
+        "shares": 69800,
+        "entry_price": 0.708,
+        "entry_date": "2025-12-17",
+        "cost": 49428.28367999999
+      },
+      {
+        "ts_code": "159842.SZ",
+        "shares": 42700,
+        "entry_price": 1.155,
+        "entry_date": "2025-12-17",
+        "cost": 49328.3637
+      },
+      {
+        "ts_code": "159766.SZ",
+        "shares": 63800,
+        "entry_price": 0.774,
+        "entry_date": "2025-12-17",
+        "cost": 49391.07624
+      },
+      {
+        "ts_code": "159996.SZ",
+        "shares": 32700,
+        "entry_price": 1.51,
+        "entry_date": "2025-12-17",
+        "cost": 49386.875400000004
+      },
+      {
+        "ts_code": "159887.SZ",
+        "shares": 36600,
+        "entry_price": 1.348,
+        "entry_date": "2025-12-18",
+        "cost": 49346.66736000001
+      }
+    ],
+    "last_update": "2025-12-19 09:01:31"
+  }
+}

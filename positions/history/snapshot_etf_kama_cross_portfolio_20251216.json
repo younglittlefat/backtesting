@@ -1,0 +1,25 @@
+{
+  "date": "20251216",
+  "timestamp": "2025-12-18 09:01:40",
+  "snapshot_type": "pre_execute",
+  "portfolio": {
+    "cash": 889259.76976,
+    "positions": [
+      {
+        "ts_code": "159994.SZ",
+        "shares": 30100,
+        "entry_price": 1.658,
+        "entry_date": "2025-11-26",
+        "cost": 49915.78115999999
+      },
+      {
+        "ts_code": "159825.SZ",
+        "shares": 60900,
+        "entry_price": 0.814,
+        "entry_date": "2025-12-12",
+        "cost": 49582.514520000004
+      }
+    ],
+    "last_update": "2025-12-17 09:01:28"
+  }
+}

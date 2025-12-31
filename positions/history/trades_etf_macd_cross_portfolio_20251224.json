@@ -1,0 +1,12 @@
+{
+  "date": "20251224",
+  "trades": [],
+  "trade_count": 0,
+  "timestamp": "2025-12-25 09:01:53",
+  "execution_time": "2025-12-25T09:01:53.803703",
+  "execution_context": {
+    "status": "no_trade_needed",
+    "reason": "今日无交易信号",
+    "strategy": "macd_cross"
+  }
+}
