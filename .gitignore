@@ -30,3 +30,9 @@ logs/
 # Generated backtest artifacts (keep tracked sample files at output root)
 etf_trend_following_v2/output/backtest*/
 etf_trend_following_v2/output/portfolio_backtest*/
+
+# Experiment outputs (visualizations, results, backtests)
+experiment/**/visualizations/
+experiment/**/results/
+experiment/**/backtests/
+experiment/**/pools/
