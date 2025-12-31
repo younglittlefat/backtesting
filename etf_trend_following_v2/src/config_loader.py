@@ -85,6 +85,7 @@ class UniverseConfig:
         "min_avg_amount": 5000000,  # Minimum average daily amount (CNY)
         "min_turnover_rate": 0.001  # Minimum turnover rate
     })
+    liquidity_unit: Literal["raw", "tushare"] = "raw"  # "raw"=shares/yuan, "tushare"=hands/k_yuan
     blacklist: List[str] = field(default_factory=list)
     handle_delisted: Literal["exclude", "keep_until_delist", "warn"] = "exclude"
     # Dynamic pool configuration
@@ -237,6 +238,8 @@ class KAMAStrategyConfig:
     pause_bars: int = 10
     # Long-only mode (A-share market does not allow short selling)
     long_only: bool = True
+    # Trend state definition mode
+    trend_state_mode: Literal["event", "condition"] = "event"  # "event"=crossover-based, "condition"=Close>KAMA
 
     def validate(self) -> List[str]:
         """Validate KAMA strategy configuration"""

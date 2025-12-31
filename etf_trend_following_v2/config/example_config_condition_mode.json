@@ -17,17 +17,13 @@
     }
   },
   "universe": {
-    "pool_file": null,
+    "pool_file": "results/trend_etf_pool_2021_2023_optimized.csv",
     "pool_list": null,
-    "dynamic_pool": true,
-    "all_etf_data_dir": "data/chinese_etf/daily",
-    "min_listing_days": 60,
     "liquidity_threshold": {
-      "min_avg_volume": 5000,
-      "min_avg_amount": 5000,
+      "min_avg_volume": 500000,
+      "min_avg_amount": 5000000,
       "min_turnover_rate": 0.001
     },
-    "liquidity_unit": "tushare",
     "blacklist": [],
     "handle_delisted": "exclude"
   },
@@ -46,7 +42,8 @@
       "adx_threshold": 25.0,
       "enable_volume_filter": false,
       "volume_period": 20,
-      "volume_ratio": 1.2
+      "volume_ratio": 1.2,
+      "trend_state_mode": "condition"
     }
   ],
   "scoring": {
@@ -67,7 +64,7 @@
     "distance_metric": "correlation",
     "linkage_method": "average",
     "cut_threshold": 0.5,
-    "max_positions_per_cluster": 3,
+    "max_positions_per_cluster": 2,
     "update_frequency": 20
   },
   "risk": {

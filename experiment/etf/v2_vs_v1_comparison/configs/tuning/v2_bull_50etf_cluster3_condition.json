@@ -17,23 +17,20 @@
     }
   },
   "universe": {
-    "pool_file": null,
+    "pool_file": "results/trend_etf_pool_2021_2023_50.csv",
     "pool_list": null,
-    "dynamic_pool": true,
-    "all_etf_data_dir": "data/chinese_etf/daily",
-    "min_listing_days": 60,
     "liquidity_threshold": {
-      "min_avg_volume": 5000,
-      "min_avg_amount": 5000,
+      "min_avg_volume": 500000,
+      "min_avg_amount": 5000000,
       "min_turnover_rate": 0.001
     },
-    "liquidity_unit": "tushare",
     "blacklist": [],
     "handle_delisted": "exclude"
   },
   "strategies": [
     {
       "type": "kama",
+      "trend_state_mode": "condition",
       "kama_period": 20,
       "kama_fast": 2,
       "kama_slow": 30,

@@ -67,6 +67,45 @@ def _build_trend_state(signal_events: pd.Series) -> pd.Series:
     return last_event.replace(-1, 0).astype(int)
 
 
+def _build_trend_state_condition(
+    df_ind: pd.DataFrame,
+    close_col: str = "Close",
+    indicator_col: str = "kama"
+) -> pd.Series:
+    """
+    Build trend state based on CURRENT price vs indicator position.
+
+    Trend is ON when Close > KAMA (regardless of past crossover events).
+    This mode captures assets already in trend without requiring recent crossovers.
+
+    Args:
+        df_ind: DataFrame with price and indicator data
+        close_col: Name of the close price column (default: "Close")
+        indicator_col: Name of the indicator column (default: "kama")
+
+    Returns:
+        Series of trend state (1=trend on, 0=trend off)
+    """
+    if df_ind.empty:
+        return pd.Series(dtype=int)
+
+    # Check if required columns exist
+    if close_col not in df_ind.columns or indicator_col not in df_ind.columns:
+        # Fallback: return all zeros if columns don't exist
+        return pd.Series(0, index=df_ind.index, dtype=int)
+
+    close = df_ind[close_col]
+    indicator = df_ind[indicator_col]
+
+    # Initialize with zeros
+    trend_state = pd.Series(0, index=df_ind.index, dtype=int)
+
+    # Trend is ON when Close > indicator
+    trend_state[close > indicator] = 1
+
+    return trend_state
+
+
 def _slippage_adjusted_price(price: float, action: str, slippage_bps: float) -> float:
     """Apply fixed slippage to a base price."""
     if price <= 0 or not np.isfinite(price):
@@ -269,10 +308,27 @@ class PortfolioBacktestRunner:
         # Static liquidity filter (only applied in non-dynamic mode)
         if not self.config.universe.dynamic_pool:
             lt = self.config.universe.liquidity_threshold or {}
+            liquidity_unit = getattr(self.config.universe, 'liquidity_unit', 'raw')
+
+            # Apply scaling based on liquidity_unit
+            if liquidity_unit == "raw":
+                # Config uses raw units (shares/yuan), need to scale to data units (hands/k_yuan)
+                min_amount_scaled = (lt.get("min_avg_amount") * self._liquidity_amt_scale if lt.get("min_avg_amount") else None)
+                min_volume_scaled = (lt.get("min_avg_volume") * self._liquidity_vol_scale if lt.get("min_avg_volume") else None)
+            elif liquidity_unit == "tushare":
+                # Config already uses tushare units (hands/k_yuan), no additional scaling needed
+                min_amount_scaled = (lt.get("min_avg_amount") if lt.get("min_avg_amount") else None)
+                min_volume_scaled = (lt.get("min_avg_volume") if lt.get("min_avg_volume") else None)
+            else:
+                # Unknown unit, log warning and use raw scaling
+                logger.warning(f"Unknown liquidity_unit '{liquidity_unit}', defaulting to 'raw' scaling")
+                min_amount_scaled = (lt.get("min_avg_amount") * self._liquidity_amt_scale if lt.get("min_avg_amount") else None)
+                min_volume_scaled = (lt.get("min_avg_volume") * self._liquidity_vol_scale if lt.get("min_avg_volume") else None)
+
             data_dict = filter_by_liquidity(
                 data_dict,
-                min_amount=(lt.get("min_avg_amount") * self._liquidity_amt_scale if lt.get("min_avg_amount") else None),
-                min_volume=(lt.get("min_avg_volume") * self._liquidity_vol_scale if lt.get("min_avg_volume") else None),
+                min_amount=min_amount_scaled,
+                min_volume=min_volume_scaled,
                 lookback_days=20,
                 min_valid_days=15,
             )
@@ -353,6 +409,14 @@ class PortfolioBacktestRunner:
         self._signal_events.clear()
         self._trend_state.clear()
 
+        # Determine trend_state_mode from strategy config
+        # Default to "event" for backward compatibility
+        trend_state_mode = "event"
+        if self.config.strategies:
+            strategy_cfg = self.config.strategies[0]
+            # Check if strategy config has trend_state_mode attribute (KAMA strategy)
+            trend_state_mode = getattr(strategy_cfg, 'trend_state_mode', 'event')
+
         for symbol, df in data_dict.items():
             df_sig = _to_ohlcv_caps(df)
             df_ind = self._strategy_generator.calculate_indicators(df_sig)
@@ -364,9 +428,19 @@ class PortfolioBacktestRunner:
 
             events = events.astype(int)
             self._signal_events[symbol] = events
-            self._trend_state[symbol] = _build_trend_state(events)
 
-        logger.info(f"Precomputed signals for {len(self._signal_events)} symbols")
+            # Build trend state based on configured mode
+            if trend_state_mode == "condition":
+                # Condition-based: trend ON when Close > KAMA (current state)
+                self._trend_state[symbol] = _build_trend_state_condition(df_ind)
+            else:
+                # Event-based: trend ON after last buy event (original behavior)
+                self._trend_state[symbol] = _build_trend_state(events)
+
+        logger.info(
+            f"Precomputed signals for {len(self._signal_events)} symbols "
+            f"(trend_state_mode={trend_state_mode})"
+        )
 
     def _get_price(
         self, data_dict: Dict[str, pd.DataFrame], symbol: str, date: pd.Timestamp, field: str
@@ -434,11 +508,25 @@ class PortfolioBacktestRunner:
         min_amount = lt.get("min_avg_amount")
         min_volume = lt.get("min_avg_volume")
 
-        # Convert thresholds to data units
-        if min_amount is not None:
-            min_amount = min_amount * self._liquidity_amt_scale
-        if min_volume is not None:
-            min_volume = min_volume * self._liquidity_vol_scale
+        # Apply scaling based on liquidity_unit
+        liquidity_unit = getattr(self.config.universe, 'liquidity_unit', 'raw')
+
+        if liquidity_unit == "raw":
+            # Config uses raw units (shares/yuan), need to scale to data units (hands/k_yuan)
+            if min_amount is not None:
+                min_amount = min_amount * self._liquidity_amt_scale
+            if min_volume is not None:
+                min_volume = min_volume * self._liquidity_vol_scale
+        elif liquidity_unit == "tushare":
+            # Config already uses tushare units (hands/k_yuan), no additional scaling needed
+            pass
+        else:
+            # Unknown unit, log warning and use raw scaling
+            logger.warning(f"Unknown liquidity_unit '{liquidity_unit}' in dynamic filter, defaulting to 'raw' scaling")
+            if min_amount is not None:
+                min_amount = min_amount * self._liquidity_amt_scale
+            if min_volume is not None:
+                min_volume = min_volume * self._liquidity_vol_scale
 
         # Use filter_by_dynamic_liquidity to get symbols passing criteria
         all_symbols = list(data_dict.keys())

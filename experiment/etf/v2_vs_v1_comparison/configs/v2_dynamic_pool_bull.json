@@ -27,6 +27,7 @@
       "min_avg_amount": 5000,
       "min_turnover_rate": 0.001
     },
+    "liquidity_unit": "tushare",
     "blacklist": [],
     "handle_delisted": "exclude"
   },
