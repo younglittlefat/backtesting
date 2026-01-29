@@ -1,0 +1,12 @@
+{
+  "date": "20260111",
+  "trades": [],
+  "trade_count": 0,
+  "timestamp": "2026-01-12 09:01:35",
+  "execution_time": "2026-01-12T09:01:35.758316",
+  "execution_context": {
+    "status": "no_trade_needed",
+    "reason": "今日无交易信号",
+    "strategy": "kama_cross"
+  }
+}

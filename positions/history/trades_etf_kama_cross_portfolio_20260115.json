@@ -1,0 +1,25 @@
+{
+  "date": "20260115",
+  "trades": [
+    {
+      "ts_code": "159842.SZ",
+      "action": "SELL",
+      "shares": 42700,
+      "price": 1.154,
+      "amount": 49270.87241999999,
+      "commission": 4.92758,
+      "date": "2026-01-15",
+      "reason": "KAMA卖出信号！价格下穿KAMA"
+    }
+  ],
+  "trade_count": 1,
+  "timestamp": "2026-01-16 09:01:45",
+  "execution_time": "2026-01-16T09:01:45.243444",
+  "execution_context": {
+    "status": "executed",
+    "strategy": "kama_cross",
+    "sell_count": 1,
+    "buy_count": 0,
+    "forced": false
+  }
+}
