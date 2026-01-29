@@ -22,7 +22,8 @@ build/*
 *~*
 
 .venv/
-data/
+data/chinese_etf
+data/online_chinese_etf
 results*/
 __pycache__/
 logs/
